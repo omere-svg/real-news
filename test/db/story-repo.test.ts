@@ -1,0 +1,84 @@
+import { describe, expect, it } from 'vitest';
+import { createTestDb } from '../helpers/test-db.js';
+import { FakeClock } from '../helpers/fake-clock.js';
+import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
+import type { StoryUpsert } from '../../src/db/story-repo.js';
+
+function storyUpsert(overrides: Partial<StoryUpsert> = {}): StoryUpsert {
+  return {
+    id: 's1',
+    title: 'A story',
+    url: null,
+    region: 'World',
+    topic: 'AI',
+    significance: 5,
+    whyItMatters: null,
+    memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    ...overrides,
+  };
+}
+
+describe('StoryRepo', () => {
+  it('creates a story and returns it with its member refs and timestamps', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+    await repo.upsert(
+      storyUpsert({
+        memberRefs: [
+          { source: 'hackernews', externalId: '1' },
+          { source: 'gdelt', externalId: '2' },
+        ],
+      }),
+    );
+
+    const found = await repo.get('s1');
+    expect(found).not.toBeNull();
+    expect(found?.memberRefs).toHaveLength(2);
+    expect(found?.firstSeenAt).toBe(1000);
+    expect(found?.updatedAt).toBe(1000);
+  });
+
+  it('updates in place on re-upsert: bumps updatedAt, preserves firstSeenAt', async () => {
+    const db = await createTestDb();
+    const clock = new FakeClock(1000);
+    const repo = new DrizzleStoryRepo(db, clock);
+
+    await repo.upsert(storyUpsert({ significance: 5, whyItMatters: null }));
+
+    clock.set(5000);
+    await repo.upsert(
+      storyUpsert({ significance: 8.2, whyItMatters: 'Now it matters.' }),
+    );
+
+    const found = await repo.get('s1');
+    expect(await repo.all()).toHaveLength(1); // updated, not duplicated
+    expect(found?.significance).toBe(8.2);
+    expect(found?.whyItMatters).toBe('Now it matters.');
+    expect(found?.firstSeenAt).toBe(1000); // preserved
+    expect(found?.updatedAt).toBe(5000); // bumped
+  });
+
+  it('corroboration: adding a member from a new source raises the distinct-source count', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+    const distinctSources = (story: { memberRefs: readonly { source: string }[] }) =>
+      new Set(story.memberRefs.map((r) => r.source)).size;
+
+    const one = await repo.upsert(
+      storyUpsert({ memberRefs: [{ source: 'hackernews', externalId: '1' }] }),
+    );
+    expect(distinctSources(one)).toBe(1);
+
+    const two = await repo.upsert(
+      storyUpsert({
+        memberRefs: [
+          { source: 'hackernews', externalId: '1' },
+          { source: 'gdelt', externalId: '2' },
+        ],
+      }),
+    );
+    expect(distinctSources(two)).toBe(2);
+  });
+});
