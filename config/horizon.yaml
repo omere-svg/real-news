@@ -1,0 +1,45 @@
+# Project Horizon configuration (ADR-0003). Validated against src/config/schema.ts
+# at boot. Secrets (ANTHROPIC_API_KEY) live in .env, never here.
+
+# The background loop wakes this often. "Every X minutes" (ADR-0001).
+tickIntervalMinutes: 15
+
+# Sources to extract from each tick (ADR-0004). Strictly official public APIs.
+sources:
+  - id: hackernews
+    enabled: true
+    weight: 0.6
+    maxItems: 50
+  - id: gdelt
+    enabled: true
+    weight: 0.7
+    maxItems: 50
+  - id: datagovil
+    enabled: true
+    weight: 0.5
+    maxItems: 30
+  - id: arxiv
+    enabled: true
+    weight: 0.55
+    maxItems: 30
+
+# The Reasoner tiers (ADR-0006).
+reasoner:
+  cheapModel: claude-haiku-4-5-20251001
+  deepModel: claude-opus-4-8
+  deepAnalysisTopN: 10
+
+# Cross-source dedup (ADR-0007).
+dedup:
+  candidateThreshold: 0.78
+
+# Significance scoring (ADR-0008).
+scoring:
+  recencyHalfLifeHours: 24
+  maxEditorialAdjustment: 1.5
+
+# Presentation defaults (Phase 1: stubs only, ADR-0011).
+presentation:
+  preferredTopics:
+    - AI
+    - Geopolitics
