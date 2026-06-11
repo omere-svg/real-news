@@ -1,0 +1,47 @@
+# Project Horizon: Autonomous Intelligence Agent
+
+## Vision
+An AI agent framework that operates as an asynchronous, server-side executive editor. Every $X$ minutes (defined dynamically in a configuration file), a background worker pulls raw intelligence vectors from official, public APIs (e.g., Google Trends, GDELT, Hacker News, arXiv, data.gov.il), filters them for noise, clusters overlapping stories, and caches them into a hyper-organized local database. 
+
+When a user requests a summary—whether a concise text bullet brief, a unified audio podcast script, or a distinct topic-focused outline—the system instantly queries this pre-digested local server database rather than making slow, real-time external network calls. The core architectural focus remains **deep background reasoning and prioritization** to manage the user's daily cognitive load with zero-latency delivery.
+
+---
+
+## Core Engineering Principles
+
+1. **Reasoning-First Background Pipeline**
+   The heart of the codebase is an automated background reasoning loop. Instead of summarizing content on demand, the agent actively processes raw incoming data feeds, scores macro-significance using verifiable signals, and populates a localized database with structural "Why it matters" analytical assessments.
+
+2. **Strictly Zero Scraping**
+   To maximize architectural longevity and eliminate fragile UI-dependent code, data acquisition relies *only* on official, public, and stable developer APIs.
+
+3. **Geographic & Topical Database Partitioning**
+   The local server data engine maintains strict data boundaries. Incoming news vectors are structurally categorized into distinct fields based on **Region** (e.g., Israel vs. General World Info), **Topic** (e.g., AI, Geopolitics, Sports, Politics), and **Relevance** (popularity and signifcance).
+
+4. **Asynchronous Server Caching**
+   To eliminate runtime latency and minimize token waste, all API connections, LLM evaluation pipelines, and deduplication tasks happen asynchronously in a background sync loop. The user-facing presentation layer operates entirely as a read-only viewer of the pre-compiled server intelligence database.
+
+5. **Attention & Time Budgeting**
+   The user-facing query engine maps information density directly to explicit user constraints (e.g., a 20-minute verbal breakdown vs. a 3-minute rapid text summary) and user preferances(e.g a.i, geo-politics etc) by aggressively filtering the database cache by its pre-calculated relevance scores.
+
+---
+
+## Current Target: Phase 1 MVP (3 Core Features)
+
+To establish the initial background intelligence matrix, Phase 1 implementation is focused strictly on building the automated storage and reasoning engine:
+
+### 1. Multi-Source Continuous Extraction Worker
+* **Behavior:** A daemon background process that wakes up every $X$ minutes based on a configuration file parameter.
+* **Extraction:** Hits configured public APIs (such as Hacker News for global tech/AI and data.gov.il/Knesset feeds for Israeli political updates) sequentially to extract raw news payloads.
+* **Hygiene:** Includes strict, non-blocking pre-flight health checks to ensure endpoints are live without crashing the master background loop if a single network fails.
+
+### 2. Relational Intelligence Database Cache
+* **Behavior:** The initialization and deployment of a localized server database schema designed for high-speed read operations.
+* **Schema Blueprint:** Every record must be strictly structured by explicit data types:
+  * *Region:* Segmented clearly into `Israel` or `World`.
+  * *Topic:* Indexed by domain classifications (e.g., `AI`, `Geopolitics`, `Sports`).
+  * *Significance Metrics:* Floating-point relevance scores (0.0 to 10.0) alongside structural fields for analytical text.
+
+### 3. Core Reasoning Update Loop (The Active Editor)
+* **Behavior:** The core analytical capability of the project. As new data hits the server from the extraction worker, the agent parses the raw text against structural editorial guidelines.
+* **Action:** The agent calculates the significance score, strips out duplicate cross-feed story items, decides the correct regional placement, generates the analytical "Why this matters" justification string, and upserts the finalized, clean record directly into the database.
