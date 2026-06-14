@@ -29,7 +29,14 @@ export const TOPICS: readonly Topic[] = [
 ] as const;
 
 /** Identifier of a Source we extract from. */
-export type SourceId = 'hackernews' | 'gdelt' | 'datagovil' | 'arxiv';
+export type SourceId =
+  | 'hackernews'
+  | 'gdelt'
+  | 'datagovil'
+  | 'arxiv'
+  | 'knesset'
+  | 'secedgar'
+  | 'wikipedia';
 
 // --- Raw Item: immutable provenance from a single Source ---
 
