@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { loadConfig, sourceWeightsOf } from './config/load.js';
+import { loadConfig, toTickConfig } from './config/load.js';
 import { openDb } from './db/client.js';
 import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
@@ -64,13 +64,7 @@ async function main(): Promise<void> {
     llm,
     embedder: new HashingEmbedder(),
     clock: systemClock,
-    config: {
-      candidateThreshold: config.dedup.candidateThreshold,
-      recencyHalfLifeHours: config.scoring.recencyHalfLifeHours,
-      maxEditorialAdjustment: config.scoring.maxEditorialAdjustment,
-      deepAnalysisTopN: config.reasoner.deepAnalysisTopN,
-      sourceWeights: sourceWeightsOf(config),
-    },
+    config: toTickConfig(config),
   });
 
   const runTick = async (): Promise<void> => {

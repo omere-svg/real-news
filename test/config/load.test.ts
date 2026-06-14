@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseConfig, sourceWeightsOf } from '../../src/config/load.js';
+import {
+  parseConfig,
+  sourceWeightsOf,
+  toTickConfig,
+} from '../../src/config/load.js';
 
 const valid = {
   tickIntervalMinutes: 15,
@@ -33,5 +37,16 @@ describe('sourceWeightsOf', () => {
     const weights = sourceWeightsOf(parseConfig(valid));
     expect(weights.hackernews).toBeCloseTo(0.6, 5);
     expect(weights.gdelt).toBeCloseTo(0.7, 5);
+  });
+});
+
+describe('toTickConfig', () => {
+  it('flattens the validated config into the pipeline config', () => {
+    const tick = toTickConfig(parseConfig(valid));
+    expect(tick.candidateThreshold).toBeCloseTo(0.78, 5);
+    expect(tick.recencyHalfLifeHours).toBe(24); // schema default
+    expect(tick.maxEditorialAdjustment).toBeCloseTo(1.5, 5);
+    expect(tick.deepAnalysisTopN).toBe(10); // schema default
+    expect(tick.sourceWeights.hackernews).toBeCloseTo(0.6, 5);
   });
 });
