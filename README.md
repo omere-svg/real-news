@@ -17,7 +17,7 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
 3. **Reasoning loop** — classify (Region/Topic) → embed → cluster/dedup → score (0–10 from
    verifiable signals + bounded LLM nudge) → "why it matters" → upsert. Runs every tick.
 
-A web UI + JSON API serve the cache. Tiered Claude (Haiku + Opus) does the reasoning;
+A web UI + JSON API serve the cache. Tiered OpenAI (gpt-4o-mini + gpt-4o) does the reasoning;
 **if no API key is set, the loop degrades gracefully** — real data + signal scoring, no AI
 enrichment.
 
@@ -25,20 +25,20 @@ enrichment.
 
 ```bash
 npm install
-cp .env.example .env          # add your ANTHROPIC_API_KEY (optional — see below)
+cp .env.example .env          # add your OPENAI_API_KEY (optional — see below)
 npm start
 ```
 
 Open **http://localhost:3000**. The first tick runs on boot, then every
 `tickIntervalMinutes` (see [`config/horizon.yaml`](config/horizon.yaml)).
 
-- **With `ANTHROPIC_API_KEY`** — full quality: AI classification, dedup confirmation, and
+- **With `OPENAI_API_KEY`** — full quality: AI classification, dedup confirmation, and
   "why it matters" analysis.
 - **Without it** — runs anyway: real Hacker News stories, real 0–10 signal scores, region
   defaults to World / topic to Other, "why it matters" left blank.
 
 ```bash
-npm test         # 55 tests — the whole engine
+npm test         # the whole engine
 npm run typecheck
 ```
 
@@ -49,7 +49,7 @@ boot). Secrets and deploy knobs come from the environment:
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Enables the Claude reasoning tiers (optional) |
+| `OPENAI_API_KEY` | — | Enables the OpenAI reasoning tiers (optional; see ADR-0012) |
 | `PORT` | `3000` | HTTP port |
 | `DB_URL` | `file:./data/horizon.db` | SQLite file, or a Turso `libsql://…` URL |
 | `DB_AUTH_TOKEN` | — | Turso auth token (with a remote `DB_URL`) |
@@ -68,7 +68,7 @@ service disk can be ephemeral.
 
 1. **Database (Turso):** create a DB, grab its `libsql://…` URL + auth token.
 2. **Host (Railway / Render / Fly.io):** deploy this repo (the `Dockerfile` is ready), and set env vars:
-   - `ANTHROPIC_API_KEY` — your key
+   - `OPENAI_API_KEY` — your key
    - `DB_URL` — the Turso URL · `DB_AUTH_TOKEN` — the Turso token
 3. Open the service URL — the viewer is at `/`, the API at `/api/stories`.
 
@@ -76,7 +76,7 @@ Locally with Docker:
 
 ```bash
 docker build -t horizon .
-docker run -p 3000:3000 -e ANTHROPIC_API_KEY=sk-ant-... horizon
+docker run -p 3000:3000 -e OPENAI_API_KEY=sk-... horizon
 ```
 
 ## Not yet built
