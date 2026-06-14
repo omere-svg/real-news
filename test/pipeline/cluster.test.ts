@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cluster } from '../../src/pipeline/cluster.js';
+import { candidatePairs, cluster } from '../../src/pipeline/cluster.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
 import type { EmbeddedItem } from '../../src/pipeline/types.js';
 import type { RawItem } from '../../src/domain/types.js';
@@ -18,6 +18,17 @@ function embedded(externalId: string, vector: number[]): EmbeddedItem {
   };
   return { item, region: 'World', topic: 'AI', vector };
 }
+
+describe('candidatePairs (embedding blocking)', () => {
+  it('returns only index pairs whose cosine clears the threshold', () => {
+    const items = [
+      embedded('1', [1, 0, 0]),
+      embedded('2', [0.99, 0.02, 0]), // near 1
+      embedded('3', [0, 1, 0]), // orthogonal to both
+    ];
+    expect(candidatePairs(items, 0.78)).toEqual([[0, 1]]);
+  });
+});
 
 describe('cluster stage', () => {
   it('merges near-neighbor items the LLM confirms as the same story', async () => {
