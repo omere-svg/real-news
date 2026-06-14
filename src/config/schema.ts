@@ -11,6 +11,9 @@ export const sourceIdSchema = z.enum([
   'gdelt',
   'datagovil',
   'arxiv',
+  'knesset',
+  'secedgar',
+  'wikipedia',
 ]);
 
 export const sourceConfigSchema = z.object({
@@ -29,10 +32,10 @@ export const configSchema = z.object({
   sources: z.array(sourceConfigSchema).min(1),
 
   reasoner: z.object({
-    /** Cheap high-volume tier (ADR-0006). */
-    cheapModel: z.string().default('claude-haiku-4-5-20251001'),
-    /** Expensive analysis tier (ADR-0006). */
-    deepModel: z.string().default('claude-opus-4-8'),
+    /** Cheap high-volume tier (ADR-0006/0012). */
+    cheapModel: z.string().default('gpt-4o-mini'),
+    /** Expensive analysis tier. */
+    deepModel: z.string().default('gpt-4o'),
     /** Only the top-N most significant Clusters get the deep tier. */
     deepAnalysisTopN: z.number().int().positive().default(10),
   }),

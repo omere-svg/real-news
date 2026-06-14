@@ -5,28 +5,41 @@
 tickIntervalMinutes: 15
 
 # Sources to extract from each tick (ADR-0004). Strictly official public APIs.
+# maxItems kept modest so per-tick LLM cost stays low; raise per source as needed.
 sources:
-  - id: hackernews
+  - id: hackernews      # global tech / AI
     enabled: true
     weight: 0.6
-    maxItems: 50
-  - id: gdelt
-    enabled: true
-    weight: 0.7
-    maxItems: 50
-  - id: datagovil
-    enabled: true
-    weight: 0.5
     maxItems: 30
-  - id: arxiv
+  - id: arxiv           # AI / research
     enabled: true
     weight: 0.55
+    maxItems: 20
+  - id: gdelt           # geopolitics / world news (1 req / 5s limit)
+    enabled: true
+    weight: 0.7
+    maxItems: 25
+  - id: knesset         # Israeli politics (official Knesset OData)
+    enabled: true
+    weight: 0.7
+    maxItems: 20
+  - id: secedgar        # finance (US 8-K filings)
+    enabled: true
+    weight: 0.65
+    maxItems: 20
+  - id: wikipedia       # general / current events
+    enabled: true
+    weight: 0.6
+    maxItems: 20
+  - id: datagovil       # weak (datasets, not events) — no adapter yet
+    enabled: false
+    weight: 0.5
     maxItems: 30
 
-# The Reasoner tiers (ADR-0006).
+# The Reasoner tiers (ADR-0006/0012). OpenAI models — change to any your key can access.
 reasoner:
-  cheapModel: claude-haiku-4-5-20251001
-  deepModel: claude-opus-4-8
+  cheapModel: gpt-4o-mini
+  deepModel: gpt-4o
   deepAnalysisTopN: 10
 
 # Cross-source dedup (ADR-0007).
