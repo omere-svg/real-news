@@ -1,15 +1,15 @@
-import type { Region, Story, Topic } from '../domain/types.js';
+import type { Region, Topic } from '../domain/types.js';
 
 /**
- * The Presentation seam (ADR-0011). Read-only viewer over finalized Stories.
- * Phase 1 ships the contract but NOT the implementation — see HorizonQueryStub.
- * It must never make real-time external calls (Principle 4): it reads the
- * pre-compiled cache only.
+ * The Presentation seam (ADR-0011). Generates user-facing artifacts from the
+ * pre-compiled Story cache — never makes real-time external calls (Principle 4).
+ * Phase 1 ships the contract but NOT the implementation (see HorizonQueryStub).
+ *
+ * Plain reads (filter + order Stories) live on the StoryRepo read contract
+ * (`StoryQuery`), which the HTTP layer already consumes directly — this seam is
+ * only for the Phase-2 *generated* artifacts below.
  */
 export interface QueryEngine {
-  /** Top Stories matching a filter, ordered by Significance descending. */
-  topStories(filter: StoryFilter): Promise<Story[]>;
-
   /** A concise text bullet brief within a time budget. */
   textBrief(request: BriefRequest): Promise<string>;
 
@@ -18,14 +18,6 @@ export interface QueryEngine {
 
   /** A topic-focused outline. */
   topicOutline(topic: Topic, request: BriefRequest): Promise<string>;
-}
-
-export interface StoryFilter {
-  readonly region?: Region;
-  readonly topic?: Topic;
-  /** Minimum Significance to include. */
-  readonly minSignificance?: number;
-  readonly limit?: number;
 }
 
 export interface BriefRequest {
@@ -43,9 +35,6 @@ export class HorizonQueryStub implements QueryEngine {
     );
   }
 
-  topStories(): Promise<Story[]> {
-    this.notImplemented('topStories');
-  }
   textBrief(): Promise<string> {
     this.notImplemented('textBrief');
   }

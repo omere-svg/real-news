@@ -23,6 +23,10 @@ schema, reasoning loop) get real, TDD'd implementations.
 - Stubs throw an explicit "not implemented" so accidental use fails loudly.
 - The QueryEngine is strictly read-only — it never makes real-time external calls
   (Principle 4: presentation reads the pre-compiled cache only).
+- **Update:** plain Story reads (filter + order) live on the `StoryRepo` read contract
+  (`StoryQuery`), which the HTTP layer consumes directly. `QueryEngine` covers only the
+  Phase-2 *generated* artifacts (brief / podcast / outline), avoiding a duplicate filter
+  type and a read seam nothing used.
 
 ## Alternatives considered
 
