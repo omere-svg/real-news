@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, gte, type SQL } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { membership, stories } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -8,6 +8,14 @@ import type {
   Story,
   Topic,
 } from '../domain/types.js';
+
+/** Read-side filter for the presentation layer (ADR-0011). */
+export interface StoryQuery {
+  readonly region?: Region;
+  readonly topic?: Topic;
+  readonly minSignificance?: number;
+  readonly limit?: number;
+}
 
 /** What the pipeline hands the repo to create or update a Story. */
 export interface StoryUpsert {
@@ -30,6 +38,8 @@ export interface StoryRepo {
   upsert(input: StoryUpsert): Promise<Story>;
   get(id: string): Promise<Story | null>;
   all(): Promise<Story[]>;
+  /** Stories matching the filter, ordered by Significance descending. */
+  topStories(query: StoryQuery): Promise<Story[]>;
 }
 
 export class DrizzleStoryRepo implements StoryRepo {
@@ -117,7 +127,32 @@ export class DrizzleStoryRepo implements StoryRepo {
   }
 
   async all(): Promise<Story[]> {
-    const rows = await this.db.select().from(stories);
+    return this.hydrate(await this.db.select().from(stories));
+  }
+
+  async topStories(query: StoryQuery): Promise<Story[]> {
+    const filters: SQL[] = [];
+    if (query.region) filters.push(eq(stories.region, query.region));
+    if (query.topic) filters.push(eq(stories.topic, query.topic));
+    if (query.minSignificance !== undefined) {
+      filters.push(gte(stories.significance, query.minSignificance));
+    }
+
+    const base = this.db
+      .select()
+      .from(stories)
+      .where(filters.length > 0 ? and(...filters) : undefined)
+      .orderBy(desc(stories.significance));
+
+    const rows = await (query.limit !== undefined
+      ? base.limit(query.limit)
+      : base);
+    return this.hydrate(rows);
+  }
+
+  private async hydrate(
+    rows: (typeof stories.$inferSelect)[],
+  ): Promise<Story[]> {
     const result: Story[] = [];
     for (const row of rows) {
       const story = await this.get(row.id);

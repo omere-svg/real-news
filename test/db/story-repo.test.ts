@@ -81,4 +81,61 @@ describe('StoryRepo', () => {
     );
     expect(distinctSources(two)).toBe(2);
   });
+
+  describe('topStories', () => {
+    async function seed() {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+      await repo.upsert(
+        storyUpsert({
+          id: 'a',
+          region: 'World',
+          topic: 'AI',
+          significance: 9,
+          memberRefs: [{ source: 'hackernews', externalId: 'a1' }],
+        }),
+      );
+      await repo.upsert(
+        storyUpsert({
+          id: 'b',
+          region: 'Israel',
+          topic: 'Politics',
+          significance: 4,
+          memberRefs: [{ source: 'gdelt', externalId: 'b1' }],
+        }),
+      );
+      await repo.upsert(
+        storyUpsert({
+          id: 'c',
+          region: 'World',
+          topic: 'AI',
+          significance: 7,
+          memberRefs: [{ source: 'arxiv', externalId: 'c1' }],
+        }),
+      );
+      return repo;
+    }
+
+    it('orders by significance descending', async () => {
+      const repo = await seed();
+      const top = await repo.topStories({});
+      expect(top.map((s) => s.id)).toEqual(['a', 'c', 'b']);
+    });
+
+    it('filters by region and topic', async () => {
+      const repo = await seed();
+      const top = await repo.topStories({ region: 'World', topic: 'AI' });
+      expect(top.map((s) => s.id)).toEqual(['a', 'c']);
+    });
+
+    it('respects minSignificance and limit', async () => {
+      const repo = await seed();
+      expect(
+        (await repo.topStories({ minSignificance: 5 })).map((s) => s.id),
+      ).toEqual(['a', 'c']);
+      expect((await repo.topStories({ limit: 1 })).map((s) => s.id)).toEqual([
+        'a',
+      ]);
+    });
+  });
 });
