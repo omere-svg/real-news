@@ -4,13 +4,14 @@ import { embed } from './embed.js';
 import { cluster } from './cluster.js';
 import { score } from './score.js';
 import { analyze } from './analyze.js';
+import { representativeOf, storyIdOf } from '../domain/cluster.js';
 import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { StoryRepo, StoryUpsert } from '../db/story-repo.js';
 import type { LLMClient } from '../llm/llm-client.js';
 import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
-import type { Cluster, SourceId } from '../domain/types.js';
+import type { SourceId } from '../domain/types.js';
 import type { AnalyzedCluster } from './types.js';
 
 export interface TickConfig {
@@ -80,14 +81,14 @@ export class TickRunner {
   }
 }
 
-/** Build a StoryUpsert from an analyzed Cluster with a stable, re-tick-safe id. */
+/** Build a StoryUpsert from an analyzed Cluster, using its domain projection. */
 function toStoryUpsert(analyzed: AnalyzedCluster): StoryUpsert {
   const { cluster, significance, whyItMatters } = analyzed;
-  const anchor = anchorOf(cluster);
+  const rep = representativeOf(cluster);
   return {
-    id: `${anchor.source}:${anchor.externalId}`,
-    title: anchor.title,
-    url: anchor.url,
+    id: storyIdOf(cluster),
+    title: rep.title,
+    url: rep.url,
     region: cluster.region,
     topic: cluster.topic,
     significance,
@@ -97,13 +98,4 @@ function toStoryUpsert(analyzed: AnalyzedCluster): StoryUpsert {
       externalId: i.externalId,
     })),
   };
-}
-
-/** The deterministic anchor member — lowest (source, externalId) — gives a stable id. */
-function anchorOf(cluster: Cluster) {
-  return [...cluster.items].sort((a, b) =>
-    a.source === b.source
-      ? a.externalId.localeCompare(b.externalId)
-      : a.source.localeCompare(b.source),
-  )[0]!;
 }

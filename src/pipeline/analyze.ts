@@ -1,3 +1,4 @@
+import { representativeOf } from '../domain/cluster.js';
 import type { LLMClient } from '../llm/llm-client.js';
 import type { AnalyzedCluster, ScoredCluster } from './types.js';
 
@@ -23,10 +24,10 @@ export async function analyze(
     clusters.map(async (scored, i) => {
       if (!topIndices.has(i)) return { ...scored, whyItMatters: null };
 
-      const lead = scored.cluster.items[0];
+      const lead = representativeOf(scored.cluster);
       const whyItMatters = await llm.analyze({
-        title: lead?.title ?? '',
-        text: lead?.text ?? null,
+        title: lead.title,
+        text: lead.text,
         region: scored.cluster.region,
         topic: scored.cluster.topic,
         significance: scored.significance,

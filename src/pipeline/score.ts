@@ -1,4 +1,5 @@
 import { computeBaseScore } from '../scoring/compute-base-score.js';
+import { representativeOf } from '../domain/cluster.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { LLMClient } from '../llm/llm-client.js';
 import type { Cluster, Signals, SourceId } from '../domain/types.js';
@@ -75,10 +76,10 @@ export async function score(
         recencyHalfLifeHours: ctx.recencyHalfLifeHours,
       });
 
-      const lead = cluster.items[0];
+      const lead = representativeOf(cluster);
       const rawAdjustment = await llm.adjustSignificance({
-        title: lead?.title ?? '',
-        text: lead?.text ?? null,
+        title: lead.title,
+        text: lead.text,
         baseScore: base,
       });
       const adjustment = clamp(
