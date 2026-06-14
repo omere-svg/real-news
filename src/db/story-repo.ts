@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, type SQL } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { membership, stories } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -109,21 +109,10 @@ export class DrizzleStoryRepo implements StoryRepo {
       .from(membership)
       .where(eq(membership.storyId, id));
 
-    return {
-      id: row.id,
-      title: row.title,
-      url: row.url,
-      region: row.region,
-      topic: row.topic,
-      significance: row.significance,
-      whyItMatters: row.whyItMatters,
-      memberRefs: members.map((m) => ({
-        source: m.source,
-        externalId: m.externalId,
-      })),
-      firstSeenAt: row.firstSeenAt,
-      updatedAt: row.updatedAt,
-    };
+    return rowToStory(
+      row,
+      members.map((m) => ({ source: m.source, externalId: m.externalId })),
+    );
   }
 
   async all(): Promise<Story[]> {
@@ -150,14 +139,48 @@ export class DrizzleStoryRepo implements StoryRepo {
     return this.hydrate(rows);
   }
 
+  /** Attach memberRefs to a page of story rows in ONE membership query (no N+1). */
   private async hydrate(
     rows: (typeof stories.$inferSelect)[],
   ): Promise<Story[]> {
-    const result: Story[] = [];
-    for (const row of rows) {
-      const story = await this.get(row.id);
-      if (story) result.push(story);
+    if (rows.length === 0) return [];
+
+    const members = await this.db
+      .select()
+      .from(membership)
+      .where(
+        inArray(
+          membership.storyId,
+          rows.map((r) => r.id),
+        ),
+      );
+
+    const refsByStory = new Map<string, RawItemRef[]>();
+    for (const m of members) {
+      const refs = refsByStory.get(m.storyId) ?? [];
+      refs.push({ source: m.source, externalId: m.externalId });
+      refsByStory.set(m.storyId, refs);
     }
-    return result;
+
+    return rows.map((row) => rowToStory(row, refsByStory.get(row.id) ?? []));
   }
+}
+
+/** Map a story row + its member refs to a domain Story. */
+function rowToStory(
+  row: typeof stories.$inferSelect,
+  memberRefs: RawItemRef[],
+): Story {
+  return {
+    id: row.id,
+    title: row.title,
+    url: row.url,
+    region: row.region,
+    topic: row.topic,
+    significance: row.significance,
+    whyItMatters: row.whyItMatters,
+    memberRefs,
+    firstSeenAt: row.firstSeenAt,
+    updatedAt: row.updatedAt,
+  };
 }
