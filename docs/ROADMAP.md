@@ -1,8 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-17 (114 tests green, 17 ADRs — Phase 2 complete +
-cross-tick dedup).
+the plan to finish it. Updated 2026-06-17 (120 tests green, 18 ADRs — Phases 2 & 3 complete).
 
 ---
 
@@ -58,9 +57,9 @@ Each step is TDD'd behind the seams already in place.
 5. ✅ **Audio podcast script** — `podcastScript(request)`: new Reasoner `narrate` (deep tier) turns the budgeted brief into spoken narration; degrades to the brief on failure. *Stretch (real TTS → audio file) still open.*
 6. ✅ **User preferences** — config-driven (`presentation` block) defaults wired into the query engine + viewer (time slider, topic/region toggles) (ADR-0015).
 
-### ◐ Phase 3 — Deeper reasoning (clustering across time)
+### ✅ Phase 3 — Deeper reasoning (clustering across time) *(DONE 2026-06-17)*
 7. ✅ **Persist embeddings + cross-tick dedup** — `resolve` stage blocking-matches new clusters against recent *stored* stories (in-memory cosine over a Region/Topic + recency window), Reasoner-confirms, and merges, so a developing story accretes corroboration over hours (ADR-0017). *Biggest correctness upgrade to the "active editor" — done.*
-8. ❌ **Neural embedder** behind the `Embedder` seam (transformers.js or an embeddings API) for better dedup quality. *Still a hashing stand-in.*
+8. ✅ **Neural embedder** — `OpenAIEmbedder` (`text-embedding-3-small`) behind the `Embedder` seam, wrapped in `ResilientEmbedder` (falls back to hashing on outage). Config-driven; `provider: hashing` stays for offline runs (ADR-0018).
 
 ### ▶ Phase 4 — Breadth
 9. **Signal inputs** (FX, World Bank, crypto) feeding `Signals`/significance — scoring context, not stories.
@@ -71,6 +70,7 @@ Each step is TDD'd behind the seams already in place.
 
 ---
 
-**Recommended next:** Phase 3 step 8 (neural embedder behind the `Embedder` seam) — now the
-single highest-leverage quality upgrade, since cross-tick dedup quality is bounded by the
-hashing stand-in. After that, Phase 4 breadth (signals/sources) and Phase 5 deploy.
+**Recommended next:** a **Telegram Bot interface layer** — a second Presentation adapter over
+the same `QueryEngine`/`StoryRepo` seams: user preferences, time-budgeted queries, and
+text briefs / podcast audio delivered to chat. Then Phase 4 breadth (signals/sources) and
+Phase 5 deploy.
