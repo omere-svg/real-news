@@ -1,14 +1,29 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
 import type { Region, Topic } from '../domain/types.js';
-import { UI_HTML } from './ui.js';
+import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
+import { renderUI } from './ui.js';
 
 /**
  * The read-only presentation server (ADR-0011, Principle 4). Serves the
  * pre-compiled Story cache — never makes real-time external calls. A thin HTTP
- * surface over StoryRepo.topStories plus the single-page viewer.
+ * surface over StoryRepo.topStories (plain list) and the QueryEngine (brief /
+ * outline / podcast, ADR-0014), plus the single-page viewer.
  */
-export function createApp(storyRepo: StoryRepo): Hono {
+
+/** Default attention budget + preferences applied when the request omits them. */
+export interface PresentationDefaults {
+  readonly minutes: number;
+  readonly regions?: readonly Region[];
+  readonly topics?: readonly Topic[];
+}
+
+export function createApp(
+  storyRepo: StoryRepo,
+  queryEngine: QueryEngine,
+  defaults: PresentationDefaults,
+): Hono {
   const app = new Hono();
 
   app.get('/health', (c) => c.json({ ok: true }));
@@ -26,7 +41,49 @@ export function createApp(storyRepo: StoryRepo): Hono {
     return c.json({ stories: await storyRepo.topStories(query) });
   });
 
-  app.get('/', (c) => c.html(UI_HTML));
+  app.get('/api/brief', async (c) => {
+    return c.json({ brief: await queryEngine.textBrief(briefRequestOf(c, defaults)) });
+  });
+
+  app.get('/api/podcast', async (c) => {
+    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults)) });
+  });
+
+  app.get('/api/outline', async (c) => {
+    const topic = (c.req.query('topic') ?? defaults.topics?.[0]) as Topic | undefined;
+    if (!topic) return c.json({ error: 'topic is required' }, 400);
+    return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults)) });
+  });
+
+  app.get('/', (c) =>
+    c.html(
+      renderUI({
+        minutes: defaults.minutes,
+        ...(defaults.regions?.length === 1 ? { region: defaults.regions[0] } : {}),
+        ...(defaults.topics?.length === 1 ? { topic: defaults.topics[0] } : {}),
+      }),
+    ),
+  );
 
   return app;
+}
+
+/** Build a BriefRequest from query params, falling back to the configured defaults. */
+function briefRequestOf(c: Context, defaults: PresentationDefaults): BriefRequest {
+  const minutesParam = c.req.query('minutes');
+  const regions = c.req.queries('region') as Region[] | undefined;
+  const topics = c.req.queries('topic') as Topic[] | undefined;
+  return {
+    minutes: minutesParam ? Number(minutesParam) : defaults.minutes,
+    ...(regions?.length
+      ? { regions }
+      : defaults.regions
+        ? { regions: defaults.regions }
+        : {}),
+    ...(topics?.length
+      ? { topics }
+      : defaults.topics
+        ? { topics: defaults.topics }
+        : {}),
+  };
 }

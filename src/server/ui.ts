@@ -1,5 +1,23 @@
-/** The single-page read-only viewer (ADR-0011). Plain HTML + fetch, no build step. */
-export const UI_HTML = `<!doctype html>
+/** Defaults the viewer seeds its controls from (ADR-0015). */
+export interface UiDefaults {
+  readonly minutes: number;
+  /** Pre-selected when exactly one region is preferred; else "All". */
+  readonly region?: string;
+  /** Pre-selected when exactly one topic is preferred; else "All". */
+  readonly topic?: string;
+}
+
+/** Mark a <select>/<option> selected for the given value (controlled vocab → safe). */
+function sel(value: string | undefined, candidate: string): string {
+  return value === candidate ? ' selected' : '';
+}
+
+/**
+ * The single-page read-only viewer (ADR-0011/0014). Plain HTML + fetch, no build
+ * step. Controls are seeded from the configured presentation defaults (ADR-0015).
+ */
+export function renderUI(defaults: UiDefaults): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -12,8 +30,10 @@ export const UI_HTML = `<!doctype html>
   header { padding:24px 20px 8px; max-width:860px; margin:0 auto; }
   h1 { margin:0; font-size:22px; letter-spacing:.3px; }
   .sub { color:var(--muted); font-size:13px; margin-top:4px; }
-  .filters { max-width:860px; margin:12px auto; padding:0 20px; display:flex; gap:8px; flex-wrap:wrap; }
+  .filters { max-width:860px; margin:12px auto; padding:0 20px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   select { background:var(--card); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:6px 10px; }
+  .budget { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
+  .budget input { accent-color:var(--accent); }
   main { max-width:860px; margin:0 auto; padding:8px 20px 60px; }
   .card { background:var(--card); border:1px solid #232833; border-radius:12px; padding:16px; margin:12px 0; }
   .row { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
@@ -26,6 +46,7 @@ export const UI_HTML = `<!doctype html>
   .why { color:#c7cede; margin:8px 0 0; }
   .meta { color:var(--muted); font-size:12px; margin-top:8px; }
   .empty { color:var(--muted); text-align:center; padding:48px 0; }
+  pre.doc { white-space:pre-wrap; word-wrap:break-word; font:15px/1.6 ui-sans-serif,system-ui,sans-serif; margin:0; }
 </style>
 </head>
 <body>
@@ -34,15 +55,52 @@ export const UI_HTML = `<!doctype html>
   <div class="sub">Background intelligence — stories scored, deduped, and explained.</div>
 </header>
 <div class="filters">
-  <select id="region"><option value="">All regions</option><option>World</option><option>Israel</option></select>
-  <select id="topic"><option value="">All topics</option><option>AI</option><option>Geopolitics</option><option>Politics</option><option>Sports</option><option>Business</option><option>Science</option><option>Other</option></select>
+  <select id="format">
+    <option value="stories">Stories</option>
+    <option value="brief">Text brief</option>
+    <option value="outline">Topic outline</option>
+    <option value="podcast">Podcast script</option>
+  </select>
+  <select id="region"><option value="">All regions</option><option${sel(defaults.region, 'World')}>World</option><option${sel(defaults.region, 'Israel')}>Israel</option></select>
+  <select id="topic"><option value="">All topics</option><option${sel(defaults.topic, 'AI')}>AI</option><option${sel(defaults.topic, 'Geopolitics')}>Geopolitics</option><option${sel(defaults.topic, 'Politics')}>Politics</option><option${sel(defaults.topic, 'Sports')}>Sports</option><option${sel(defaults.topic, 'Business')}>Business</option><option${sel(defaults.topic, 'Science')}>Science</option><option${sel(defaults.topic, 'Other')}>Other</option></select>
+  <label class="budget" id="budgetCtl">⏱ <input id="minutes" type="range" min="1" max="30" value="${defaults.minutes}" /> <span id="minutesLabel">${defaults.minutes} min</span></label>
 </div>
 <main id="list"><div class="empty">Loading…</div></main>
 <script>
 const list = document.getElementById('list');
+const formatSel = document.getElementById('format');
+const regionSel = document.getElementById('region');
+const topicSel = document.getElementById('topic');
+const minutesInput = document.getElementById('minutes');
+const minutesLabel = document.getElementById('minutesLabel');
+const budgetCtl = document.getElementById('budgetCtl');
+const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
 async function load() {
-  const region = document.getElementById('region').value;
-  const topic = document.getElementById('topic').value;
+  const format = formatSel.value;
+  const region = regionSel.value;
+  const topic = topicSel.value;
+  budgetCtl.style.display = format === 'stories' ? 'none' : 'flex';
+  minutesLabel.textContent = minutesInput.value + ' min';
+
+  if (format === 'stories') return loadStories(region, topic);
+
+  if (format === 'outline' && !topic) {
+    list.innerHTML = '<div class="empty">Pick a topic for the outline.</div>';
+    return;
+  }
+  const params = new URLSearchParams({ minutes: minutesInput.value });
+  if (region) params.set('region', region);
+  if (topic) params.set('topic', topic);
+  const res = await fetch('/api/' + format + '?' + params);
+  const body = await res.json();
+  const text = body[DOC_FIELD[format]] || '';
+  list.innerHTML = '<div class="card"><pre class="doc">' + esc(text) + '</pre></div>';
+}
+
+async function loadStories(region, topic) {
   const params = new URLSearchParams({ limit: '50' });
   if (region) params.set('region', region);
   if (topic) params.set('topic', topic);
@@ -59,10 +117,14 @@ async function load() {
       '<div class="meta">'+s.memberRefs.length+' source(s): '+esc(sources)+'</div></div>';
   }).join('');
 }
-function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-document.getElementById('region').onchange = load;
-document.getElementById('topic').onchange = load;
+
+formatSel.onchange = load;
+regionSel.onchange = load;
+topicSel.onchange = load;
+minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + ' min'; };
+minutesInput.onchange = load;
 load();
 </script>
 </body>
 </html>`;
+}
