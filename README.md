@@ -49,7 +49,8 @@ boot). Secrets and deploy knobs come from the environment:
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | — | Enables the OpenAI reasoning tiers (optional; see ADR-0012) |
+| `OPENAI_API_KEY` | — | OpenAI reasoning tiers, embeddings, and TTS (optional; ADR-0012/0018/0020) |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot, when `telegram.enabled` (ADR-0019) |
 | `PORT` | `3000` | HTTP port |
 | `DB_URL` | `file:./data/horizon.db` | SQLite file, or a Turso `libsql://…` URL |
 | `DB_AUTH_TOKEN` | — | Turso auth token (with a remote `DB_URL`) |

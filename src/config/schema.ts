@@ -69,6 +69,25 @@ export const configSchema = z.object({
     maxEditorialAdjustment: z.number().min(0).max(10).default(1.5),
   }),
 
+  telegram: z
+    .object({
+      /** Master switch for the Telegram bot adapter (ADR-0019). */
+      enabled: z.boolean().default(false),
+      /** Long-poll server-side wait per cycle. */
+      pollTimeoutSeconds: z.number().int().positive().default(30),
+      /** Allowlist of chat ids the bot answers; empty = open. */
+      allowedChatIds: z.array(z.number().int()).default([]),
+      /** Podcast text-to-speech (ADR-0020). */
+      tts: z
+        .object({
+          enabled: z.boolean().default(true),
+          model: z.string().default('gpt-4o-mini-tts'),
+          voice: z.string().default('alloy'),
+        })
+        .default({}),
+    })
+    .default({}),
+
   presentation: z.object({
     /** Default topic preferences for the attention budget (Principle 5, ADR-0015). */
     preferredTopics: z.array(topicSchema).default([]),

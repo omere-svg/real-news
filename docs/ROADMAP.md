@@ -1,7 +1,8 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-17 (120 tests green, 18 ADRs — Phases 2 & 3 complete).
+the plan to finish it. Updated 2026-06-17 (149 tests green, 20 ADRs — Phases 2 & 3 + the
+Telegram bot complete).
 
 ---
 
@@ -17,6 +18,7 @@ The entire background engine — Phase 1's 3 features — is done and running.
 | **Scheduler / daemon** | In-process tick loop every X min (`main.ts`). | ✅ |
 | **Config** | YAML + Zod (`config/horizon.yaml`). | ✅ |
 | **Presentation** (Phase 2) | Full read-only **query layer**: `budgetStories` attention kernel + `HorizonQuery` (text brief, topic outline, podcast script) over `GET /api/stories\|brief\|outline\|podcast`, with a single-page viewer (format switch, time slider, topic/region toggles). Config-driven preferences. | ✅ |
+| **Telegram bot** | Second Presentation adapter (ADR-0019/0020): `/brief\|outline\|podcast\|prefs`, per-chat preferences, long-poll, podcast **audio** via OpenAI TTS. | ✅ |
 
 Principles 1–5 are realized. Decisions are in `docs/adr/0001–0017`; domain language in
 `../CONTEXT.md`.
@@ -61,6 +63,14 @@ Each step is TDD'd behind the seams already in place.
 7. ✅ **Persist embeddings + cross-tick dedup** — `resolve` stage blocking-matches new clusters against recent *stored* stories (in-memory cosine over a Region/Topic + recency window), Reasoner-confirms, and merges, so a developing story accretes corroboration over hours (ADR-0017). *Biggest correctness upgrade to the "active editor" — done.*
 8. ✅ **Neural embedder** — `OpenAIEmbedder` (`text-embedding-3-small`) behind the `Embedder` seam, wrapped in `ResilientEmbedder` (falls back to hashing on outage). Config-driven; `provider: hashing` stays for offline runs (ADR-0018).
 
+### ✅ Telegram Bot interface *(DONE 2026-06-17)*
+- A second Presentation adapter over the same `QueryEngine`/`StoryRepo` seams (ADR-0019):
+  `parseCommand` kernel, `HorizonBot` dispatcher, thin `TelegramTransport` (Bot API via
+  `fetch`, long-poll), per-chat persisted preferences (`ChatPreferencesRepo`), chat-id
+  allowlist. Commands: `/brief`, `/outline`, `/podcast`, `/prefs`, `/start`.
+- **Podcast audio** via a `Synthesizer` seam + `OpenAITTS`, resilient (falls back to text);
+  the vision's audio podcast (ADR-0020). Off by default (`telegram.enabled`).
+
 ### ▶ Phase 4 — Breadth
 9. **Signal inputs** (FX, World Bank, crypto) feeding `Signals`/significance — scoring context, not stories.
 10. **More sources** — Google Trends, data.gov.il adapter, a Sports source.
@@ -70,7 +80,6 @@ Each step is TDD'd behind the seams already in place.
 
 ---
 
-**Recommended next:** a **Telegram Bot interface layer** — a second Presentation adapter over
-the same `QueryEngine`/`StoryRepo` seams: user preferences, time-budgeted queries, and
-text briefs / podcast audio delivered to chat. Then Phase 4 breadth (signals/sources) and
-Phase 5 deploy.
+**Recommended next:** Phase 4 — **numeric Signal inputs** (FX / World Bank / crypto) feeding
+significance, then **more sources** (Google Trends, data.gov.il, Sports). After that,
+Phase 5 deploy + observability.

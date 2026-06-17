@@ -87,6 +87,8 @@ failures so one dead endpoint never crashes the loop.
 fallback, merge confirmation, pre-scoring); *Opus* does the deep Why-It-Matters analysis
 on the top-N only.
 
-**Presentation Layer** — read-only viewer of finalized Stories. Phase 1: interfaces and
-stubs only. Maps user constraints (time budget, topic preferences) onto the pre-computed
-Significance scores. *No real-time external calls — reads the cache only.*
+**Presentation Layer** — read-only surfaces over finalized Stories, mapping user constraints
+(time budget, topic/region preferences) onto the pre-computed Significance scores via the
+`QueryEngine`. Two adapters: the single-page **web viewer** and the **Telegram bot** (text
+briefs, topic outlines, and podcast audio; per-chat preferences). *No real-time external
+calls — reads the cache only.*

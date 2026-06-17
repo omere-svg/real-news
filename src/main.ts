@@ -29,6 +29,15 @@ import { systemClock } from './scheduler/clock.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
+import { DrizzleChatPreferencesRepo } from './db/chat-preferences-repo.js';
+import { BotApiTransport } from './telegram/bot-api-transport.js';
+import { OpenAITTS } from './telegram/openai-tts.js';
+import { ResilientSynthesizer } from './telegram/resilient-synthesizer.js';
+import { HorizonBot } from './telegram/horizon-bot.js';
+import { pollOnce } from './telegram/poll.js';
+import type { Synthesizer } from './telegram/synthesizer.js';
+import type { QueryEngine } from './presentation/query-engine.js';
+import type { Db } from './db/client.js';
 import type { Config, SourceConfig } from './config/schema.js';
 
 /**
@@ -132,9 +141,58 @@ async function main(): Promise<void> {
   void runTick();
   setInterval(() => void runTick(), config.tickIntervalMinutes * 60_000);
 
-  const app = createApp(storyRepo, queryEngine, toPresentationDefaults(config));
+  const defaults = toPresentationDefaults(config);
+  const app = createApp(storyRepo, queryEngine, defaults);
   serve({ fetch: app.fetch, port: PORT });
   console.log(`[horizon] viewer on http://localhost:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
+
+  if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults);
+}
+
+/** Start the Telegram bot long-poll loop (ADR-0019), if enabled and tokened. */
+function startTelegramBot(
+  config: Config,
+  db: Db,
+  query: QueryEngine,
+  defaults: ReturnType<typeof toPresentationDefaults>,
+): void {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.warn('[telegram] enabled but TELEGRAM_BOT_TOKEN is missing — skipping.');
+    return;
+  }
+
+  const tts = config.telegram.tts;
+  const synthesizer: Synthesizer | null = tts.enabled
+    ? new ResilientSynthesizer(new OpenAITTS({ model: tts.model, voice: tts.voice }))
+    : null;
+
+  const transport = new BotApiTransport({ token });
+  const bot = new HorizonBot({
+    transport,
+    query,
+    prefs: new DrizzleChatPreferencesRepo(db),
+    synthesizer,
+    defaults,
+    allowedChatIds: config.telegram.allowedChatIds,
+  });
+
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  const loop = async (): Promise<void> => {
+    let offset = 0;
+    for (;;) {
+      try {
+        offset = await pollOnce(transport, bot, offset, config.telegram.pollTimeoutSeconds);
+      } catch (err) {
+        console.error('[telegram] poll failed, retrying:', err); // never kill the loop
+        await sleep(2000);
+      }
+    }
+  };
+  void loop();
+  console.log('[telegram] bot polling for updates.');
 }
 
 main().catch((err) => {
