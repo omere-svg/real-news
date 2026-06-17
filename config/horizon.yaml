@@ -51,8 +51,19 @@ scoring:
   recencyHalfLifeHours: 24
   maxEditorialAdjustment: 1.5
 
-# Presentation defaults (Phase 1: stubs only, ADR-0011).
+# Presentation / query layer (ADR-0013/0014/0015). Attention budgeting + preferences.
 presentation:
+  # Default attention budget and preferences, applied when a request omits them.
+  defaultMinutes: 3
   preferredTopics:
     - AI
     - Geopolitics
+  preferredRegions: []
+  # Budget cost model (ADR-0013): delivery rates and per-depth word costs.
+  textWordsPerMinute: 220   # reading rate (brief, outline)
+  audioWordsPerMinute: 150  # speaking rate (podcast script)
+  candidatePool: 200        # how many top Stories to consider per request
+  wordCost:
+    headline: 18
+    brief: 45
+    full: 95

@@ -1,10 +1,14 @@
 import { z } from 'zod';
+import { REGIONS, TOPICS } from '../domain/types.js';
 
 /**
  * The configuration contract (ADR-0003). The single source of truth for the
  * shape of config/horizon.yaml. Parsed once at boot; the result is frozen and
  * injected. Secrets (API keys) come from the environment, never from here.
  */
+
+const topicSchema = z.enum(TOPICS as [string, ...string[]]);
+const regionSchema = z.enum(REGIONS as [string, ...string[]]);
 
 export const sourceIdSchema = z.enum([
   'hackernews',
@@ -53,8 +57,26 @@ export const configSchema = z.object({
   }),
 
   presentation: z.object({
-    /** Default topic preferences for the attention budget (Principle 5). */
-    preferredTopics: z.array(z.string()).default([]),
+    /** Default topic preferences for the attention budget (Principle 5, ADR-0015). */
+    preferredTopics: z.array(topicSchema).default([]),
+    /** Default region preferences (Principle 5, ADR-0015). */
+    preferredRegions: z.array(regionSchema).default([]),
+    /** Default attention budget in minutes when a request omits it. */
+    defaultMinutes: z.number().positive().default(3),
+    /** Reading rate for text artifacts — brief, outline (ADR-0013/0014). */
+    textWordsPerMinute: z.number().positive().default(220),
+    /** Speaking rate for the podcast script (ADR-0013/0014). */
+    audioWordsPerMinute: z.number().positive().default(150),
+    /** How many Significance-ranked Stories to pull as the candidate pool. */
+    candidatePool: z.number().int().positive().default(200),
+    /** Word cost of rendering a Story at each depth (the ADR-0013 cost model). */
+    wordCost: z
+      .object({
+        headline: z.number().positive().default(18),
+        brief: z.number().positive().default(45),
+        full: z.number().positive().default(95),
+      })
+      .default({}),
   }),
 });
 
