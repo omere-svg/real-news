@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
 import type { Region, Topic } from '../domain/types.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
+import { normalizeMinutes } from '../presentation/minutes.js';
 import { renderUI } from './ui.js';
 
 /**
@@ -19,10 +20,19 @@ export interface PresentationDefaults {
   readonly topics?: readonly Topic[];
 }
 
+/** Web-surface hardening knobs (ADR-0023). */
+export interface WebOptions {
+  /** Hard cap on requested minutes (cost-amplification guard). */
+  readonly maxMinutes: number;
+  /** Expose the LLM-backed /api/podcast endpoint. Off by default. */
+  readonly podcastEnabled: boolean;
+}
+
 export function createApp(
   storyRepo: StoryRepo,
   queryEngine: QueryEngine,
   defaults: PresentationDefaults,
+  web: WebOptions,
 ): Hono {
   const app = new Hono();
 
@@ -42,17 +52,19 @@ export function createApp(
   });
 
   app.get('/api/brief', async (c) => {
-    return c.json({ brief: await queryEngine.textBrief(briefRequestOf(c, defaults)) });
+    return c.json({ brief: await queryEngine.textBrief(briefRequestOf(c, defaults, web)) });
   });
 
   app.get('/api/podcast', async (c) => {
-    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults)) });
+    // LLM-backed cost vector — off by default (ADR-0023). Telegram is the audited surface.
+    if (!web.podcastEnabled) return c.json({ error: 'not found' }, 404);
+    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults, web)) });
   });
 
   app.get('/api/outline', async (c) => {
     const topic = (c.req.query('topic') ?? defaults.topics?.[0]) as Topic | undefined;
     if (!topic) return c.json({ error: 'topic is required' }, 400);
-    return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults)) });
+    return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
   });
 
   app.get('/', (c) =>
@@ -68,13 +80,20 @@ export function createApp(
   return app;
 }
 
-/** Build a BriefRequest from query params, falling back to the configured defaults. */
-function briefRequestOf(c: Context, defaults: PresentationDefaults): BriefRequest {
+/** Build a BriefRequest from query params, falling back to defaults, clamping minutes. */
+function briefRequestOf(
+  c: Context,
+  defaults: PresentationDefaults,
+  web: WebOptions,
+): BriefRequest {
   const minutesParam = c.req.query('minutes');
   const regions = c.req.queries('region') as Region[] | undefined;
   const topics = c.req.queries('topic') as Topic[] | undefined;
   return {
-    minutes: minutesParam ? Number(minutesParam) : defaults.minutes,
+    minutes: normalizeMinutes(
+      minutesParam ? Number(minutesParam) : defaults.minutes,
+      web.maxMinutes,
+    ),
     ...(regions?.length
       ? { regions }
       : defaults.regions

@@ -37,7 +37,19 @@ async function appWithStories() {
     memberRefs: [{ source: 'gdelt', externalId: '2' }],
   });
   const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
-  return createApp(repo, queryEngine, { minutes: 10 });
+  return createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, podcastEnabled: true });
+}
+
+async function appWith(web: { maxMinutes: number; podcastEnabled: boolean }) {
+  const db = await createTestDb();
+  const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+  await repo.upsert({
+    id: 'a', title: 'AI story', url: null, region: 'World', topic: 'AI',
+    significance: 9, whyItMatters: 'Because.',
+    memberRefs: [{ source: 'hackernews', externalId: '1' }],
+  });
+  const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+  return createApp(repo, queryEngine, { minutes: 10 }, web);
 }
 
 describe('HTTP API', () => {
@@ -98,6 +110,21 @@ describe('HTTP API', () => {
     const res = await app.request('/api/podcast?minutes=10');
     const body = (await res.json()) as { script: string };
     expect(body.script).toContain('Narrated'); // FakeLLM.narrate default
+  });
+
+  it('GET /api/podcast is 404 when web podcast is disabled (default)', async () => {
+    const app = await appWith({ maxMinutes: 60, podcastEnabled: false });
+    const res = await app.request('/api/podcast?minutes=5');
+    expect(res.status).toBe(404);
+  });
+
+  it('clamps an oversized minutes query param', async () => {
+    // maxMinutes 1 → even a huge request yields a tiny brief (1 story, headline only).
+    const app = await appWith({ maxMinutes: 1, podcastEnabled: false });
+    const res = await app.request('/api/brief?minutes=999999');
+    const body = (await res.json()) as { brief: string };
+    // 1 min * 20 wpm = 20 words → at most ~2 headlines; never the whole pool.
+    expect(body.brief.split('\n').filter((l) => l.startsWith('•')).length).toBeLessThanOrEqual(2);
   });
 
   it('GET / seeds the viewer time slider from the configured default', async () => {
