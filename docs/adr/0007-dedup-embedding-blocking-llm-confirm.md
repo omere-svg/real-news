@@ -1,6 +1,7 @@
 # ADR-0007: Dedup by embedding blocking + LLM confirm; local embedder
 
-- **Status:** Accepted
+- **Status:** Accepted — the embedder *source* is superseded by ADR-0018 (now OpenAI
+  embeddings, not a local model); the blocking+confirm dedup design stands.
 - **Date:** 2026-06-11
 
 ## Context

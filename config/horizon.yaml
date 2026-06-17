@@ -42,6 +42,13 @@ reasoner:
   deepModel: gpt-4o
   deepAnalysisTopN: 10
 
+# Dedup embeddings (ADR-0018). `openai` is neural with a hashing fallback;
+# `hashing` is fully offline / zero-cost. dimensions also sets the fallback width.
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  dimensions: 1536
+
 # Dedup: within-tick (ADR-0007) and cross-tick (ADR-0017).
 dedup:
   candidateThreshold: 0.78

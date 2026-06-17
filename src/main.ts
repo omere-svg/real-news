@@ -22,6 +22,9 @@ import { Reasoner } from './llm/reasoner.js';
 import { OpenAITransport } from './llm/openai-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
+import { OpenAIEmbedder } from './embedding/openai-embedder.js';
+import { ResilientEmbedder } from './embedding/resilient-embedder.js';
+import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { createApp } from './server/app.js';
@@ -58,6 +61,17 @@ function buildSource(s: SourceConfig): SourceAdapter | null {
       console.warn(`[horizon] source "${s.id}" has no adapter yet — skipping.`);
       return null;
   }
+}
+
+/** Build the Embedder seam from config — neural with a hashing fallback (ADR-0018). */
+function buildEmbedder(config: Config): Embedder {
+  const { provider, model, dimensions } = config.embedder;
+  const hashing = new HashingEmbedder(dimensions);
+  if (provider === 'hashing') return hashing;
+  return new ResilientEmbedder(
+    new OpenAIEmbedder({ model, dimensions }),
+    hashing,
+  );
 }
 
 function buildSources(config: Config): SourceAdapter[] {
@@ -97,7 +111,7 @@ async function main(): Promise<void> {
     rawItemRepo,
     storyRepo,
     llm,
-    embedder: new HashingEmbedder(),
+    embedder: buildEmbedder(config),
     clock: systemClock,
     config: toTickConfig(config),
   });

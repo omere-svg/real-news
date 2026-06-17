@@ -44,6 +44,17 @@ export const configSchema = z.object({
     deepAnalysisTopN: z.number().int().positive().default(10),
   }),
 
+  embedder: z
+    .object({
+      /** `openai` (neural, ADR-0018) or `hashing` (offline stand-in, ADR-0007). */
+      provider: z.enum(['openai', 'hashing']).default('openai'),
+      /** Embeddings model when provider is `openai`. */
+      model: z.string().default('text-embedding-3-small'),
+      /** Vector dimensionality (also the hashing fallback width). */
+      dimensions: z.number().int().positive().default(1536),
+    })
+    .default({}),
+
   dedup: z.object({
     /** Cosine similarity above which two items are candidate pairs (ADR-0007). */
     candidateThreshold: z.number().min(0).max(1).default(0.78),
