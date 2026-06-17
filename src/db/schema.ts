@@ -75,3 +75,15 @@ export const membership = sqliteTable(
     index('membership_story_idx').on(t.storyId),
   ],
 );
+
+/**
+ * `chat_preferences` holds per-chat presentation preferences for the Telegram
+ * bot (ADR-0019). Keyed by Telegram `chatId`. All preference columns are
+ * nullable — an unset column falls back to the config defaults (ADR-0015).
+ */
+export const chatPreferences = sqliteTable('chat_preferences', {
+  chatId: integer('chat_id').primaryKey(),
+  topics: text('topics', { mode: 'json' }).$type<Topic[]>(),
+  regions: text('regions', { mode: 'json' }).$type<Region[]>(),
+  defaultMinutes: real('default_minutes'),
+});
