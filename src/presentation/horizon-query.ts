@@ -25,6 +25,10 @@ export interface QueryParams {
   readonly audioWordsPerMinute: number;
   /** Per-depth word cost shared by all formats (ADR-0013). */
   readonly wordCost: Record<Depth, number>;
+  /** Readability floor — minimum depth every shown Story gets (ADR-0024). */
+  readonly minDepth: Depth;
+  /** Always show at least this many Stories, even at a tiny budget (ADR-0024). */
+  readonly minStories: number;
   /** How many Significance-ranked Stories to pull as the candidate pool. */
   readonly candidatePool: number;
 }
@@ -82,6 +86,8 @@ export class HorizonQuery implements QueryEngine {
     return budgetStories(pool, request.minutes, {
       wordsPerMinute,
       wordCost: this.deps.params.wordCost,
+      minDepth: this.deps.params.minDepth,
+      minStories: this.deps.params.minStories,
     });
   }
 }

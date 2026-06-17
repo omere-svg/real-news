@@ -11,6 +11,8 @@ const PARAMS: QueryParams = {
   audioWordsPerMinute: 10,
   wordCost: { headline: 10, brief: 20, full: 40 },
   candidatePool: 100,
+  minDepth: 'headline',
+  minStories: 0,
 };
 
 async function appWithStories() {

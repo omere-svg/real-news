@@ -91,9 +91,9 @@ scoring:
 # Telegram bot interface (ADR-0019/0020). Token in .env (TELEGRAM_BOT_TOKEN), never here.
 # Off by default; set enabled: true to run the bot alongside the tick loop + viewer.
 telegram:
-  enabled: false
+  enabled: true
   pollTimeoutSeconds: 30
-  allowedChatIds: []      # chat ids the bot answers (ADR-0022)
+  allowedChatIds: [2007614249]      # chat ids the bot answers (ADR-0022)
   openAccess: false       # default-deny: empty allowlist + false = answer no one
   limits:                 # rate limits + cost quotas (ADR-0022)
     perMinute: 8          # burst: max commands per chat per minute
@@ -116,6 +116,9 @@ presentation:
   defaultMinutes: 3
   maxMinutes: 60            # hard cap on requested minutes (cost guard, ADR-0023)
   webPodcastEnabled: false  # expose the LLM-backed /api/podcast on the web (ADR-0023)
+  # Readability floor (ADR-0024): prefer few, fully-explained stories over many headlines.
+  minDepth: full           # headline | brief | full — minimum depth every story gets
+  minStories: 3            # always show at least this many, even at /brief 1
   preferredTopics:
     - AI
     - Geopolitics

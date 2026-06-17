@@ -60,6 +60,8 @@ describe('toQueryParams', () => {
     expect(params.audioWordsPerMinute).toBe(150);
     expect(params.candidatePool).toBe(200);
     expect(params.wordCost).toEqual({ headline: 18, brief: 45, full: 95 });
+    expect(params.minDepth).toBe('full'); // readability floor default (ADR-0024)
+    expect(params.minStories).toBe(3);
   });
 
   it('honours overrides', () => {

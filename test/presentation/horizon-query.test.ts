@@ -14,6 +14,8 @@ const PARAMS: QueryParams = {
   audioWordsPerMinute: 10,
   wordCost: { headline: 10, brief: 20, full: 40 },
   candidatePool: 100,
+  minDepth: 'headline', // these tests exercise the general engine; floor tested separately
+  minStories: 0,
 };
 
 function upsert(over: Partial<StoryUpsert> = {}): StoryUpsert {
@@ -121,6 +123,24 @@ describe('HorizonQuery', () => {
     expect(script).toBe('SPOKEN SCRIPT');
     expect(llm.narrateCalls).toBe(1);
     expect(seenBrief).toContain('Alpha'); // narration is built from the brief
+  });
+
+  it('readability floor: a tiny budget yields a few full, explained stories', async () => {
+    const repo = await seed(
+      upsert({ id: 'a', title: 'Alpha', significance: 9, whyItMatters: 'Alpha fully explained.' }),
+      upsert({ id: 'b', title: 'Bravo', significance: 8, whyItMatters: 'Bravo fully explained.' }),
+      upsert({ id: 'c', title: 'Charlie', significance: 7, whyItMatters: 'Charlie fully explained.' }),
+      upsert({ id: 'd', title: 'Delta', significance: 6, whyItMatters: 'Delta fully explained.' }),
+    );
+    const floored = { ...PARAMS, minDepth: 'full' as const, minStories: 3 };
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: floored });
+
+    const brief = await q.textBrief({ minutes: 1 }); // tiny budget
+
+    expect(brief).toContain('3 stories'); // floored to 3, not a dozen headlines
+    expect(brief).toContain('Alpha fully explained.'); // each one carries its context
+    expect(brief).toContain('Charlie fully explained.');
+    expect(brief).not.toContain('Delta'); // 4th dropped — fewer but readable
   });
 
   it('podcastScript falls back to the deterministic brief when narration fails', async () => {

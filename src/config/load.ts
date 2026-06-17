@@ -50,6 +50,8 @@ export function toQueryParams(config: Config): QueryParams {
     audioWordsPerMinute: p.audioWordsPerMinute,
     candidatePool: p.candidatePool,
     wordCost: p.wordCost,
+    minDepth: p.minDepth,
+    minStories: p.minStories,
   };
 }
 
