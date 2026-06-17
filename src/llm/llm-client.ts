@@ -30,6 +30,12 @@ export interface LLMClient {
    * only on the top-N most significant Clusters per tick.
    */
   analyze(input: AnalyzeInput): Promise<string>;
+
+  /**
+   * Expensive tier (Opus): turn a budgeted text brief into spoken-flow podcast
+   * narration (ADR-0014). Read-path only artifact that touches the model.
+   */
+  narrate(input: NarrateInput): Promise<string>;
 }
 
 export interface ClassifyInput {
@@ -59,4 +65,11 @@ export interface AnalyzeInput {
   readonly region: Region;
   readonly topic: Topic;
   readonly significance: number;
+}
+
+export interface NarrateInput {
+  /** The user's attention budget the narration must fit (ADR-0013). */
+  readonly minutes: number;
+  /** The deterministic text brief to render as spoken narration. */
+  readonly brief: string;
 }

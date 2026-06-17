@@ -4,6 +4,7 @@ import type {
   Classification,
   ClassifyInput,
   LLMClient,
+  NarrateInput,
   StoryStub,
 } from '../../src/llm/llm-client.js';
 
@@ -12,6 +13,7 @@ export interface FakeLLMOptions {
   confirm?: boolean | ((a: StoryStub, b: StoryStub) => boolean);
   adjust?: number;
   analyze?: string | ((input: AnalyzeInput) => string);
+  narrate?: string | ((input: NarrateInput) => string);
 }
 
 /** A deterministic LLMClient for tests, with call counters per method. */
@@ -20,6 +22,7 @@ export class FakeLLM implements LLMClient {
   confirmCalls = 0;
   adjustCalls = 0;
   analyzeCalls = 0;
+  narrateCalls = 0;
 
   constructor(private readonly options: FakeLLMOptions = {}) {}
 
@@ -47,5 +50,12 @@ export class FakeLLM implements LLMClient {
     const a = this.options.analyze;
     if (typeof a === 'function') return a(input);
     return a ?? `Why "${input.title}" matters.`;
+  }
+
+  async narrate(input: NarrateInput): Promise<string> {
+    this.narrateCalls += 1;
+    const n = this.options.narrate;
+    if (typeof n === 'function') return n(input);
+    return n ?? `Narrated (${input.minutes}m): ${input.brief}`;
   }
 }

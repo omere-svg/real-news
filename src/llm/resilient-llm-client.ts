@@ -4,6 +4,7 @@ import type {
   Classification,
   ClassifyInput,
   LLMClient,
+  NarrateInput,
   StoryStub,
 } from './llm-client.js';
 
@@ -53,6 +54,15 @@ export class ResilientLLMClient implements LLMClient {
     } catch (err) {
       this.onError('analyze', err);
       return '';
+    }
+  }
+
+  async narrate(input: NarrateInput): Promise<string> {
+    try {
+      return await this.delegate.narrate(input);
+    } catch (err) {
+      this.onError('narrate', err);
+      return ''; // caller falls back to the deterministic brief (ADR-0014)
     }
   }
 }

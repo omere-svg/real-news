@@ -6,6 +6,7 @@ import type {
   Classification,
   ClassifyInput,
   LLMClient,
+  NarrateInput,
   StoryStub,
 } from './llm-client.js';
 import { REGIONS, TOPICS } from '../domain/types.js';
@@ -107,6 +108,24 @@ export class AnthropicClient implements LLMClient {
             `${input.region}/${input.topic} story (significance ${input.significance.toFixed(1)}/10).\n\n` +
             `Title: ${input.title}\n${input.text ? `Text: ${input.text}\n` : ''}\n` +
             `Be analytical and specific. Output only the analysis text.`,
+        },
+      ],
+    });
+    return textOf(message);
+  }
+
+  async narrate(input: NarrateInput): Promise<string> {
+    const message = await this.client.messages.create({
+      model: this.deps.deepModel,
+      max_tokens: 1024,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Turn the following news brief into a single-host podcast script of about ` +
+            `${input.minutes} minute(s) of spoken narration. Use natural spoken flow with ` +
+            `smooth transitions between stories; no bullet points, headings, or stage ` +
+            `directions. Output only the script text.\n\n${input.brief}`,
         },
       ],
     });
