@@ -66,9 +66,12 @@ The background loop wakes every `X` minutes (the **tick**) and runs these stages
 4. **Embed** — vectorize titles for similarity (local model).
 5. **Cluster** — find candidate same-Story pairs by embedding proximity, then the
    Reasoner confirms the merge.
-6. **Score** — compute Significance from Signals + bounded editorial adjustment.
-7. **Analyze** — escalate the top-N most significant Clusters to Opus for Why-It-Matters.
-8. **Upsert Stories** — write finalized Stories to the read-model.
+6. **Resolve** — match each Cluster against recent stored Stories (same Region/Topic) and,
+   on a Reasoner-confirmed embedding match, merge into that Story so it accretes
+   corroboration across ticks (cross-tick dedup); otherwise assign a fresh stable id.
+7. **Score** — compute Significance from Signals + bounded editorial adjustment.
+8. **Analyze** — escalate the top-N most significant Clusters to Opus for Why-It-Matters.
+9. **Upsert Stories** — write finalized Stories to the read-model (and persist their embedding).
 
 **Tick** — one full pass of the pipeline. **Tick Report** — its structured outcome
 (counts, skipped Sources, errors), returned by the runner for observability.

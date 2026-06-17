@@ -1,7 +1,8 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-17 (96 tests green, 15 ADRs — Phase 2 complete).
+the plan to finish it. Updated 2026-06-17 (114 tests green, 17 ADRs — Phase 2 complete +
+cross-tick dedup).
 
 ---
 
@@ -13,12 +14,12 @@ The entire background engine — Phase 1's 3 features — is done and running.
 |---|---|---|
 | **Extraction worker** (Feature 1) | `pipeline/extract` stage + 6 adapters behind the `SourceAdapter` seam: Hacker News, arXiv, GDELT, Knesset, SEC EDGAR, Wikipedia. Health-checked, per-source failure isolation. | ✅ |
 | **Relational cache** (Feature 2) | SQLite + Drizzle; `raw_items` → `stories` → `membership`; idempotent upsert; `topStories` read. | ✅ |
-| **Reasoning loop** (Feature 3) | `classify → embed → cluster/dedup → score → analyze`, sequenced by `TickRunner`. `computeBaseScore` (verifiable signals) + bounded LLM nudge. OpenAI reasoner behind `LLMClient`, wrapped in `ResilientLLMClient`. | ✅ |
+| **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze`, sequenced by `TickRunner`. `computeBaseScore` (verifiable signals) + bounded LLM nudge. `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
 | **Scheduler / daemon** | In-process tick loop every X min (`main.ts`). | ✅ |
 | **Config** | YAML + Zod (`config/horizon.yaml`). | ✅ |
 | **Presentation** (Phase 2) | Full read-only **query layer**: `budgetStories` attention kernel + `HorizonQuery` (text brief, topic outline, podcast script) over `GET /api/stories\|brief\|outline\|podcast`, with a single-page viewer (format switch, time slider, topic/region toggles). Config-driven preferences. | ✅ |
 
-Principles 1–5 are realized. Decisions are in `docs/adr/0001–0015`; domain language in
+Principles 1–5 are realized. Decisions are in `docs/adr/0001–0017`; domain language in
 `../CONTEXT.md`.
 
 ---
@@ -32,8 +33,8 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0015`; domain l
 | **Topic-focused outline** | ✅ `topicOutline`, grouped by Region (ADR-0014) |
 | **Attention & time budgeting** (Principle 5) | ✅ pure `budgetStories` inverted-pyramid kernel (ADR-0013) |
 | **User preferences** (topics/regions you care about) | ✅ config-driven defaults wired into query engine + viewer (ADR-0015) |
-| **Cross-tick dedup** — merge a new item into an *existing* story from a prior tick | ❌ `cluster()` only sees the current tick's batch (no DB lookup) |
-| **Persisted embeddings / vector store** (needed for cross-tick dedup) | ❌ embeddings computed then discarded |
+| **Cross-tick dedup** — merge a new item into an *existing* story from a prior tick | ✅ `resolve` stage: block by Region/Topic + recency window, cosine-match stored embeddings, Reasoner-confirm, merge (ADR-0017) |
+| **Persisted embeddings / vector store** (needed for cross-tick dedup) | ✅ `story_vectors` table; representative vector stored each upsert |
 | Neural embedder (currently a hashing stand-in) | ⚠️ works, lower-quality dedup |
 | Extra sources: Google Trends, data.gov.il, numeric **signals** (FX/World Bank/crypto), Sports | ❌ |
 | Real deployment (Turso + host), observability | ⚠️ Docker/README ready, not deployed |
@@ -57,9 +58,9 @@ Each step is TDD'd behind the seams already in place.
 5. ✅ **Audio podcast script** — `podcastScript(request)`: new Reasoner `narrate` (deep tier) turns the budgeted brief into spoken narration; degrades to the brief on failure. *Stretch (real TTS → audio file) still open.*
 6. ✅ **User preferences** — config-driven (`presentation` block) defaults wired into the query engine + viewer (time slider, topic/region toggles) (ADR-0015).
 
-### ▶ Phase 3 — Deeper reasoning (clustering across time)
-7. **Persist embeddings + cross-tick dedup** — each tick, blocking-match new items against recent *stored* stories (sqlite-vec or in-memory cosine over a recent window) and merge, so a developing story accretes corroboration over hours, not just within one tick. *Biggest correctness upgrade to the "active editor."*
-8. **Neural embedder** behind the `Embedder` seam (transformers.js or an embeddings API) for better dedup quality.
+### ◐ Phase 3 — Deeper reasoning (clustering across time)
+7. ✅ **Persist embeddings + cross-tick dedup** — `resolve` stage blocking-matches new clusters against recent *stored* stories (in-memory cosine over a Region/Topic + recency window), Reasoner-confirms, and merges, so a developing story accretes corroboration over hours (ADR-0017). *Biggest correctness upgrade to the "active editor" — done.*
+8. ❌ **Neural embedder** behind the `Embedder` seam (transformers.js or an embeddings API) for better dedup quality. *Still a hashing stand-in.*
 
 ### ▶ Phase 4 — Breadth
 9. **Signal inputs** (FX, World Bank, crypto) feeding `Signals`/significance — scoring context, not stories.
@@ -70,6 +71,6 @@ Each step is TDD'd behind the seams already in place.
 
 ---
 
-**Recommended next:** Phase 3 step 7 (persist embeddings + cross-tick dedup) — the biggest
-correctness upgrade to the "active editor," so a developing story accretes corroboration
-across ticks rather than only within one.
+**Recommended next:** Phase 3 step 8 (neural embedder behind the `Embedder` seam) — now the
+single highest-leverage quality upgrade, since cross-tick dedup quality is bounded by the
+hashing stand-in. After that, Phase 4 breadth (signals/sources) and Phase 5 deploy.
