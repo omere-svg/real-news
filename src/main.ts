@@ -1,7 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { loadConfig, toTickConfig } from './config/load.js';
+import {
+  loadConfig,
+  toPresentationDefaults,
+  toQueryParams,
+  toTickConfig,
+} from './config/load.js';
 import { openDb } from './db/client.js';
 import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
@@ -19,6 +24,7 @@ import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { systemClock } from './scheduler/clock.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { createApp } from './server/app.js';
+import { HorizonQuery } from './presentation/horizon-query.js';
 import type { Config, SourceConfig } from './config/schema.js';
 
 /**
@@ -77,6 +83,12 @@ async function main(): Promise<void> {
     }),
   );
 
+  const queryEngine = new HorizonQuery({
+    storyRepo,
+    llm,
+    params: toQueryParams(config),
+  });
+
   const runner = new TickRunner({
     sources: buildSources(config),
     rawItemRepo,
@@ -103,7 +115,8 @@ async function main(): Promise<void> {
   void runTick();
   setInterval(() => void runTick(), config.tickIntervalMinutes * 60_000);
 
-  serve({ fetch: createApp(storyRepo).fetch, port: PORT });
+  const app = createApp(storyRepo, queryEngine, toPresentationDefaults(config));
+  serve({ fetch: app.fetch, port: PORT });
   console.log(`[horizon] viewer on http://localhost:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 }
 
