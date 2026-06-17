@@ -6,6 +6,8 @@ import type { Story } from '../../src/domain/types.js';
 const PARAMS: BudgetParams = {
   wordsPerMinute: 10,
   wordCost: { headline: 10, brief: 20, full: 40 },
+  minDepth: 'headline', // no floor → exercises the general pyramid behavior
+  minStories: 0,
 };
 
 function story(id: string, significance: number): Story {
@@ -82,5 +84,40 @@ describe('budgetStories', () => {
     const snapshot = ids(stories.map((s) => ({ story: s })));
     budgetStories(stories, 3, PARAMS);
     expect(ids(stories.map((s) => ({ story: s })))).toEqual(snapshot);
+  });
+
+  // --- Readability floor (ADR-0024) ---
+
+  const FLOOR: BudgetParams = {
+    wordsPerMinute: 10,
+    wordCost: { headline: 10, brief: 20, full: 40 },
+    minDepth: 'full',
+    minStories: 3,
+  };
+
+  it('floors every admitted story at minDepth instead of headlines', () => {
+    const stories = [story('a', 9), story('b', 8), story('c', 7), story('d', 6)];
+    // 20 min * 10 = 200 words; full=40 → 5 fit, but only 4 exist.
+    const sel = budgetStories(stories, 20, FLOOR);
+    expect(depths(sel)).toEqual(['full', 'full', 'full', 'full']);
+  });
+
+  it('guarantees minStories even when the budget is tiny (readability over precision)', () => {
+    const stories = [story('a', 9), story('b', 8), story('c', 7), story('d', 6)];
+    // 1 min * 10 = 10 words — affords < 1 full story, but minStories=3 forces 3.
+    const sel = budgetStories(stories, 1, FLOOR);
+    expect(ids(sel)).toEqual(['a', 'b', 'c']);
+    expect(depths(sel)).toEqual(['full', 'full', 'full']);
+  });
+
+  it('scales the count up with the budget, above the floor', () => {
+    const stories = Array.from({ length: 10 }, (_, i) => story(`s${i}`, 20 - i));
+    // 24 min * 10 = 240 words; full=40 → 6 full stories.
+    expect(budgetStories(stories, 24, FLOOR)).toHaveLength(6);
+  });
+
+  it('never forces more than the stories available', () => {
+    const sel = budgetStories([story('only', 9)], 1, FLOOR);
+    expect(ids(sel)).toEqual(['only']); // minStories=3 but only 1 exists
   });
 });

@@ -18,6 +18,16 @@ export interface BudgetParams {
   readonly wordsPerMinute: number;
   /** Word cost of rendering a Story at each depth. Must be ascending. */
   readonly wordCost: Record<Depth, number>;
+  /**
+   * Readability floor (ADR-0024): no Story is admitted below this depth, so every
+   * Story shown carries real context. `full` ⇒ each gets its full "why it matters".
+   */
+  readonly minDepth: Depth;
+  /**
+   * Always include at least this many Stories (if available), even if it exceeds
+   * the word budget — readability beats minute-precision at tiny budgets (ADR-0024).
+   */
+  readonly minStories: number;
 }
 
 /** One Story admitted to the budget, with the depth it earned. */
@@ -32,11 +42,13 @@ function nextDepth(depth: Depth): Depth | null {
 }
 
 /**
- * Allocate a time budget across Stories as an inverted pyramid (ADR-0013):
- * 1. Breadth — admit Stories in Significance order at `headline` cost while they fit.
- * 2. Depth — spend the leftover top-heavy: deepen the most significant Story as far
- *    as it will go before moving to the next.
- * Returns the selection ordered by Significance descending. Never exceeds the budget.
+ * Allocate a time budget across Stories, readability-first (ADR-0013/0024):
+ * 1. Admit — take Stories in Significance order at the `minDepth` floor while they
+ *    fit, but always admit at least `minStories` (even over budget) so a tiny
+ *    request still yields a few *fully-rendered* Stories rather than many headlines.
+ * 2. Deepen — spend any leftover top-heavy, upgrading the most significant Stories
+ *    toward `full` (a no-op when the floor is already `full`).
+ * Returns the selection ordered by Significance descending.
  */
 export function budgetStories(
   stories: readonly Story[],
@@ -44,20 +56,22 @@ export function budgetStories(
   params: BudgetParams,
 ): BudgetedStory[] {
   const wordBudget = Math.max(0, minutes) * params.wordsPerMinute;
-  const { wordCost } = params;
+  const { wordCost, minDepth, minStories } = params;
+  const floorCost = wordCost[minDepth];
 
   const ranked = [...stories].sort((a, b) => b.significance - a.significance);
 
-  // Breadth pass: how many Stories fit at the cheapest depth.
+  // Admit at the readability floor; force at least `minStories` regardless of budget.
   const selected: { story: Story; depth: Depth }[] = [];
   let spent = 0;
   for (const story of ranked) {
-    if (spent + wordCost.headline > wordBudget) break;
-    selected.push({ story, depth: 'headline' });
-    spent += wordCost.headline;
+    const mustInclude = selected.length < minStories;
+    if (!mustInclude && spent + floorCost > wordBudget) break;
+    selected.push({ story, depth: minDepth });
+    spent += floorCost;
   }
 
-  // Depth pass: spend leftover budget top-heavy.
+  // Deepen pass: spend leftover budget top-heavy, from the floor toward `full`.
   for (const entry of selected) {
     for (let next = nextDepth(entry.depth); next; next = nextDepth(entry.depth)) {
       const delta = wordCost[next] - wordCost[entry.depth];
