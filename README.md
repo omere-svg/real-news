@@ -7,19 +7,24 @@ serves a zero-latency, read-only viewer of the pre-digested intelligence.
 Built grill → architecture → TDD. Design decisions live in [`docs/adr/`](docs/adr); the
 domain language lives in [`CONTEXT.md`](CONTEXT.md).
 
-## What it does (Phase 1)
+## What it does
 
-1. **Extraction worker** — pulls from public APIs (Hacker News today; GDELT / arXiv /
-   data.gov.il share the same `SourceAdapter` contract) with per-source health checks so a
-   dead endpoint never crashes the loop.
-2. **Two-tier cache** — `raw_items` (idempotent provenance) → `stories` (finalized,
-   scored, classified) + `membership` (corroboration signal), in SQLite.
-3. **Reasoning loop** — classify (Region/Topic) → embed → cluster/dedup → score (0–10 from
-   verifiable signals + bounded LLM nudge) → "why it matters" → upsert. Runs every tick.
+1. **Extraction worker** — pulls from **13 public APIs/feeds** behind one `SourceAdapter`
+   contract (Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, Guardian, Times
+   of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv) with per-source health
+   checks so a dead endpoint never crashes the loop.
+2. **Two-tier cache** — `raw_items` (idempotent provenance) → `stories` (finalized, scored,
+   classified) + `membership` (corroboration), in SQLite; plus `story_vectors` (cross-tick
+   dedup) and `chat_preferences` / `usage` (the bot).
+3. **Reasoning loop** — classify (Region/Topic) → embed → cluster → **resolve** (cross-tick
+   merge) → score (0–10 from verifiable signals + bounded LLM nudge) → "why it matters" →
+   upsert. Runs every tick.
+4. **Presentation** — a read-only web viewer/JSON API **and** a Telegram bot deliver
+   time-budgeted briefs, topic outlines, and podcast audio from the pre-digested cache.
 
-A web UI + JSON API serve the cache. Tiered OpenAI (gpt-4o-mini + gpt-4o) does the reasoning;
-**if no API key is set, the loop degrades gracefully** — real data + signal scoring, no AI
-enrichment.
+Tiered OpenAI (gpt-4o-mini + gpt-4o) does the reasoning, embeddings, and TTS; **if no API key
+is set, the loop degrades gracefully** — real data + signal scoring, no AI enrichment.
+Full status in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Run it locally
 
@@ -92,6 +97,9 @@ boot). Secrets and deploy knobs come from the environment:
 ## API
 
 - `GET /api/stories?region=World&topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
+- `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
+- `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
+- `GET /api/podcast?minutes=3` → `{ script }` — **off by default** (`presentation.webPodcastEnabled`, ADR-0023)
 - `GET /health` → `{ ok: true }`
 
 ## Deploy (public URL)
@@ -113,9 +121,15 @@ docker build -t horizon .
 docker run -p 3000:3000 -e OPENAI_API_KEY=sk-... horizon
 ```
 
-## Not yet built
+## What's left
 
-The other three source adapters (GDELT, arXiv, data.gov.il — same `SourceAdapter`
-contract), a neural embedder (the `Embedder` seam currently uses a lightweight hashing
-embedder; transformers.js is a drop-in), and the presentation layer's brief / podcast /
-outline generators (`QueryEngine` stubs, [ADR-0011](docs/adr/0011-presentation-stubs-only.md)).
+The vision is essentially complete. Remaining scope (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+
+- **Numeric Signal sources + the Story/Signal split** (ADR-0021 §2) — Wikipedia Pageviews
+  (attention) and World Bank (macro) feeding significance as context, not stories. The only
+  remaining MVP source gap.
+- **Productionize** (Phase 5) — deploy (Turso + host), observability (persist `TickReport`,
+  metrics), GDELT rate-limit pacing.
+
+`data.gov.il` stays disabled (datasets, not events); other probed sources are PARKed in
+[`docs/research/`](docs/research) as future reference.

@@ -1,27 +1,26 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-17 (149 tests green, 20 ADRs — Phases 2 & 3 + the
-Telegram bot complete).
+the plan to finish it. Updated 2026-06-17 (**194 tests green, 25 ADRs**). Phases 1–3 complete;
+Phase 4 partial (7 of 9 sources built; the 2 numeric Signal sources deferred); security &
+resource hardening and brief-readability complete.
 
 ---
 
 ## 1. What we have (built, tested)
 
-The entire background engine — Phase 1's 3 features — is done and running.
-
 | Layer | Modules | Status |
 |---|---|---|
-| **Extraction worker** (Feature 1) | `pipeline/extract` stage + 6 adapters behind the `SourceAdapter` seam: Hacker News, arXiv, GDELT, Knesset, SEC EDGAR, Wikipedia. Health-checked, per-source failure isolation. | ✅ |
-| **Relational cache** (Feature 2) | SQLite + Drizzle; `raw_items` → `stories` → `membership`; idempotent upsert; `topStories` read. | ✅ |
-| **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze`, sequenced by `TickRunner`. `computeBaseScore` (verifiable signals) + bounded LLM nudge. `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
-| **Scheduler / daemon** | In-process tick loop every X min (`main.ts`). | ✅ |
-| **Config** | YAML + Zod (`config/horizon.yaml`). | ✅ |
-| **Presentation** (Phase 2) | Full read-only **query layer**: `budgetStories` attention kernel + `HorizonQuery` (text brief, topic outline, podcast script) over `GET /api/stories\|brief\|outline\|podcast`, with a single-page viewer (format switch, time slider, topic/region toggles). Config-driven preferences. | ✅ |
-| **Telegram bot** | Second Presentation adapter (ADR-0019/0020): `/brief\|outline\|podcast\|prefs`, per-chat preferences, long-poll, podcast **audio** via OpenAI TTS. | ✅ |
+| **Extraction worker** (Feature 1) | `pipeline/extract` + **13 adapters** behind the `SourceAdapter` seam (ADR-0004): Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, **Guardian, Times of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv** (ADR-0021). Shared `rss.ts` parser for RSS/RDF feeds. Health-checked, per-source failure isolation. | ✅ |
+| **Relational cache** (Feature 2) | SQLite + Drizzle (ADR-0002/0005): `raw_items` → `stories` → `membership`, plus `story_vectors` (ADR-0017), `chat_preferences` + `usage` (ADR-0019/0022). Idempotent upsert; filtered `topStories`. | ✅ |
+| **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze → upsert`, sequenced by `TickRunner`. `computeBaseScore` (verifiable signals) + bounded LLM nudge. `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Neural `OpenAIEmbedder` + hashing fallback (ADR-0018). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
+| **Scheduler / daemon** | In-process tick loop every X min (`main.ts`, ADR-0001). | ✅ |
+| **Config** | YAML + Zod (`config/horizon.yaml`, ADR-0003). | ✅ |
+| **Presentation** (Phase 2) | Read-only **query layer**: `budgetStories` attention kernel with a **readability floor** (ADR-0013/0024) + `HorizonQuery` (text brief, topic outline, podcast script, ADR-0014) over `GET /api/stories\|brief\|outline\|podcast`, plus a single-page viewer. Config-driven preferences (ADR-0015). | ✅ |
+| **Telegram bot** | Second Presentation adapter (ADR-0019/0020): `/brief\|outline\|podcast\|prefs\|start`, per-chat persisted preferences, long-poll, podcast **audio** via OpenAI TTS, message-splitting for the 4096-char limit. | ✅ |
+| **Security & hardening** | Default-deny access, rate limits + persisted cost quotas, minutes clamp, localhost bind, fetch timeout/size caps, DB `0600` (ADR-0022/0023). | ✅ |
 
-Principles 1–5 are realized. Decisions are in `docs/adr/0001–0017`; domain language in
-`../CONTEXT.md`.
+Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain language in `../CONTEXT.md`.
 
 ---
 
@@ -29,21 +28,16 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0017`; domain l
 
 | Vision element | Status |
 |---|---|
-| **Text bullet brief** | ✅ `HorizonQuery.textBrief` (ADR-0014) |
-| **Audio podcast script** | ✅ `podcastScript` via Reasoner `narrate`, degrades to the brief (ADR-0014) |
+| **Text bullet brief** | ✅ `HorizonQuery.textBrief` (ADR-0014), readability floor (ADR-0024) |
+| **Audio podcast** | ✅ `podcastScript` → `narrate` → OpenAI TTS audio in Telegram (ADR-0020) |
 | **Topic-focused outline** | ✅ `topicOutline`, grouped by Region (ADR-0014) |
-| **Attention & time budgeting** (Principle 5) | ✅ pure `budgetStories` inverted-pyramid kernel (ADR-0013) |
-| **User preferences** (topics/regions you care about) | ✅ config-driven defaults wired into query engine + viewer (ADR-0015) |
-| **Cross-tick dedup** — merge a new item into an *existing* story from a prior tick | ✅ `resolve` stage: block by Region/Topic + recency window, cosine-match stored embeddings, Reasoner-confirm, merge (ADR-0017) |
-| **Persisted embeddings / vector store** (needed for cross-tick dedup) | ✅ `story_vectors` table; representative vector stored each upsert |
-| Neural embedder (currently a hashing stand-in) | ⚠️ works, lower-quality dedup |
-| Extra sources: Google Trends, data.gov.il, numeric **signals** (FX/World Bank/crypto), Sports | ❌ |
+| **Attention & time budgeting** (Principle 5) | ✅ `budgetStories` — readability-first allocator (ADR-0013/0024) |
+| **User preferences** | ✅ config defaults (ADR-0015) + per-chat persisted prefs for the bot (ADR-0022) |
+| **Cross-tick dedup** | ✅ `resolve` stage + persisted `story_vectors` (ADR-0017) |
+| **Neural embedder** | ✅ `OpenAIEmbedder` + resilient hashing fallback (ADR-0018) |
+| **Mainstream-media + thematic sources** | ✅ 7 added: Guardian, Times of Israel, Knesset Votes, HF Papers, NBER, Nature, PsyArXiv (ADR-0021) |
+| **Numeric Signal sources** (Wikipedia Pageviews, World Bank) + Story/Signal split | ❌ deferred (ADR-0021 §2, roadmap step 9) |
 | Real deployment (Turso + host), observability | ⚠️ Docker/README ready, not deployed |
-
-**Phase 2 closed:** the user-facing **query/presentation layer** — the "executive editor"
-turning the cache into briefs/scripts/outlines under a time budget — is now fully
-implemented and tested. The remaining gaps are deeper reasoning (Phase 3) and breadth/deploy
-(Phases 4–5).
 
 ---
 
@@ -51,44 +45,40 @@ implemented and tested. The remaining gaps are deeper reasoning (Phase 3) and br
 
 Each step is TDD'd behind the seams already in place.
 
-### ✅ Phase 2 — Query / Presentation layer *(core remaining vision — DONE 2026-06-17)*
-1. ✅ **`HorizonQuery` over `StoryRepo`** — reads a Significance-ranked pool and filters by the request's regions/topics (ADR-0014).
-2. ✅ **Attention & time budgeting** — pure `budgetStories(stories, minutes, params)`: an inverted-pyramid allocator (breadth then top-heavy depth), tunable cost model (ADR-0013).
-3. ✅ **Text bullet brief** — `textBrief(request)`: deterministic render of stored fields over the budgeted selection, depth-aware (ADR-0014).
-4. ✅ **Topic-focused outline** — `topicOutline(topic, request)`: grouped by Region.
-5. ✅ **Audio podcast script** — `podcastScript(request)`: new Reasoner `narrate` (deep tier) turns the budgeted brief into spoken narration; degrades to the brief on failure. *Stretch (real TTS → audio file) still open.*
-6. ✅ **User preferences** — config-driven (`presentation` block) defaults wired into the query engine + viewer (time slider, topic/region toggles) (ADR-0015).
+### ✅ Phase 2 — Query / Presentation layer *(DONE)*
+`HorizonQuery` over `StoryRepo`; `budgetStories` attention kernel (ADR-0013) with a
+readability floor + max-stories cap (ADR-0024); text brief, topic outline, podcast script
+(ADR-0014); config-driven preferences (ADR-0015).
 
-### ✅ Phase 3 — Deeper reasoning (clustering across time) *(DONE 2026-06-17)*
-7. ✅ **Persist embeddings + cross-tick dedup** — `resolve` stage blocking-matches new clusters against recent *stored* stories (in-memory cosine over a Region/Topic + recency window), Reasoner-confirms, and merges, so a developing story accretes corroboration over hours (ADR-0017). *Biggest correctness upgrade to the "active editor" — done.*
-8. ✅ **Neural embedder** — `OpenAIEmbedder` (`text-embedding-3-small`) behind the `Embedder` seam, wrapped in `ResilientEmbedder` (falls back to hashing on outage). Config-driven; `provider: hashing` stays for offline runs (ADR-0018).
+### ✅ Phase 3 — Deeper reasoning across time *(DONE)*
+7. ✅ **Persist embeddings + cross-tick dedup** — `resolve` stage, `story_vectors` (ADR-0017).
+8. ✅ **Neural embedder** — `OpenAIEmbedder` + `ResilientEmbedder` fallback (ADR-0018).
 
-### ✅ Telegram Bot interface *(DONE 2026-06-17)*
-- A second Presentation adapter over the same `QueryEngine`/`StoryRepo` seams (ADR-0019):
-  `parseCommand` kernel, `HorizonBot` dispatcher, thin `TelegramTransport` (Bot API via
-  `fetch`, long-poll), per-chat persisted preferences (`ChatPreferencesRepo`), chat-id
-  allowlist. Commands: `/brief`, `/outline`, `/podcast`, `/prefs`, `/start`.
-- **Podcast audio** via a `Synthesizer` seam + `OpenAITTS`, resilient (falls back to text);
-  the vision's audio podcast (ADR-0020). Off by default (`telegram.enabled`).
+### ✅ Telegram Bot interface *(DONE)*
+Second Presentation adapter (ADR-0019/0020): command kernel, dispatcher, Bot API transport
+(long-poll + message-splitting), per-chat prefs, podcast audio via TTS.
 
-### ▶ Phase 4 — Breadth
-*Source strategy set by **ADR-0021** (lean, media-aware MVP for the Israel-based Telegram bot):
-keep 2-value Region, add the Story/Signal seam, adopt a **media + 4-theme** set (9 sources); the
-rest PARKed in `docs/research/source-shortlist.md` (full research: `docs/research/`).*
-9. **Story/Signal seam + Signal inputs** — introduce the Story-vs-Signal split (ADR-0021); land **Wikipedia Pageviews** (attention) and **World Bank** (macro) as Signal sources → significance. ECB/FX/crypto PARKed for later.
-10. **Media + thematic sources** (ADR-0021) — media anchors **Guardian** + **Times of Israel** (keyless RSS) and **Knesset Votes**; thematic anchors **HF Daily Papers** (AI), **NBER** (economics), **Nature** (science), **PsyArXiv** (psychology). *Needs an RSS/XML parse step.* USGS/Google Trends/national portals PARKed.
+### ✅ Security & resource hardening *(DONE)*
+Default-deny access, burst limit + persisted daily quotas (per-chat + global ceiling), minutes
+clamp, web `/api/podcast` off by default, localhost bind, `fetchJson` timeout/size caps, DB
+`0600`, per-chat preference isolation (ADR-0022/0023).
 
-### ✅ Security & resource hardening *(DONE 2026-06-17)*
-- **Access:** default-deny Telegram (`openAccess` + allowlist), ADR-0022.
-- **Cost controls:** per-chat burst limit + persisted daily quotas (per-chat + global podcast
-  ceiling); `minutes` clamped; web `/api/podcast` off by default; localhost bind (ADR-0022/0023).
-- **Resource:** `fetchJson` timeout + response-size cap; DB file `0600`; per-chat preference
-  isolation (test-pinned); XML/plain-text reply invariants documented.
+### ◐ Phase 4 — Breadth *(partial)*
+*Source strategy set by **ADR-0021** (lean, media-aware MVP): 2-value Region kept; a media +
+4-theme set of 9 sources adopted; the rest PARKed in `docs/research/` as reference.*
+9. ❌ **Story/Signal seam + numeric Signal sources** — introduce the Story-vs-Signal split
+   (ADR-0021 §2) and land **Wikipedia Pageviews** (attention) + **World Bank** (macro) as
+   Signal sources feeding significance. The 7 built sources didn't need it (they fit the Story
+   pipeline via existing `SourceMetadata`); the 2 pure-Signal sources do. *Only remaining MVP gap.*
+10. ✅ **Media + thematic Story sources** (ADR-0021) — Guardian + Times of Israel (RSS),
+    Knesset Votes (OData), HF Daily Papers, NBER, Nature, PsyArXiv. Shared RSS parser added.
 
 ### ▶ Phase 5 — Productionize
-11. **Deploy** (Turso + Railway/Render), **observability** (persist `TickReport`, metrics), GDELT rate-limit pacing.
+11. **Deploy** (Turso + Railway/Render), **observability** (persist `TickReport`, metrics),
+    GDELT rate-limit pacing.
 
 ---
 
-**Recommended next:** Phase 4 per **ADR-0021** — the Story/Signal seam + Signal inputs (Pageviews,
-World Bank) in step 9, then the media + thematic sources in step 10. Then Phase 5 deploy.
+**Recommended next:** Phase 4 **step 9** — the Story/Signal split + the two numeric Signal
+sources (Wikipedia Pageviews, World Bank). That closes the last MVP source gap. Then Phase 5
+(deploy + observability). Everything else in the original vision is built and tested.

@@ -1,5 +1,5 @@
 # Project Horizon configuration (ADR-0003). Validated against src/config/schema.ts
-# at boot. Secrets (ANTHROPIC_API_KEY) live in .env, never here.
+# at boot. Secrets (OPENAI_API_KEY, TELEGRAM_BOT_TOKEN) live in .env, never here.
 
 # The background loop wakes this often. "Every X minutes" (ADR-0001).
 tickIntervalMinutes: 15
