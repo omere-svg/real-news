@@ -13,6 +13,8 @@ import { migrate } from 'drizzle-orm/libsql/migrator';
 import { openDb } from '../src/db/client.js';
 import { DrizzleStoryRepo } from '../src/db/story-repo.js';
 import { DrizzleChatPreferencesRepo } from '../src/db/chat-preferences-repo.js';
+import { DrizzleUsageRepo } from '../src/db/usage-repo.js';
+import { FixedWindowLimiter } from '../src/telegram/rate-limiter.js';
 import { systemClock } from '../src/scheduler/clock.js';
 import { HorizonQuery } from '../src/presentation/horizon-query.js';
 import { Reasoner } from '../src/llm/reasoner.js';
@@ -97,7 +99,19 @@ async function main(): Promise<void> {
     new OpenAITTS({ model: 'gpt-4o-mini-tts', voice: 'alloy' }),
   );
   const transport = new CapturingTransport();
-  const bot = new HorizonBot({ transport, query, prefs, synthesizer, defaults: { minutes: 3 } });
+  const bot = new HorizonBot({
+    transport,
+    query,
+    prefs,
+    usage: new DrizzleUsageRepo(db),
+    clock: systemClock,
+    limiter: new FixedWindowLimiter(1000, 60_000),
+    limits: { perMinute: 1000, podcastPerDay: 1000, commandsPerDay: 1000, globalPodcastPerDay: 1000 },
+    maxMinutes: 60,
+    synthesizer,
+    defaults: { minutes: 3 },
+    openAccess: true,
+  });
 
   const checks: { name: string; ok: boolean; note: string }[] = [];
   const run = async (text: string, label: string) => {

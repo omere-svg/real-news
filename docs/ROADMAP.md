@@ -72,14 +72,23 @@ Each step is TDD'd behind the seams already in place.
   the vision's audio podcast (ADR-0020). Off by default (`telegram.enabled`).
 
 ### ▶ Phase 4 — Breadth
-9. **Signal inputs** (FX, World Bank, crypto) feeding `Signals`/significance — scoring context, not stories.
-10. **More sources** — Google Trends, data.gov.il adapter, a Sports source.
+*Source strategy set by **ADR-0021** (lean, media-aware MVP for the Israel-based Telegram bot):
+keep 2-value Region, add the Story/Signal seam, adopt a **media + 4-theme** set (9 sources); the
+rest PARKed in `docs/research/source-shortlist.md` (full research: `docs/research/`).*
+9. **Story/Signal seam + Signal inputs** — introduce the Story-vs-Signal split (ADR-0021); land **Wikipedia Pageviews** (attention) and **World Bank** (macro) as Signal sources → significance. ECB/FX/crypto PARKed for later.
+10. **Media + thematic sources** (ADR-0021) — media anchors **Guardian** + **Times of Israel** (keyless RSS) and **Knesset Votes**; thematic anchors **HF Daily Papers** (AI), **NBER** (economics), **Nature** (science), **PsyArXiv** (psychology). *Needs an RSS/XML parse step.* USGS/Google Trends/national portals PARKed.
+
+### ✅ Security & resource hardening *(DONE 2026-06-17)*
+- **Access:** default-deny Telegram (`openAccess` + allowlist), ADR-0022.
+- **Cost controls:** per-chat burst limit + persisted daily quotas (per-chat + global podcast
+  ceiling); `minutes` clamped; web `/api/podcast` off by default; localhost bind (ADR-0022/0023).
+- **Resource:** `fetchJson` timeout + response-size cap; DB file `0600`; per-chat preference
+  isolation (test-pinned); XML/plain-text reply invariants documented.
 
 ### ▶ Phase 5 — Productionize
 11. **Deploy** (Turso + Railway/Render), **observability** (persist `TickReport`, metrics), GDELT rate-limit pacing.
 
 ---
 
-**Recommended next:** Phase 4 — **numeric Signal inputs** (FX / World Bank / crypto) feeding
-significance, then **more sources** (Google Trends, data.gov.il, Sports). After that,
-Phase 5 deploy + observability.
+**Recommended next:** Phase 4 per **ADR-0021** — the Story/Signal seam + Signal inputs (Pageviews,
+World Bank) in step 9, then the media + thematic sources in step 10. Then Phase 5 deploy.

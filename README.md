@@ -62,6 +62,18 @@ text. Restrict who can use the bot with `telegram.allowedChatIds`.
 through a stub transport against the real query engine + OpenAI TTS, prints every reply, and
 writes the podcast to `/tmp/horizon-podcast.mp3`.
 
+### Security & cost controls (ADR-0022/0023)
+
+- **Default-deny access:** the bot answers no one until you list `telegram.allowedChatIds`
+  (or set `telegram.openAccess: true`).
+- **Rate limits + daily quotas** (`telegram.limits`): per-chat burst (`perMinute`), per-chat
+  daily caps (`podcastPerDay`, `commandsPerDay`), and a process-wide `globalPodcastPerDay`
+  ceiling. The podcast path (LLM + TTS) is the only user-driven OpenAI cost; quotas are
+  persisted so a restart can't reset them.
+- **`minutes` is clamped** to `presentation.maxMinutes`, and the LLM-backed web
+  `/api/podcast` is **off by default** (`presentation.webPodcastEnabled`). The server binds
+  to localhost unless you set `HOST`.
+
 ## Configuration
 
 Structured config is [`config/horizon.yaml`](config/horizon.yaml) (validated by Zod at
@@ -72,6 +84,7 @@ boot). Secrets and deploy knobs come from the environment:
 | `OPENAI_API_KEY` | — | OpenAI reasoning tiers, embeddings, and TTS (optional; ADR-0012/0018/0020) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot, when `telegram.enabled` (ADR-0019) |
 | `PORT` | `3000` | HTTP port |
+| `HOST` | `127.0.0.1` | Bind address; localhost by default, `0.0.0.0` to expose (ADR-0023) |
 | `DB_URL` | `file:./data/horizon.db` | SQLite file, or a Turso `libsql://…` URL |
 | `DB_AUTH_TOKEN` | — | Turso auth token (with a remote `DB_URL`) |
 | `HORIZON_CONFIG` | `config/horizon.yaml` | Config file path |

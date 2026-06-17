@@ -64,16 +64,29 @@ scoring:
 telegram:
   enabled: false
   pollTimeoutSeconds: 30
-  allowedChatIds: []      # empty = answer any chat; add ids to restrict
+  allowedChatIds: []      # chat ids the bot answers (ADR-0022)
+  openAccess: false       # default-deny: empty allowlist + false = answer no one
+  limits:                 # rate limits + cost quotas (ADR-0022)
+    perMinute: 8          # burst: max commands per chat per minute
+    podcastPerDay: 5      # per-chat daily cap on the expensive podcast path
+    commandsPerDay: 100   # per-chat daily cap on all commands
+    globalPodcastPerDay: 200  # process-wide podcast ceiling (hard bill backstop)
   tts:
     enabled: true         # podcast as audio; false sends the script as text
     model: gpt-4o-mini-tts
     voice: alloy
 
+# Source fetch hardening (ADR-0023): bound time and response size per request.
+http:
+  fetchTimeoutMs: 10000
+  maxResponseBytes: 5000000
+
 # Presentation / query layer (ADR-0013/0014/0015). Attention budgeting + preferences.
 presentation:
   # Default attention budget and preferences, applied when a request omits them.
   defaultMinutes: 3
+  maxMinutes: 60            # hard cap on requested minutes (cost guard, ADR-0023)
+  webPodcastEnabled: false  # expose the LLM-backed /api/podcast on the web (ADR-0023)
   preferredTopics:
     - AI
     - Geopolitics

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import {
@@ -16,8 +16,9 @@ import { GdeltSource } from './sources/gdelt.js';
 import { KnessetSource } from './sources/knesset.js';
 import { SecEdgarSource } from './sources/sec-edgar.js';
 import { WikipediaSource } from './sources/wikipedia.js';
-import { fetchJson } from './sources/http.js';
+import { makeFetchJson } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
+import type { JsonFetcher } from './sources/http.js';
 import { Reasoner } from './llm/reasoner.js';
 import { OpenAITransport } from './llm/openai-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
@@ -30,6 +31,8 @@ import { TickRunner } from './pipeline/tick-runner.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
 import { DrizzleChatPreferencesRepo } from './db/chat-preferences-repo.js';
+import { DrizzleUsageRepo } from './db/usage-repo.js';
+import { FixedWindowLimiter } from './telegram/rate-limiter.js';
 import { BotApiTransport } from './telegram/bot-api-transport.js';
 import { OpenAITTS } from './telegram/openai-tts.js';
 import { ResilientSynthesizer } from './telegram/resilient-synthesizer.js';
@@ -49,9 +52,11 @@ import type { Config, SourceConfig } from './config/schema.js';
 const CONFIG_PATH = process.env.HORIZON_CONFIG ?? 'config/horizon.yaml';
 const DB_URL = process.env.DB_URL ?? 'file:./data/horizon.db';
 const PORT = Number(process.env.PORT ?? 3000);
+// Bind to localhost by default (ADR-0023); set HOST=0.0.0.0 to expose (behind a proxy).
+const HOST = process.env.HOST ?? '127.0.0.1';
 
 /** Build the concrete SourceAdapter for one enabled source config. */
-function buildSource(s: SourceConfig): SourceAdapter | null {
+function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | null {
   const base = { fetchJson, maxItems: s.maxItems };
   switch (s.id) {
     case 'hackernews':
@@ -84,9 +89,13 @@ function buildEmbedder(config: Config): Embedder {
 }
 
 function buildSources(config: Config): SourceAdapter[] {
+  const fetchJson = makeFetchJson(fetch, {
+    timeoutMs: config.http.fetchTimeoutMs,
+    maxBytes: config.http.maxResponseBytes,
+  });
   return (config.sources as SourceConfig[])
     .filter((s) => s.enabled)
-    .map(buildSource)
+    .map((s) => buildSource(s, fetchJson))
     .filter((a): a is SourceAdapter => a !== null);
 }
 
@@ -96,6 +105,15 @@ async function main(): Promise<void> {
   if (DB_URL.startsWith('file:')) mkdirSync('./data', { recursive: true });
   const db = openDb(DB_URL, process.env.DB_AUTH_TOKEN);
   await migrate(db, { migrationsFolder: './drizzle' });
+
+  // Restrict the local DB (cache + chat preferences) to the owner (ADR-0023).
+  if (DB_URL.startsWith('file:')) {
+    try {
+      chmodSync(DB_URL.slice('file:'.length), 0o600);
+    } catch (err) {
+      console.warn('[horizon] could not chmod the DB file:', err);
+    }
+  }
 
   const rawItemRepo = new DrizzleRawItemRepo(db);
   const storyRepo = new DrizzleStoryRepo(db, systemClock);
@@ -142,9 +160,12 @@ async function main(): Promise<void> {
   setInterval(() => void runTick(), config.tickIntervalMinutes * 60_000);
 
   const defaults = toPresentationDefaults(config);
-  const app = createApp(storyRepo, queryEngine, defaults);
-  serve({ fetch: app.fetch, port: PORT });
-  console.log(`[horizon] viewer on http://localhost:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
+  const app = createApp(storyRepo, queryEngine, defaults, {
+    maxMinutes: config.presentation.maxMinutes,
+    podcastEnabled: config.presentation.webPodcastEnabled,
+  });
+  serve({ fetch: app.fetch, port: PORT, hostname: HOST });
+  console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
   if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults);
 }
@@ -162,7 +183,15 @@ function startTelegramBot(
     return;
   }
 
-  const tts = config.telegram.tts;
+  const tg = config.telegram;
+  if (tg.allowedChatIds.length === 0 && !tg.openAccess) {
+    console.warn(
+      '[telegram] no allowedChatIds and openAccess=false — the bot will ignore ALL chats. ' +
+        'Add your chat id to telegram.allowedChatIds (ADR-0022).',
+    );
+  }
+
+  const tts = tg.tts;
   const synthesizer: Synthesizer | null = tts.enabled
     ? new ResilientSynthesizer(new OpenAITTS({ model: tts.model, voice: tts.voice }))
     : null;
@@ -172,9 +201,15 @@ function startTelegramBot(
     transport,
     query,
     prefs: new DrizzleChatPreferencesRepo(db),
+    usage: new DrizzleUsageRepo(db),
+    clock: systemClock,
+    limiter: new FixedWindowLimiter(tg.limits.perMinute, 60_000),
+    limits: tg.limits,
+    maxMinutes: config.presentation.maxMinutes,
     synthesizer,
     defaults,
-    allowedChatIds: config.telegram.allowedChatIds,
+    allowedChatIds: tg.allowedChatIds,
+    openAccess: tg.openAccess,
   });
 
   const sleep = (ms: number): Promise<void> =>

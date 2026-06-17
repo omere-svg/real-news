@@ -44,6 +44,15 @@ export const configSchema = z.object({
     deepAnalysisTopN: z.number().int().positive().default(10),
   }),
 
+  http: z
+    .object({
+      /** Per-request timeout for Source fetches (ADR-0023). */
+      fetchTimeoutMs: z.number().int().positive().default(10_000),
+      /** Max response body a Source fetch will buffer (bytes). */
+      maxResponseBytes: z.number().int().positive().default(5_000_000),
+    })
+    .default({}),
+
   embedder: z
     .object({
       /** `openai` (neural, ADR-0018) or `hashing` (offline stand-in, ADR-0007). */
@@ -75,8 +84,23 @@ export const configSchema = z.object({
       enabled: z.boolean().default(false),
       /** Long-poll server-side wait per cycle. */
       pollTimeoutSeconds: z.number().int().positive().default(30),
-      /** Allowlist of chat ids the bot answers; empty = open. */
+      /** Allowlist of chat ids the bot answers (ADR-0022). */
       allowedChatIds: z.array(z.number().int()).default([]),
+      /** Answer everyone when the allowlist is empty. Default-deny otherwise (ADR-0022). */
+      openAccess: z.boolean().default(false),
+      /** Rate limits & per-chat/global cost quotas (ADR-0022). */
+      limits: z
+        .object({
+          /** Max commands per chat per minute (burst). */
+          perMinute: z.number().int().positive().default(8),
+          /** Max podcasts per chat per UTC day (the expensive path). */
+          podcastPerDay: z.number().int().positive().default(5),
+          /** Max total commands per chat per UTC day. */
+          commandsPerDay: z.number().int().positive().default(100),
+          /** Process-wide podcast ceiling per UTC day — the hard bill backstop. */
+          globalPodcastPerDay: z.number().int().positive().default(200),
+        })
+        .default({}),
       /** Podcast text-to-speech (ADR-0020). */
       tts: z
         .object({
@@ -95,6 +119,10 @@ export const configSchema = z.object({
     preferredRegions: z.array(regionSchema).default([]),
     /** Default attention budget in minutes when a request omits it. */
     defaultMinutes: z.number().positive().default(3),
+    /** Hard cap on requested minutes — clamps cost amplification (ADR-0023). */
+    maxMinutes: z.number().positive().default(60),
+    /** Expose the LLM-backed /api/podcast on the web server (ADR-0023). Off by default. */
+    webPodcastEnabled: z.boolean().default(false),
     /** Reading rate for text artifacts — brief, outline (ADR-0013/0014). */
     textWordsPerMinute: z.number().positive().default(220),
     /** Speaking rate for the podcast script (ADR-0013/0014). */
