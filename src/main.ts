@@ -18,7 +18,8 @@ import { SecEdgarSource } from './sources/sec-edgar.js';
 import { WikipediaSource } from './sources/wikipedia.js';
 import { fetchJson } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
-import { OpenAIClient } from './llm/openai-client.js';
+import { Reasoner } from './llm/reasoner.js';
+import { OpenAITransport } from './llm/openai-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { systemClock } from './scheduler/clock.js';
@@ -77,10 +78,12 @@ async function main(): Promise<void> {
   const storyRepo = new DrizzleStoryRepo(db, systemClock);
 
   const llm = new ResilientLLMClient(
-    new OpenAIClient({
-      cheapModel: config.reasoner.cheapModel,
-      deepModel: config.reasoner.deepModel,
-    }),
+    new Reasoner(
+      new OpenAITransport({
+        cheapModel: config.reasoner.cheapModel,
+        deepModel: config.reasoner.deepModel,
+      }),
+    ),
   );
 
   const queryEngine = new HorizonQuery({
