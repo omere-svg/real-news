@@ -40,8 +40,10 @@ stays general; the floor is a configured policy, not a hard-coded one.
 - A Story without a `whyItMatters` (outside top-N, or a degraded analyze) still renders as a
   headline at `full` depth — acceptable as a transient; pursue "prefer-explained selection"
   only if it shows up in practice.
-- **Adjacent risk (noted, not fixed here):** a large `minutes` can produce a brief beyond
-  Telegram's 4096-char message limit; a max-stories cap or message paging is a follow-up.
+- **Large-minute briefs are now bounded:** `presentation.maxStories` (default 12) caps the
+  selection (the cap wins over `minStories`), and `BotApiTransport.sendMessage` splits any text
+  over Telegram's 4096-char limit into ordered chunks on line boundaries — so a long brief is
+  delivered as multiple messages rather than failing.
 
 ## Alternatives considered
 

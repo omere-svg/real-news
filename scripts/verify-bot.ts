@@ -94,6 +94,7 @@ async function main(): Promise<void> {
       wordCost: { headline: 18, brief: 45, full: 95 },
       minDepth: 'full',
       minStories: 3,
+      maxStories: 12,
       candidatePool: 200,
     },
   });

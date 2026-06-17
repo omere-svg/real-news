@@ -119,6 +119,7 @@ presentation:
   # Readability floor (ADR-0024): prefer few, fully-explained stories over many headlines.
   minDepth: full           # headline | brief | full — minimum depth every story gets
   minStories: 3            # always show at least this many, even at /brief 1
+  maxStories: 12           # never more than this — bounds large-minute briefs (ADR-0024)
   preferredTopics:
     - AI
     - Geopolitics

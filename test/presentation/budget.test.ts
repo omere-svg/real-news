@@ -8,6 +8,7 @@ const PARAMS: BudgetParams = {
   wordCost: { headline: 10, brief: 20, full: 40 },
   minDepth: 'headline', // no floor → exercises the general pyramid behavior
   minStories: 0,
+  maxStories: 100, // effectively uncapped for the general tests
 };
 
 function story(id: string, significance: number): Story {
@@ -93,6 +94,7 @@ describe('budgetStories', () => {
     wordCost: { headline: 10, brief: 20, full: 40 },
     minDepth: 'full',
     minStories: 3,
+    maxStories: 100,
   };
 
   it('floors every admitted story at minDepth instead of headlines', () => {
@@ -119,5 +121,20 @@ describe('budgetStories', () => {
   it('never forces more than the stories available', () => {
     const sel = budgetStories([story('only', 9)], 1, FLOOR);
     expect(ids(sel)).toEqual(['only']); // minStories=3 but only 1 exists
+  });
+
+  it('caps the selection at maxStories even with a huge budget', () => {
+    const stories = Array.from({ length: 30 }, (_, i) => story(`s${i}`, 30 - i));
+    const capped = { ...FLOOR, maxStories: 5 };
+    // 1000 min would otherwise admit dozens; the cap holds it to 5 (most significant).
+    const sel = budgetStories(stories, 1000, capped);
+    expect(sel).toHaveLength(5);
+    expect(ids(sel)).toEqual(['s0', 's1', 's2', 's3', 's4']);
+  });
+
+  it('the cap wins over minStories when they conflict', () => {
+    const stories = Array.from({ length: 10 }, (_, i) => story(`s${i}`, 10 - i));
+    const sel = budgetStories(stories, 1, { ...FLOOR, minStories: 8, maxStories: 3 });
+    expect(sel).toHaveLength(3);
   });
 });

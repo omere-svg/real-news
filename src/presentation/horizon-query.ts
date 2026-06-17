@@ -29,6 +29,8 @@ export interface QueryParams {
   readonly minDepth: Depth;
   /** Always show at least this many Stories, even at a tiny budget (ADR-0024). */
   readonly minStories: number;
+  /** Never show more than this many Stories, regardless of budget (ADR-0024). */
+  readonly maxStories: number;
   /** How many Significance-ranked Stories to pull as the candidate pool. */
   readonly candidatePool: number;
 }
@@ -88,6 +90,7 @@ export class HorizonQuery implements QueryEngine {
       wordCost: this.deps.params.wordCost,
       minDepth: this.deps.params.minDepth,
       minStories: this.deps.params.minStories,
+      maxStories: this.deps.params.maxStories,
     });
   }
 }

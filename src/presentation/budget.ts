@@ -28,6 +28,11 @@ export interface BudgetParams {
    * the word budget — readability beats minute-precision at tiny budgets (ADR-0024).
    */
   readonly minStories: number;
+  /**
+   * Never include more than this many Stories, regardless of the budget — bounds
+   * a large-minute brief so it stays sane and fits delivery limits (ADR-0024).
+   */
+  readonly maxStories: number;
 }
 
 /** One Story admitted to the budget, with the depth it earned. */
@@ -56,15 +61,17 @@ export function budgetStories(
   params: BudgetParams,
 ): BudgetedStory[] {
   const wordBudget = Math.max(0, minutes) * params.wordsPerMinute;
-  const { wordCost, minDepth, minStories } = params;
+  const { wordCost, minDepth, minStories, maxStories } = params;
   const floorCost = wordCost[minDepth];
 
   const ranked = [...stories].sort((a, b) => b.significance - a.significance);
 
-  // Admit at the readability floor; force at least `minStories` regardless of budget.
+  // Admit at the readability floor; force at least `minStories` regardless of
+  // budget, but never exceed `maxStories` (the cap wins over the floor).
   const selected: { story: Story; depth: Depth }[] = [];
   let spent = 0;
   for (const story of ranked) {
+    if (selected.length >= maxStories) break;
     const mustInclude = selected.length < minStories;
     if (!mustInclude && spent + floorCost > wordBudget) break;
     selected.push({ story, depth: minDepth });

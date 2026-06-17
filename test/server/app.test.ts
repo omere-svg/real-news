@@ -13,6 +13,7 @@ const PARAMS: QueryParams = {
   candidatePool: 100,
   minDepth: 'headline',
   minStories: 0,
+  maxStories: 100,
 };
 
 async function appWithStories() {

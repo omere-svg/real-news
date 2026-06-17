@@ -133,6 +133,8 @@ export const configSchema = z.object({
     minDepth: z.enum(['headline', 'brief', 'full']).default('full'),
     /** Always show at least this many Stories, even at a tiny budget (ADR-0024). */
     minStories: z.number().int().positive().default(3),
+    /** Never show more than this many Stories — bounds large-minute briefs (ADR-0024). */
+    maxStories: z.number().int().positive().default(12),
     /** Expose the LLM-backed /api/podcast on the web server (ADR-0023). Off by default. */
     webPodcastEnabled: z.boolean().default(false),
     /** Reading rate for text artifacts — brief, outline (ADR-0013/0014). */

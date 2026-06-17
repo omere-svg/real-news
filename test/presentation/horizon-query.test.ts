@@ -16,6 +16,7 @@ const PARAMS: QueryParams = {
   candidatePool: 100,
   minDepth: 'headline', // these tests exercise the general engine; floor tested separately
   minStories: 0,
+  maxStories: 100,
 };
 
 function upsert(over: Partial<StoryUpsert> = {}): StoryUpsert {

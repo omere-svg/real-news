@@ -52,6 +52,7 @@ export function toQueryParams(config: Config): QueryParams {
     wordCost: p.wordCost,
     minDepth: p.minDepth,
     minStories: p.minStories,
+    maxStories: p.maxStories,
   };
 }
 
