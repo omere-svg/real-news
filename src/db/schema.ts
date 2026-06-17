@@ -87,3 +87,18 @@ export const chatPreferences = sqliteTable('chat_preferences', {
   regions: text('regions', { mode: 'json' }).$type<Region[]>(),
   defaultMinutes: real('default_minutes'),
 });
+
+/**
+ * `usage` is the durable cost-quota counter (ADR-0022): one row per
+ * (`key`, `day`) — e.g. `chat:42:podcast` or `global:podcast` for a UTC day.
+ * Persisted so a process restart can't reset a chat's daily budget.
+ */
+export const usage = sqliteTable(
+  'usage',
+  {
+    key: text('key').notNull(),
+    day: text('day').notNull(),
+    count: integer('count').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.day] })],
+);

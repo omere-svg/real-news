@@ -37,6 +37,16 @@ describe('ChatPreferencesRepo', () => {
     });
   });
 
+  it('isolates one chat from another (no cross-chat leakage)', async () => {
+    const repo = new DrizzleChatPreferencesRepo(await createTestDb());
+    await repo.set(1, { topics: ['AI'], regions: ['Israel'], defaultMinutes: 9 });
+
+    expect(await repo.get(2)).toBeNull(); // chat 2 sees nothing of chat 1
+    await repo.set(2, { topics: ['Sports'] });
+    expect((await repo.get(1))?.topics).toEqual(['AI']); // chat 1 unaffected by chat 2
+    expect((await repo.get(2))?.regions).toBeUndefined(); // chat 2 didn't inherit chat 1
+  });
+
   it('clear removes the chat so it falls back to defaults', async () => {
     const repo = new DrizzleChatPreferencesRepo(await createTestDb());
     await repo.set(42, { topics: ['AI'] });
