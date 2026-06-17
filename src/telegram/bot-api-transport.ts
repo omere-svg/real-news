@@ -14,6 +14,42 @@ export interface BotApiTransportDeps {
   readonly token: string;
 }
 
+/** Telegram's hard cap on a single text message. */
+export const TELEGRAM_TEXT_LIMIT = 4096;
+
+/** Split into a hard-cap-sized pieces. */
+function chunkString(s: string, limit: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i += limit) out.push(s.slice(i, i + limit));
+  return out;
+}
+
+/**
+ * Split text into Telegram-sized chunks (ADR-0024 follow-up), preferring line
+ * boundaries so a brief's bullets stay intact; a single over-long line is
+ * hard-split. A short message returns a single chunk.
+ */
+export function splitForTelegram(text: string, limit = TELEGRAM_TEXT_LIMIT): string[] {
+  if (text.length <= limit) return [text];
+
+  const chunks: string[] = [];
+  let buf = '';
+  for (const line of text.split('\n')) {
+    const parts = line.length > limit ? chunkString(line, limit) : [line];
+    for (const part of parts) {
+      const candidate = buf ? `${buf}\n${part}` : part;
+      if (candidate.length > limit) {
+        if (buf) chunks.push(buf);
+        buf = part;
+      } else {
+        buf = candidate;
+      }
+    }
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
 /** Map a raw getUpdates payload to domain updates, keeping only text messages. */
 export function toUpdates(raw: unknown): TelegramUpdate[] {
   const result = (raw as { result?: unknown[] } | null)?.result;
@@ -42,7 +78,10 @@ export class BotApiTransport implements TelegramTransport {
   }
 
   async sendMessage(chatId: number, text: string): Promise<void> {
-    await this.post('sendMessage', { chat_id: chatId, text });
+    // Telegram rejects messages over 4096 chars; send long briefs as ordered chunks.
+    for (const chunk of splitForTelegram(text)) {
+      await this.post('sendMessage', { chat_id: chatId, text: chunk });
+    }
   }
 
   async sendAudio(

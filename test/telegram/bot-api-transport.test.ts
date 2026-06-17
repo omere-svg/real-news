@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { toUpdates } from '../../src/telegram/bot-api-transport.js';
+import { toUpdates, splitForTelegram } from '../../src/telegram/bot-api-transport.js';
+
+describe('splitForTelegram', () => {
+  it('keeps a short message as a single chunk', () => {
+    expect(splitForTelegram('hello', 10)).toEqual(['hello']);
+  });
+
+  it('splits on line boundaries, each chunk within the limit', () => {
+    const chunks = splitForTelegram('aaaa\nbbbb\ncccc', 10);
+    expect(chunks).toEqual(['aaaa\nbbbb', 'cccc']);
+    expect(chunks.every((c) => c.length <= 10)).toBe(true);
+  });
+
+  it('hard-splits a single line longer than the limit', () => {
+    expect(splitForTelegram('xxxxxxxxxxxxx', 5)).toEqual(['xxxxx', 'xxxxx', 'xxx']);
+  });
+
+  it('preserves all non-boundary content across chunks', () => {
+    const text = Array.from({ length: 50 }, (_, i) => `• story line number ${i}`).join('\n');
+    const chunks = splitForTelegram(text, 100);
+    expect(chunks.every((c) => c.length <= 100)).toBe(true);
+    expect(chunks.join('\n')).toContain('story line number 49');
+  });
+});
 
 describe('toUpdates', () => {
   it('maps text messages to domain updates', () => {
