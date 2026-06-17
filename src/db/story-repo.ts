@@ -8,7 +8,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import type { Db } from './client.js';
-import { membership, stories } from './schema.js';
+import { membership, stories, storyVectors } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
 import type {
   Region,
@@ -26,6 +26,20 @@ export interface StoryQuery {
   readonly topic?: Topic | readonly Topic[];
   readonly minSignificance?: number;
   readonly limit?: number;
+}
+
+/** A stored Story embedding, returned by the cross-tick blocking query (ADR-0017). */
+export interface StoredVector {
+  readonly storyId: string;
+  readonly vector: number[];
+}
+
+/** Blocking filter for cross-tick dedup: same partition, recent window (ADR-0017). */
+export interface RecentVectorsQuery {
+  readonly region: Region;
+  readonly topic: Topic;
+  /** Lower bound on `updatedAt` — the recency window. */
+  readonly sinceMs: number;
 }
 
 /** What the pipeline hands the repo to create or update a Story. */
@@ -51,6 +65,10 @@ export interface StoryRepo {
   all(): Promise<Story[]>;
   /** Stories matching the filter, ordered by Significance descending. */
   topStories(query: StoryQuery): Promise<Story[]>;
+  /** Store/replace a Story's representative embedding (ADR-0017). */
+  putVector(storyId: string, vector: number[]): Promise<void>;
+  /** Stored vectors for recent Stories in one partition — the cross-tick blocking set. */
+  recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]>;
 }
 
 export class DrizzleStoryRepo implements StoryRepo {
@@ -150,6 +168,28 @@ export class DrizzleStoryRepo implements StoryRepo {
       ? base.limit(query.limit)
       : base);
     return this.hydrate(rows);
+  }
+
+  async putVector(storyId: string, vector: number[]): Promise<void> {
+    await this.db
+      .insert(storyVectors)
+      .values({ storyId, vector })
+      .onConflictDoUpdate({ target: storyVectors.storyId, set: { vector } });
+  }
+
+  async recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]> {
+    const rows = await this.db
+      .select({ storyId: storyVectors.storyId, vector: storyVectors.vector })
+      .from(storyVectors)
+      .innerJoin(stories, eq(storyVectors.storyId, stories.id))
+      .where(
+        and(
+          eq(stories.region, query.region),
+          eq(stories.topic, query.topic),
+          gte(stories.updatedAt, query.sinceMs),
+        ),
+      );
+    return rows.map((r) => ({ storyId: r.storyId, vector: r.vector }));
   }
 
   /** Attach memberRefs to a page of story rows in ONE membership query (no N+1). */

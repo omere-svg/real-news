@@ -153,4 +153,60 @@ describe('StoryRepo', () => {
       ]);
     });
   });
+
+  describe('vectors (cross-tick dedup, ADR-0017)', () => {
+    it('stores and reads back a representative vector for a story', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+      await repo.upsert(storyUpsert({ id: 'a', region: 'World', topic: 'AI' }));
+
+      await repo.putVector('a', [0.1, 0.2, 0.3]);
+      await repo.putVector('a', [1, 0, 0]); // overwrites in place
+
+      const got = await repo.recentVectors({
+        region: 'World',
+        topic: 'AI',
+        sinceMs: 0,
+      });
+      expect(got).toEqual([{ storyId: 'a', vector: [1, 0, 0] }]);
+    });
+
+    it('recentVectors blocks by region/topic and the recency window', async () => {
+      const db = await createTestDb();
+      const clock = new FakeClock(5000);
+      const repo = new DrizzleStoryRepo(db, clock);
+      await repo.upsert(
+        storyUpsert({
+          id: 'ai',
+          region: 'World',
+          topic: 'AI',
+          memberRefs: [{ source: 'hackernews', externalId: 'ai1' }],
+        }),
+      );
+      await repo.upsert(
+        storyUpsert({
+          id: 'pol',
+          region: 'World',
+          topic: 'Politics',
+          memberRefs: [{ source: 'gdelt', externalId: 'pol1' }],
+        }),
+      );
+      await repo.putVector('ai', [1, 0, 0]);
+      await repo.putVector('pol', [0, 1, 0]);
+
+      const aiOnly = await repo.recentVectors({
+        region: 'World',
+        topic: 'AI',
+        sinceMs: 0,
+      });
+      expect(aiOnly.map((v) => v.storyId)).toEqual(['ai']);
+
+      const tooOld = await repo.recentVectors({
+        region: 'World',
+        topic: 'AI',
+        sinceMs: 6000, // story updatedAt=5000 is older than the window
+      });
+      expect(tooOld).toEqual([]);
+    });
+  });
 });
