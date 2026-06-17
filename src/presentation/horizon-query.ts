@@ -69,22 +69,17 @@ export class HorizonQuery implements QueryEngine {
     return script.trim() || brief; // degrade to the brief (ADR-0014)
   }
 
-  /** Read a Significance-ranked pool, filter by the request, and budget it. */
+  /** Read a Significance-ranked pool filtered by the request, then budget it. */
   private async select(
     request: BriefRequest,
     wordsPerMinute: number,
   ): Promise<BudgetedStory[]> {
     const pool = await this.deps.storyRepo.topStories({
       limit: this.deps.params.candidatePool,
+      ...(request.regions?.length ? { region: request.regions } : {}),
+      ...(request.topics?.length ? { topic: request.topics } : {}),
     });
-    const regions = request.regions && new Set(request.regions);
-    const topics = request.topics && new Set(request.topics);
-    const filtered = pool.filter(
-      (s) =>
-        (!regions || regions.has(s.region)) &&
-        (!topics || topics.has(s.topic)),
-    );
-    return budgetStories(filtered, request.minutes, {
+    return budgetStories(pool, request.minutes, {
       wordsPerMinute,
       wordCost: this.deps.params.wordCost,
     });
