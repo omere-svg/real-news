@@ -1,4 +1,12 @@
-import { and, desc, eq, gte, inArray, type SQL } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  type AnyColumn,
+  type SQL,
+} from 'drizzle-orm';
 import type { Db } from './client.js';
 import { membership, stories } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -9,10 +17,13 @@ import type {
   Topic,
 } from '../domain/types.js';
 
-/** Read-side filter for the presentation layer (ADR-0011). */
+/**
+ * Read-side filter for the presentation layer (ADR-0011). `region`/`topic`
+ * accept a single value or an array (SQL `IN`); an empty array is no filter.
+ */
 export interface StoryQuery {
-  readonly region?: Region;
-  readonly topic?: Topic;
+  readonly region?: Region | readonly Region[];
+  readonly topic?: Topic | readonly Topic[];
   readonly minSignificance?: number;
   readonly limit?: number;
 }
@@ -121,8 +132,10 @@ export class DrizzleStoryRepo implements StoryRepo {
 
   async topStories(query: StoryQuery): Promise<Story[]> {
     const filters: SQL[] = [];
-    if (query.region) filters.push(eq(stories.region, query.region));
-    if (query.topic) filters.push(eq(stories.topic, query.topic));
+    const region = matchFilter(stories.region, query.region);
+    if (region) filters.push(region);
+    const topic = matchFilter(stories.topic, query.topic);
+    if (topic) filters.push(topic);
     if (query.minSignificance !== undefined) {
       filters.push(gte(stories.significance, query.minSignificance));
     }
@@ -164,6 +177,21 @@ export class DrizzleStoryRepo implements StoryRepo {
 
     return rows.map((row) => rowToStory(row, refsByStory.get(row.id) ?? []));
   }
+}
+
+/**
+ * Build an `eq` (single) or `IN` (array) predicate for a column; `null` when
+ * there is nothing to filter (undefined, or an empty array).
+ */
+function matchFilter<T extends string>(
+  column: AnyColumn,
+  value: T | readonly T[] | undefined,
+): SQL | null {
+  if (value === undefined) return null;
+  if (Array.isArray(value)) {
+    return value.length ? inArray(column, value as T[]) : null;
+  }
+  return eq(column, value as T);
 }
 
 /** Map a story row + its member refs to a domain Story. */

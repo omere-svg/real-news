@@ -128,6 +128,21 @@ describe('StoryRepo', () => {
       expect(top.map((s) => s.id)).toEqual(['a', 'c']);
     });
 
+    it('filters by region/topic arrays (IN-list)', async () => {
+      const repo = await seed();
+      const top = await repo.topStories({
+        region: ['World', 'Israel'],
+        topic: ['AI', 'Politics'],
+      });
+      expect(top.map((s) => s.id)).toEqual(['a', 'c', 'b']);
+    });
+
+    it('treats an empty filter array as no filter', async () => {
+      const repo = await seed();
+      const top = await repo.topStories({ topic: [] });
+      expect(top.map((s) => s.id)).toEqual(['a', 'c', 'b']);
+    });
+
     it('respects minSignificance and limit', async () => {
       const repo = await seed();
       expect(
