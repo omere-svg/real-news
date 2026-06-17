@@ -28,6 +28,7 @@ function item(
 
 const config = {
   candidateThreshold: 0.78,
+  recentWindowHours: 72,
   recencyHalfLifeHours: 24,
   maxEditorialAdjustment: 1.5,
   deepAnalysisTopN: 5,
@@ -130,6 +131,52 @@ describe('TickRunner', () => {
     const [story] = await storyRepo.all();
     const distinctSources = new Set(story?.memberRefs.map((r) => r.source));
     expect(distinctSources.size).toBe(2); // corroborated across both sources
+  });
+
+  it('cross-tick dedup: a later item from a new source merges into the prior story', async () => {
+    // Shared db/repos/clock so the prior story sits inside the recency window.
+    const db = await createTestDb();
+    const rawItemRepo = new DrizzleRawItemRepo(db);
+    const clock = new FakeClock(1000 * 3_600_000);
+    const storyRepo = new DrizzleStoryRepo(db, clock);
+    const embedder = new FakeEmbedder({
+      'Quake hits region': [1, 0, 0],
+      'Earthquake strikes area': [0.99, 0.02, 0],
+    });
+    const deps = {
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM({ confirm: true, analyze: 'Why it matters.' }),
+      embedder,
+      clock,
+      config,
+    };
+
+    // Tick 1 — hackernews reports the event.
+    await new TickRunner({
+      ...deps,
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Quake hits region', { region: 'World', topic: 'Geopolitics' })],
+        }),
+      ],
+    }).run();
+    expect(await storyRepo.all()).toHaveLength(1);
+
+    // Tick 2 — gdelt reports the same event under a different id/headline.
+    await new TickRunner({
+      ...deps,
+      sources: [
+        new FakeSource('gdelt', {
+          items: [item('gdelt', '2', 'Earthquake strikes area', { region: 'World', topic: 'Geopolitics' })],
+        }),
+      ],
+    }).run();
+
+    const stories = await storyRepo.all();
+    expect(stories).toHaveLength(1); // merged, not duplicated across ticks
+    const distinctSources = new Set(stories[0]?.memberRefs.map((r) => r.source));
+    expect(distinctSources).toEqual(new Set(['hackernews', 'gdelt']));
   });
 
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {

@@ -2,9 +2,10 @@ import { extract, type SourceFailure } from './extract.js';
 import { classify } from './classify.js';
 import { embed } from './embed.js';
 import { cluster } from './cluster.js';
+import { resolve, type IdentifiedCluster } from './resolve.js';
 import { score } from './score.js';
 import { analyze } from './analyze.js';
-import { representativeOf, storyIdOf } from '../domain/cluster.js';
+import { representativeOf } from '../domain/cluster.js';
 import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { StoryRepo, StoryUpsert } from '../db/story-repo.js';
@@ -16,6 +17,7 @@ import type { AnalyzedCluster } from './types.js';
 
 export interface TickConfig {
   readonly candidateThreshold: number;
+  readonly recentWindowHours: number;
   readonly recencyHalfLifeHours: number;
   readonly maxEditorialAdjustment: number;
   readonly deepAnalysisTopN: number;
@@ -60,7 +62,13 @@ export class TickRunner {
     const clusters = await cluster(embedded, llm, {
       candidateThreshold: config.candidateThreshold,
     });
-    const scored = await score(clusters, llm, {
+    // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017).
+    const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock }, {
+      candidateThreshold: config.candidateThreshold,
+      recentWindowHours: config.recentWindowHours,
+    });
+
+    const scored = await score(identified.map((i) => i.cluster), llm, {
       clock,
       recencyHalfLifeHours: config.recencyHalfLifeHours,
       maxEditorialAdjustment: config.maxEditorialAdjustment,
@@ -68,8 +76,11 @@ export class TickRunner {
     });
     const analyzed = await analyze(scored, llm, config.deepAnalysisTopN);
 
-    for (const a of analyzed) {
-      await storyRepo.upsert(toStoryUpsert(a));
+    // score/analyze/resolve all preserve order, so index i lines up across them.
+    for (let i = 0; i < analyzed.length; i += 1) {
+      const { id, vector } = identified[i] as IdentifiedCluster;
+      await storyRepo.upsert(toStoryUpsert(analyzed[i] as AnalyzedCluster, id));
+      await storyRepo.putVector(id, vector);
     }
 
     return {
@@ -81,12 +92,12 @@ export class TickRunner {
   }
 }
 
-/** Build a StoryUpsert from an analyzed Cluster, using its domain projection. */
-function toStoryUpsert(analyzed: AnalyzedCluster): StoryUpsert {
+/** Build a StoryUpsert from an analyzed Cluster under its resolved Story id (ADR-0017). */
+function toStoryUpsert(analyzed: AnalyzedCluster, id: string): StoryUpsert {
   const { cluster, significance, whyItMatters } = analyzed;
   const rep = representativeOf(cluster);
   return {
-    id: storyIdOf(cluster),
+    id,
     title: rep.title,
     url: rep.url,
     region: cluster.region,

@@ -42,9 +42,10 @@ reasoner:
   deepModel: gpt-4o
   deepAnalysisTopN: 10
 
-# Cross-source dedup (ADR-0007).
+# Dedup: within-tick (ADR-0007) and cross-tick (ADR-0017).
 dedup:
   candidateThreshold: 0.78
+  recentWindowHours: 72   # how far back a developing story can accrete corroboration
 
 # Significance scoring (ADR-0008).
 scoring:

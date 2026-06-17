@@ -47,6 +47,8 @@ export const configSchema = z.object({
   dedup: z.object({
     /** Cosine similarity above which two items are candidate pairs (ADR-0007). */
     candidateThreshold: z.number().min(0).max(1).default(0.78),
+    /** How far back cross-tick dedup looks for a matching Story (ADR-0017). */
+    recentWindowHours: z.number().positive().default(72),
   }),
 
   scoring: z.object({

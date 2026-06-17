@@ -34,6 +34,7 @@ export function sourceWeightsOf(
 export function toTickConfig(config: Config): TickConfig {
   return {
     candidateThreshold: config.dedup.candidateThreshold,
+    recentWindowHours: config.dedup.recentWindowHours,
     recencyHalfLifeHours: config.scoring.recencyHalfLifeHours,
     maxEditorialAdjustment: config.scoring.maxEditorialAdjustment,
     deepAnalysisTopN: config.reasoner.deepAnalysisTopN,
