@@ -1,9 +1,13 @@
 import { parseCommand, type Command, type PrefsField } from './command.js';
 import type { TelegramTransport, TelegramUpdate } from './telegram-transport.js';
 import type { Synthesizer } from './synthesizer.js';
+import type { RateLimiter } from './rate-limiter.js';
 import type { ChatPreferencesRepo, ChatPreferences } from '../db/chat-preferences-repo.js';
+import type { UsageRepo } from '../db/usage-repo.js';
+import type { Clock } from '../scheduler/clock.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import type { PresentationDefaults } from '../server/app.js';
+import { normalizeMinutes } from '../presentation/minutes.js';
 import { REGIONS, TOPICS } from '../domain/types.js';
 
 /**
@@ -13,6 +17,14 @@ import { REGIONS, TOPICS } from '../domain/types.js';
  * podcasts). No network or model code lives here; everything is behind seams and
  * tested with fakes.
  */
+/** Rate-limit + cost-quota knobs (ADR-0022). */
+export interface BotLimits {
+  readonly perMinute: number;
+  readonly podcastPerDay: number;
+  readonly commandsPerDay: number;
+  readonly globalPodcastPerDay: number;
+}
+
 export interface HorizonBotDeps {
   readonly transport: TelegramTransport;
   readonly query: QueryEngine;
@@ -21,9 +33,25 @@ export interface HorizonBotDeps {
   readonly synthesizer: Synthesizer | null;
   /** Config-driven fallback when a chat has set nothing (ADR-0015). */
   readonly defaults: PresentationDefaults;
-  /** When non-empty, only these chat ids are answered (ADR-0019). */
+  /** Burst limiter (ADR-0022). */
+  readonly limiter: RateLimiter;
+  /** Durable daily cost-quota counters (ADR-0022). */
+  readonly usage: UsageRepo;
+  readonly clock: Clock;
+  readonly limits: BotLimits;
+  /** Hard cap on requested minutes (ADR-0023). */
+  readonly maxMinutes: number;
+  /** Chat ids the bot answers; empty defers to `openAccess` (ADR-0022). */
   readonly allowedChatIds?: readonly number[];
+  /** Answer everyone when the allowlist is empty. Default-deny when false. */
+  readonly openAccess: boolean;
 }
+
+const LIMIT_MSG = {
+  commands: 'Daily command limit reached. Try again tomorrow (UTC).',
+  podcast: 'Daily podcast limit reached. Try again tomorrow (UTC).',
+  global: 'The podcast service is busy right now. Please try again later.',
+} as const;
 
 const HELP = [
   '🌅 Horizon — your background news editor.',
@@ -42,14 +70,59 @@ export class HorizonBot {
   constructor(private readonly deps: HorizonBotDeps) {}
 
   async handle(update: TelegramUpdate): Promise<void> {
-    if (!this.allowed(update.chatId)) return;
-    const command = parseCommand(update.text);
-    await this.dispatch(update.chatId, command);
+    const { chatId, text } = update;
+    if (!this.allowed(chatId)) return; // default-deny (ADR-0022)
+
+    const now = this.deps.clock.now();
+    // Burst limit: silently drop, so spamming earns no reply and can't block the loop.
+    if (!this.deps.limiter.allow(`burst:${chatId}`, now)) return;
+
+    const command = parseCommand(text);
+    if (!(await this.withinQuota(chatId, command, now))) return;
+
+    await this.dispatch(chatId, command);
   }
 
+  /** Default-deny: an explicit allowlist gates; an empty one defers to openAccess. */
   private allowed(chatId: number): boolean {
     const list = this.deps.allowedChatIds;
-    return !list || list.length === 0 || list.includes(chatId);
+    if (list && list.length > 0) return list.includes(chatId);
+    return this.deps.openAccess;
+  }
+
+  /**
+   * Durable daily quotas (ADR-0022). Counts every command; podcasts also draw a
+   * per-chat and a global ceiling. A chat can only spend up to its own podcast
+   * budget against the global counter (per-chat checked first). Sends exactly one
+   * notice when a limit is first crossed, then stays silent.
+   */
+  private async withinQuota(
+    chatId: number,
+    command: Command,
+    now: number,
+  ): Promise<boolean> {
+    const day = utcDay(now);
+    const { usage, transport, limits } = this.deps;
+
+    const cmds = await usage.incrementAndGet(`chat:${chatId}:cmd`, day);
+    if (cmds > limits.commandsPerDay) {
+      if (cmds === limits.commandsPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.commands);
+      return false;
+    }
+
+    if (command.kind === 'podcast') {
+      const mine = await usage.incrementAndGet(`chat:${chatId}:podcast`, day);
+      if (mine > limits.podcastPerDay) {
+        if (mine === limits.podcastPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.podcast);
+        return false;
+      }
+      const global = await usage.incrementAndGet('global:podcast', day);
+      if (global > limits.globalPodcastPerDay) {
+        if (global === limits.globalPodcastPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.global);
+        return false;
+      }
+    }
+    return true;
   }
 
   private async dispatch(chatId: number, command: Command): Promise<void> {
@@ -144,7 +217,10 @@ export class HorizonBot {
   private async request(chatId: number, minutesOverride?: number): Promise<BriefRequest> {
     const p = await this.deps.prefs.get(chatId);
     const { defaults } = this.deps;
-    const minutes = minutesOverride ?? p?.defaultMinutes ?? defaults.minutes;
+    const minutes = normalizeMinutes(
+      minutesOverride ?? p?.defaultMinutes ?? defaults.minutes,
+      this.deps.maxMinutes,
+    );
     const regions = p?.regions ?? defaults.regions;
     const topics = p?.topics ?? defaults.topics;
     return {
@@ -153,6 +229,11 @@ export class HorizonBot {
       ...(topics?.length ? { topics } : {}),
     };
   }
+}
+
+/** The UTC day key (YYYY-MM-DD) for a quota bucket. */
+function utcDay(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 /** The canonical vocabulary member matching `raw` (case-insensitive), or null. */
