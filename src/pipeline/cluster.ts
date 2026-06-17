@@ -1,25 +1,11 @@
 import type { LLMClient } from '../llm/llm-client.js';
 import type { Cluster } from '../domain/types.js';
+import { cosine } from '../embedding/cosine.js';
 import type { EmbeddedItem } from './types.js';
 
 export interface ClusterOptions {
   /** Cosine similarity above which two items become a candidate pair (ADR-0007). */
   readonly candidateThreshold: number;
-}
-
-function cosine(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    const ai = a[i] ?? 0;
-    const bi = b[i] ?? 0;
-    dot += ai * bi;
-    na += ai * ai;
-    nb += bi * bi;
-  }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
 /**
