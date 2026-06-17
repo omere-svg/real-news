@@ -36,7 +36,15 @@ export type SourceId =
   | 'arxiv'
   | 'knesset'
   | 'secedgar'
-  | 'wikipedia';
+  | 'wikipedia'
+  // Phase 4 — media + thematic anchors (ADR-0021).
+  | 'guardian'
+  | 'timesofisrael'
+  | 'knesset-votes'
+  | 'hf-papers'
+  | 'nber'
+  | 'nature'
+  | 'psyarxiv';
 
 // --- Raw Item: immutable provenance from a single Source ---
 

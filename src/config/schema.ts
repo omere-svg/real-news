@@ -18,6 +18,14 @@ export const sourceIdSchema = z.enum([
   'knesset',
   'secedgar',
   'wikipedia',
+  // Phase 4 — media + thematic anchors (ADR-0021).
+  'guardian',
+  'timesofisrael',
+  'knesset-votes',
+  'hf-papers',
+  'nber',
+  'nature',
+  'psyarxiv',
 ]);
 
 export const sourceConfigSchema = z.object({
