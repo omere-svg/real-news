@@ -30,7 +30,10 @@ corroboration and trace a Story back to its Sources. Lives in `membership`.
 
 **Source**
 An official, public, stable developer API we extract from. Phase 1: Hacker News, GDELT,
-data.gov.il/Knesset, arXiv. *Strictly zero scraping* — APIs only, never HTML/UI parsing.
+Knesset (bills), arXiv, SEC EDGAR, Wikipedia. Phase 4 (ADR-0021) adds media + thematic
+anchors: Guardian, Times of Israel, Knesset Votes, Hugging Face Daily Papers, NBER, Nature,
+PsyArXiv — via keyless **RSS** (headline + summary + link only) or open JSON APIs. *Strictly
+zero scraping* — APIs/feeds only, never HTML/UI parsing.
 
 **Region**
 The geographic partition of a Story. Phase 1 is a closed set: `Israel` | `World`.

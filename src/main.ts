@@ -16,6 +16,10 @@ import { GdeltSource } from './sources/gdelt.js';
 import { KnessetSource } from './sources/knesset.js';
 import { SecEdgarSource } from './sources/sec-edgar.js';
 import { WikipediaSource } from './sources/wikipedia.js';
+import { RssSource } from './sources/rss-source.js';
+import { HfPapersSource } from './sources/hf-papers.js';
+import { PsyArxivSource } from './sources/psyarxiv.js';
+import { KnessetVotesSource } from './sources/knesset-votes.js';
 import { makeFetchJson } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
 import type { JsonFetcher } from './sources/http.js';
@@ -71,6 +75,21 @@ function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | n
       return new SecEdgarSource(base);
     case 'wikipedia':
       return new WikipediaSource({ ...base, clock: systemClock });
+    // Phase 4 — media + thematic anchors (ADR-0021).
+    case 'guardian':
+      return new RssSource({ ...base, id: 'guardian', feedUrl: 'https://www.theguardian.com/world/rss', region: 'World', topic: 'Geopolitics' });
+    case 'timesofisrael':
+      return new RssSource({ ...base, id: 'timesofisrael', feedUrl: 'https://www.timesofisrael.com/feed/', region: 'Israel' });
+    case 'nber':
+      return new RssSource({ ...base, id: 'nber', feedUrl: 'https://back.nber.org/rss/new.xml', region: 'World', topic: 'Business' });
+    case 'nature':
+      return new RssSource({ ...base, id: 'nature', feedUrl: 'https://www.nature.com/nature.rss', region: 'World', topic: 'Science' });
+    case 'hf-papers':
+      return new HfPapersSource(base);
+    case 'psyarxiv':
+      return new PsyArxivSource(base);
+    case 'knesset-votes':
+      return new KnessetVotesSource(base);
     default:
       console.warn(`[horizon] source "${s.id}" has no adapter yet — skipping.`);
       return null;

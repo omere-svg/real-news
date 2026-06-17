@@ -35,6 +35,35 @@ sources:
     enabled: false
     weight: 0.5
     maxItems: 30
+  # Phase 4 — media + thematic anchors (ADR-0021). Keyless RSS / open APIs.
+  - id: guardian        # global mainstream media (world section ⇒ Geopolitics)
+    enabled: true
+    weight: 0.5
+    maxItems: 20
+  - id: timesofisrael   # Israel-local mainstream media (English)
+    enabled: true
+    weight: 0.5
+    maxItems: 20
+  - id: knesset-votes   # recorded Knesset vote tallies (for/against/abstain)
+    enabled: true
+    weight: 0.7
+    maxItems: 20
+  - id: hf-papers       # Hugging Face Daily Papers — trending AI (upvotes/comments)
+    enabled: true
+    weight: 0.6
+    maxItems: 20
+  - id: nber            # NBER working papers — academic economics
+    enabled: true
+    weight: 0.7
+    maxItems: 15
+  - id: nature          # Nature — top-journal science headlines
+    enabled: true
+    weight: 0.65
+    maxItems: 15
+  - id: psyarxiv        # PsyArXiv — psychology/behavioral-science preprints
+    enabled: true
+    weight: 0.55
+    maxItems: 15
 
 # The Reasoner tiers (ADR-0006/0012). OpenAI models — change to any your key can access.
 reasoner:
