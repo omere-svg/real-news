@@ -42,6 +42,26 @@ npm test         # the whole engine
 npm run typecheck
 ```
 
+## Telegram bot (ADR-0019/0020)
+
+A second read-only surface over the same cache: time-budgeted briefs, topic outlines, and
+**podcast audio** in chat, with per-chat preferences.
+
+```bash
+# 1. Create a bot with @BotFather, copy the token into .env:
+#    TELEGRAM_BOT_TOKEN=123456:ABC...
+# 2. Enable it in config/horizon.yaml:  telegram.enabled: true
+npm start
+```
+
+Then message your bot: `/start`, `/brief 3`, `/outline AI`, `/podcast 1`, `/prefs topics
+AI,Geopolitics`. Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as
+text. Restrict who can use the bot with `telegram.allowedChatIds`.
+
+**End-to-end check (no Telegram token needed):** `npm run verify:bot` drives the real bot
+through a stub transport against the real query engine + OpenAI TTS, prints every reply, and
+writes the podcast to `/tmp/horizon-podcast.mp3`.
+
 ## Configuration
 
 Structured config is [`config/horizon.yaml`](config/horizon.yaml) (validated by Zod at
