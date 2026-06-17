@@ -68,9 +68,9 @@ telegram:
   openAccess: false       # default-deny: empty allowlist + false = answer no one
   limits:                 # rate limits + cost quotas (ADR-0022)
     perMinute: 8          # burst: max commands per chat per minute
-    podcastPerDay: 5      # per-chat daily cap on the expensive podcast path
+    podcastPerDay: 30     # per-chat daily cap on the expensive podcast path
     commandsPerDay: 100   # per-chat daily cap on all commands
-    globalPodcastPerDay: 200  # process-wide podcast ceiling (hard bill backstop)
+    globalPodcastPerDay: 50   # process-wide podcast ceiling (hard bill backstop)
   tts:
     enabled: true         # podcast as audio; false sends the script as text
     model: gpt-4o-mini-tts

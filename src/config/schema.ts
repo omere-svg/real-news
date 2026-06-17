@@ -94,11 +94,11 @@ export const configSchema = z.object({
           /** Max commands per chat per minute (burst). */
           perMinute: z.number().int().positive().default(8),
           /** Max podcasts per chat per UTC day (the expensive path). */
-          podcastPerDay: z.number().int().positive().default(5),
+          podcastPerDay: z.number().int().positive().default(30),
           /** Max total commands per chat per UTC day. */
           commandsPerDay: z.number().int().positive().default(100),
           /** Process-wide podcast ceiling per UTC day — the hard bill backstop. */
-          globalPodcastPerDay: z.number().int().positive().default(200),
+          globalPodcastPerDay: z.number().int().positive().default(50),
         })
         .default({}),
       /** Podcast text-to-speech (ADR-0020). */
