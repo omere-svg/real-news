@@ -45,6 +45,18 @@ export const stories = sqliteTable('stories', {
 });
 
 /**
+ * `story_vectors` holds the representative embedding of each Story (ADR-0017),
+ * so a later tick can cosine-match new items against Stories from prior ticks
+ * and merge — cross-tick dedup. One vector per Story.
+ */
+export const storyVectors = sqliteTable('story_vectors', {
+  storyId: text('story_id')
+    .primaryKey()
+    .references(() => stories.id),
+  vector: text('vector', { mode: 'json' }).$type<number[]>().notNull(),
+});
+
+/**
  * `membership` links many Raw Items → one Story. Its distinct-source count is
  * the corroboration signal (ADR-0005/0008). A Raw Item belongs to at most one
  * Story, so (source, externalId) is the key.
