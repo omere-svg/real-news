@@ -6,7 +6,8 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
-import type { Region, SourceId, SourceMetadata, Topic } from '../domain/types.js';
+import type { Region, SourceMetadata, StorySourceId, Topic } from '../domain/types.js';
+import type { PreviousPreferences } from './chat-preferences-repo.js';
 
 /**
  * Two-tier schema (ADR-0005). `raw_items` is immutable provenance keyed by
@@ -15,7 +16,7 @@ import type { Region, SourceId, SourceMetadata, Topic } from '../domain/types.js
 export const rawItems = sqliteTable(
   'raw_items',
   {
-    source: text('source').$type<SourceId>().notNull(),
+    source: text('source').$type<StorySourceId>().notNull(),
     externalId: text('external_id').notNull(),
     title: text('title').notNull(),
     url: text('url'),
@@ -67,7 +68,7 @@ export const membership = sqliteTable(
     storyId: text('story_id')
       .notNull()
       .references(() => stories.id),
-    source: text('source').$type<SourceId>().notNull(),
+    source: text('source').$type<StorySourceId>().notNull(),
     externalId: text('external_id').notNull(),
   },
   (t) => [
@@ -86,6 +87,11 @@ export const chatPreferences = sqliteTable('chat_preferences', {
   topics: text('topics', { mode: 'json' }).$type<Topic[]>(),
   regions: text('regions', { mode: 'json' }).$type<Region[]>(),
   defaultMinutes: real('default_minutes'),
+  // Soft preference weights from free-text feedback (ADR-0026); absent ≡ neutral.
+  topicWeights: text('topic_weights', { mode: 'json' }).$type<Partial<Record<Topic, number>>>(),
+  regionWeights: text('region_weights', { mode: 'json' }).$type<Partial<Record<Region, number>>>(),
+  // One-level undo snapshot of the feedback-affected fields (ADR-0026).
+  prev: text('prev', { mode: 'json' }).$type<PreviousPreferences>(),
 });
 
 /**

@@ -105,6 +105,7 @@ async function main(): Promise<void> {
   const bot = new HorizonBot({
     transport,
     query,
+    feedback: llm, // /feedback uses the real Reasoner (ADR-0026)
     prefs,
     usage: new DrizzleUsageRepo(db),
     clock: systemClock,
@@ -142,6 +143,16 @@ async function main(): Promise<void> {
   await run('/podcast 1', 'podcast → real TTS audio');
   const audioOk = transport.lastAudioBytes > 1000;
   checks.push({ name: 'podcast delivered audio (mp3)', ok: audioOk, note: `${transport.lastAudioBytes} bytes` });
+
+  // Free-text feedback → real Reasoner intent → persisted preference weights (ADR-0026).
+  await run('/feedback love the AI coverage, hide sports entirely', 'feedback → weights');
+  const afterFb = await prefs.get(CHAT);
+  const fbOk = (afterFb?.topicWeights?.AI ?? 0) > 1 && afterFb?.topicWeights?.Sports === 0;
+  checks.push({ name: 'feedback set AI↑ and muted Sports', ok: fbOk, note: JSON.stringify(afterFb?.topicWeights) });
+
+  await run('/feedback undo', 'feedback undo');
+  const afterUndo = await prefs.get(CHAT);
+  checks.push({ name: 'undo reverted the weights', ok: afterUndo?.topicWeights?.AI === undefined, note: JSON.stringify(afterUndo?.topicWeights) });
 
   console.log('\n\n════════ RESULT ════════');
   let allOk = true;

@@ -64,6 +64,15 @@ sources:
     enabled: true
     weight: 0.55
     maxItems: 15
+  # Phase 4 — numeric Signal sources (ADR-0025). Feed significance, never a story.
+  - id: wikipedia-pageviews  # cross-lingual reader attention (en⇒World, he⇒Israel)
+    enabled: true
+    weight: 0.5
+    maxItems: 100
+  - id: worldbank            # macro volatility (GDP growth, inflation) ⇒ World/Business
+    enabled: true
+    weight: 0.5
+    maxItems: 8
 
 # The Reasoner tiers (ADR-0006/0012). OpenAI models — change to any your key can access.
 reasoner:
@@ -87,6 +96,7 @@ dedup:
 scoring:
   recencyHalfLifeHours: 24
   maxEditorialAdjustment: 1.5
+  maxSignalAdjustment: 1.0   # max numeric-Signal nudge to significance (ADR-0025)
 
 # Telegram bot interface (ADR-0019/0020). Token in .env (TELEGRAM_BOT_TOKEN), never here.
 # Off by default; set enabled: true to run the bot alongside the tick loop + viewer.

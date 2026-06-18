@@ -1,5 +1,5 @@
 import type { SourceAdapter } from '../../src/sources/source-adapter.js';
-import type { RawItem, SourceId } from '../../src/domain/types.js';
+import type { RawItem, SourceId, StorySourceId } from '../../src/domain/types.js';
 
 export interface FakeSourceOptions {
   readonly healthy?: boolean;
@@ -28,7 +28,7 @@ export class FakeSource implements SourceAdapter {
   }
 }
 
-export function rawItem(source: SourceId, externalId: string): RawItem {
+export function rawItem(source: StorySourceId, externalId: string): RawItem {
   return {
     source,
     externalId,

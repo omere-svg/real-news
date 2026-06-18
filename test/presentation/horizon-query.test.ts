@@ -69,6 +69,32 @@ describe('HorizonQuery', () => {
     expect(brief).not.toContain('Politics thing');
   });
 
+  it('textBrief re-ranks by soft preference weights, lifting a favored lower-significance topic (ADR-0026)', async () => {
+    const repo = await seed(
+      upsert({ id: 'pol', title: 'Politics thing', topic: 'Politics', significance: 9 }),
+      upsert({ id: 'ai', title: 'AI thing', topic: 'AI', significance: 6 }),
+    );
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+    // By raw significance Politics (9) outranks AI (6); a 2× AI weight flips the order.
+    const brief = await q.textBrief({ minutes: 5, topicWeights: { AI: 2 } });
+
+    expect(brief.indexOf('AI thing')).toBeLessThan(brief.indexOf('Politics thing'));
+  });
+
+  it('textBrief excludes a muted topic (weight 0) (ADR-0026)', async () => {
+    const repo = await seed(
+      upsert({ id: 'ai', title: 'AI thing', topic: 'AI', significance: 8 }),
+      upsert({ id: 'sport', title: 'Sports thing', topic: 'Sports', significance: 9 }),
+    );
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+    const brief = await q.textBrief({ minutes: 5, topicWeights: { Sports: 0 } });
+
+    expect(brief).toContain('AI thing');
+    expect(brief).not.toContain('Sports thing');
+  });
+
   it('textBrief honours the time budget: a tiny budget yields one headline, no analysis', async () => {
     const repo = await seed(
       upsert({ id: 'a', title: 'Alpha', significance: 9, whyItMatters: 'Should not appear.' }),

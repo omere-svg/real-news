@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { REGIONS, TOPICS } from '../domain/types.js';
+import { REGIONS, SOURCE_IDS, TOPICS } from '../domain/types.js';
 
 /**
  * The configuration contract (ADR-0003). The single source of truth for the
@@ -10,23 +10,9 @@ import { REGIONS, TOPICS } from '../domain/types.js';
 const topicSchema = z.enum(TOPICS as [string, ...string[]]);
 const regionSchema = z.enum(REGIONS as [string, ...string[]]);
 
-export const sourceIdSchema = z.enum([
-  'hackernews',
-  'gdelt',
-  'datagovil',
-  'arxiv',
-  'knesset',
-  'secedgar',
-  'wikipedia',
-  // Phase 4 — media + thematic anchors (ADR-0021).
-  'guardian',
-  'timesofisrael',
-  'knesset-votes',
-  'hf-papers',
-  'nber',
-  'nature',
-  'psyarxiv',
-]);
+// Derived from the single source of truth in domain/types (like regionSchema/topicSchema),
+// so the config vocabulary can never drift from the SourceId types.
+export const sourceIdSchema = z.enum(SOURCE_IDS);
 
 export const sourceConfigSchema = z.object({
   id: sourceIdSchema,
@@ -84,6 +70,8 @@ export const configSchema = z.object({
     recencyHalfLifeHours: z.number().positive().default(24),
     /** Max absolute editorial adjustment the LLM may apply (ADR-0008). */
     maxEditorialAdjustment: z.number().min(0).max(10).default(1.5),
+    /** Max absolute numeric-Signal nudge to significance (ADR-0025). */
+    maxSignalAdjustment: z.number().min(0).max(10).default(1.0),
   }),
 
   telegram: z

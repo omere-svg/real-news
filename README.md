@@ -9,16 +9,17 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
 
 ## What it does
 
-1. **Extraction worker** — pulls from **13 public APIs/feeds** behind one `SourceAdapter`
+1. **Extraction worker** — pulls from **13 Story APIs/feeds** behind one `SourceAdapter`
    contract (Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, Guardian, Times
-   of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv) with per-source health
-   checks so a dead endpoint never crashes the loop.
+   of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv) plus **2 numeric Signal
+   sources** behind a sibling `SignalSource` seam (Wikipedia Pageviews attention, World Bank
+   macro — ADR-0025), with per-source health checks so a dead endpoint never crashes the loop.
 2. **Two-tier cache** — `raw_items` (idempotent provenance) → `stories` (finalized, scored,
    classified) + `membership` (corroboration), in SQLite; plus `story_vectors` (cross-tick
    dedup) and `chat_preferences` / `usage` (the bot).
 3. **Reasoning loop** — classify (Region/Topic) → embed → cluster → **resolve** (cross-tick
-   merge) → score (0–10 from verifiable signals + bounded LLM nudge) → "why it matters" →
-   upsert. Runs every tick.
+   merge) → score (0–10 from verifiable signals + bounded LLM nudge + bounded numeric-Signal
+   nudge from attention/macro context) → "why it matters" → upsert. Runs every tick.
 4. **Presentation** — a read-only web viewer/JSON API **and** a Telegram bot deliver
    time-budgeted briefs, topic outlines, and podcast audio from the pre-digested cache.
 
@@ -62,6 +63,12 @@ npm start
 Then message your bot: `/start`, `/brief 3`, `/outline AI`, `/podcast 1`, `/prefs topics
 AI,Geopolitics`. Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as
 text. Restrict who can use the bot with `telegram.allowedChatIds`.
+
+**Tune it in plain English (ADR-0026):** `/feedback more AI, less sports, keep it shorter` — the
+Reasoner reads the free text and adjusts per-topic/region **preference weights** that bias your
+briefs (mute a topic, boost another, change length). `/prefs` shows the current tuning;
+`/feedback undo` reverts the last change. Significance stays objective; the weighting is yours
+alone, applied at ranking time.
 
 **End-to-end check (no Telegram token needed):** `npm run verify:bot` drives the real bot
 through a stub transport against the real query engine + OpenAI TTS, prints every reply, and
@@ -123,13 +130,13 @@ docker run -p 3000:3000 -e OPENAI_API_KEY=sk-... horizon
 
 ## What's left
 
-The vision is essentially complete. Remaining scope (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+The MVP vision is complete — all source types and the full reasoning/presentation stack are
+built and tested. Remaining scope (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 
-- **Numeric Signal sources + the Story/Signal split** (ADR-0021 §2) — Wikipedia Pageviews
-  (attention) and World Bank (macro) feeding significance as context, not stories. The only
-  remaining MVP source gap.
 - **Productionize** (Phase 5) — deploy (Turso + host), observability (persist `TickReport`,
   metrics), GDELT rate-limit pacing.
 
+Possible deepening (not MVP): entity-link Wikipedia Pageviews to individual clusters (today
+the attention nudge is partition-level, ADR-0025); persist Signal history for trend signals.
 `data.gov.il` stays disabled (datasets, not events); other probed sources are PARKed in
 [`docs/research/`](docs/research) as future reference.

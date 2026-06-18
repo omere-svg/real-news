@@ -33,6 +33,12 @@ export interface BudgetParams {
    * a large-minute brief so it stays sane and fits delivery limits (ADR-0024).
    */
   readonly maxStories: number;
+  /**
+   * The priority key Stories are admitted/deepened by. Defaults to raw
+   * Significance; the Presentation layer injects a preference-weighted key so a
+   * favored topic ranks higher (ADR-0026), without altering the displayed score.
+   */
+  readonly rank?: (story: Story) => number;
 }
 
 /** One Story admitted to the budget, with the depth it earned. */
@@ -63,8 +69,9 @@ export function budgetStories(
   const wordBudget = Math.max(0, minutes) * params.wordsPerMinute;
   const { wordCost, minDepth, minStories, maxStories } = params;
   const floorCost = wordCost[minDepth];
+  const rankOf = params.rank ?? ((s: Story) => s.significance);
 
-  const ranked = [...stories].sort((a, b) => b.significance - a.significance);
+  const ranked = [...stories].sort((a, b) => rankOf(b) - rankOf(a));
 
   // Admit at the readability floor; force at least `minStories` regardless of
   // budget, but never exceed `maxStories` (the cap wins over the floor).

@@ -37,6 +37,7 @@ export function toTickConfig(config: Config): TickConfig {
     recentWindowHours: config.dedup.recentWindowHours,
     recencyHalfLifeHours: config.scoring.recencyHalfLifeHours,
     maxEditorialAdjustment: config.scoring.maxEditorialAdjustment,
+    maxSignalAdjustment: config.scoring.maxSignalAdjustment,
     deepAnalysisTopN: config.reasoner.deepAnalysisTopN,
     sourceWeights: sourceWeightsOf(config),
   };

@@ -89,4 +89,45 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.opts.tier).toBe('deep');
     expect(t.calls[0]?.prompt).toContain('BRIEF BODY');
   });
+
+  it('interpretFeedback: parses intent on the cheap tier and keeps the feedback text', async () => {
+    const t = new FakeTransport({
+      topics: [
+        { topic: 'AI', direction: 'more' },
+        { topic: 'Sports', direction: 'mute' },
+      ],
+      regions: [{ region: 'Israel', direction: 'more' }],
+      length: 'shorter',
+      summary: 'More AI, no Sports, shorter, more Israel.',
+    });
+
+    const intent = await new Reasoner(t).interpretFeedback({
+      text: 'love the AI, hide sports, keep it short, more israel',
+    });
+
+    expect(t.calls[0]?.kind).toBe('json');
+    expect(t.calls[0]?.opts.tier).toBe('cheap');
+    expect(t.calls[0]?.prompt).toContain('hide sports');
+    expect(intent.topics).toContainEqual({ topic: 'AI', direction: 'more' });
+    expect(intent.topics).toContainEqual({ topic: 'Sports', direction: 'mute' });
+    expect(intent.regions).toContainEqual({ region: 'Israel', direction: 'more' });
+    expect(intent.length).toBe('shorter');
+  });
+
+  it('interpretFeedback: silently drops out-of-vocabulary topics/regions', async () => {
+    const t = new FakeTransport({
+      topics: [
+        { topic: 'AI', direction: 'more' },
+        { topic: 'Crypto', direction: 'more' }, // not in the controlled vocabulary
+      ],
+      regions: [{ region: 'Mars', direction: 'less' }], // not a Region
+      length: null,
+      summary: 'More AI.',
+    });
+
+    const intent = await new Reasoner(t).interpretFeedback({ text: 'more ai and crypto' });
+
+    expect(intent.topics).toEqual([{ topic: 'AI', direction: 'more' }]);
+    expect(intent.regions).toEqual([]);
+  });
 });

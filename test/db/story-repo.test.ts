@@ -82,6 +82,28 @@ describe('StoryRepo', () => {
     expect(distinctSources(two)).toBe(2);
   });
 
+  it('reassigns a member ref across stories without a primary-key collision', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+    // Tick 1: source item hackernews:42 corroborates story A.
+    await repo.upsert(
+      storyUpsert({ id: 'a', memberRefs: [{ source: 'hackernews', externalId: '42' }] }),
+    );
+
+    // Tick 2: clustering reassigns the same source item to story B.
+    // The ref still belongs to A, so a naive insert hits the (source, externalId) PK.
+    await repo.upsert(
+      storyUpsert({ id: 'b', memberRefs: [{ source: 'hackernews', externalId: '42' }] }),
+    );
+
+    // The ref now belongs to B alone — moved, not duplicated.
+    const a = await repo.get('a');
+    const b = await repo.get('b');
+    expect(b?.memberRefs).toContainEqual({ source: 'hackernews', externalId: '42' });
+    expect(a?.memberRefs).toHaveLength(0);
+  });
+
   describe('topStories', () => {
     async function seed() {
       const db = await createTestDb();

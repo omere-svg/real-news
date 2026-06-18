@@ -20,12 +20,16 @@ import { RssSource } from './sources/rss-source.js';
 import { HfPapersSource } from './sources/hf-papers.js';
 import { PsyArxivSource } from './sources/psyarxiv.js';
 import { KnessetVotesSource } from './sources/knesset-votes.js';
+import { WikipediaPageviewsSource } from './sources/wikipedia-pageviews.js';
+import { WorldBankSource } from './sources/worldbank.js';
 import { makeFetchJson } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
+import type { SignalSource } from './sources/signal-source.js';
 import type { JsonFetcher } from './sources/http.js';
 import { Reasoner } from './llm/reasoner.js';
 import { OpenAITransport } from './llm/openai-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
+import type { LLMClient } from './llm/llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { OpenAIEmbedder } from './embedding/openai-embedder.js';
 import { ResilientEmbedder } from './embedding/resilient-embedder.js';
@@ -42,6 +46,8 @@ import { OpenAITTS } from './telegram/openai-tts.js';
 import { ResilientSynthesizer } from './telegram/resilient-synthesizer.js';
 import { HorizonBot } from './telegram/horizon-bot.js';
 import { pollOnce } from './telegram/poll.js';
+import { SIGNAL_SOURCE_IDS } from './domain/types.js';
+import type { SignalSourceId, SourceId } from './domain/types.js';
 import type { Synthesizer } from './telegram/synthesizer.js';
 import type { QueryEngine } from './presentation/query-engine.js';
 import type { Db } from './db/client.js';
@@ -58,6 +64,9 @@ const DB_URL = process.env.DB_URL ?? 'file:./data/horizon.db';
 const PORT = Number(process.env.PORT ?? 3000);
 // Bind to localhost by default (ADR-0023); set HOST=0.0.0.0 to expose (behind a proxy).
 const HOST = process.env.HOST ?? '127.0.0.1';
+
+/** Signal-source ids (ADR-0025) — routed to buildSignalSource, not the Story pipeline. */
+const signalSourceIds = new Set<SourceId>(SIGNAL_SOURCE_IDS);
 
 /** Build the concrete SourceAdapter for one enabled source config. */
 function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | null {
@@ -107,15 +116,36 @@ function buildEmbedder(config: Config): Embedder {
   );
 }
 
-function buildSources(config: Config): SourceAdapter[] {
-  const fetchJson = makeFetchJson(fetch, {
-    timeoutMs: config.http.fetchTimeoutMs,
-    maxBytes: config.http.maxResponseBytes,
-  });
+function buildSources(config: Config, fetchJson: JsonFetcher): SourceAdapter[] {
   return (config.sources as SourceConfig[])
-    .filter((s) => s.enabled)
+    .filter((s) => s.enabled && !signalSourceIds.has(s.id))
     .map((s) => buildSource(s, fetchJson))
     .filter((a): a is SourceAdapter => a !== null);
+}
+
+/**
+ * Build the concrete SignalSource for one enabled signal config (ADR-0025). The
+ * `id` is a `SignalSourceId` (the caller filters on `signalSourceIds`), so the
+ * switch is exhaustive — a new Signal source without a builder is a compile error.
+ */
+function buildSignalSource(id: SignalSourceId, s: SourceConfig, fetchJson: JsonFetcher): SignalSource {
+  const base = { fetchJson, maxItems: s.maxItems, clock: systemClock };
+  switch (id) {
+    case 'wikipedia-pageviews':
+      return new WikipediaPageviewsSource(base);
+    case 'worldbank':
+      return new WorldBankSource(base);
+    default: {
+      const _exhaustive: never = id;
+      return _exhaustive;
+    }
+  }
+}
+
+function buildSignalSources(config: Config, fetchJson: JsonFetcher): SignalSource[] {
+  return (config.sources as SourceConfig[])
+    .filter((s) => s.enabled && signalSourceIds.has(s.id))
+    .map((s) => buildSignalSource(s.id as SignalSourceId, s, fetchJson));
 }
 
 async function main(): Promise<void> {
@@ -152,8 +182,13 @@ async function main(): Promise<void> {
     params: toQueryParams(config),
   });
 
+  const fetchJson = makeFetchJson(fetch, {
+    timeoutMs: config.http.fetchTimeoutMs,
+    maxBytes: config.http.maxResponseBytes,
+  });
   const runner = new TickRunner({
-    sources: buildSources(config),
+    sources: buildSources(config, fetchJson),
+    signalSources: buildSignalSources(config, fetchJson),
     rawItemRepo,
     storyRepo,
     llm,
@@ -167,6 +202,7 @@ async function main(): Promise<void> {
       const report = await runner.run();
       console.log(
         `[tick] extracted=${report.extracted} stories=${report.storiesUpserted} ` +
+          `signals=${report.signalsObserved} ` +
           `skipped=[${report.skipped}] failed=[${report.failed.map((f) => f.source)}]`,
       );
     } catch (err) {
@@ -186,7 +222,7 @@ async function main(): Promise<void> {
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
-  if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults);
+  if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults, llm);
 }
 
 /** Start the Telegram bot long-poll loop (ADR-0019), if enabled and tokened. */
@@ -195,6 +231,7 @@ function startTelegramBot(
   db: Db,
   query: QueryEngine,
   defaults: ReturnType<typeof toPresentationDefaults>,
+  llm: LLMClient,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -219,6 +256,7 @@ function startTelegramBot(
   const bot = new HorizonBot({
     transport,
     query,
+    feedback: llm, // /feedback interpretation reuses the Reasoner (ADR-0026)
     prefs: new DrizzleChatPreferencesRepo(db),
     usage: new DrizzleUsageRepo(db),
     clock: systemClock,

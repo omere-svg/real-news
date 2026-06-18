@@ -1,4 +1,9 @@
 import { computeBaseScore } from '../scoring/compute-base-score.js';
+import {
+  EMPTY_SIGNAL_CONTEXT,
+  signalAdjustment,
+  type SignalContext,
+} from '../scoring/signal-context.js';
 import { representativeOf } from '../domain/cluster.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { LLMClient } from '../llm/llm-client.js';
@@ -13,6 +18,10 @@ export interface ScoreContext {
   readonly recencyHalfLifeHours: number;
   readonly maxEditorialAdjustment: number;
   readonly sourceWeights: Partial<Record<SourceId, number>>;
+  /** Partition-scoped numeric Signal context for this tick (ADR-0025). */
+  readonly signalContext?: SignalContext;
+  /** Max absolute Signal nudge; 0/absent leaves base scoring untouched. */
+  readonly maxSignalAdjustment?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number): number =>
@@ -59,9 +68,10 @@ export function assembleSignals(
 }
 
 /**
- * Score stage (ADR-0008). The deterministic base from verifiable Signals plus
- * a bounded editorial adjustment from the Reasoner — the LLM can nudge, never
- * dominate. Final score is clamped to [0, 10].
+ * Score stage (ADR-0008). The deterministic base from verifiable Signals, a
+ * bounded editorial adjustment from the Reasoner, and a bounded numeric-Signal
+ * nudge from the partition's attention/macro context (ADR-0025) — neither the
+ * LLM nor the signals can dominate. Final score is clamped to [0, 10].
  */
 export async function score(
   clusters: readonly Cluster[],
@@ -88,7 +98,17 @@ export async function score(
         ctx.maxEditorialAdjustment,
       );
 
-      return { cluster, significance: clamp(base + adjustment, 0, 10) };
+      const signalNudge = signalAdjustment(
+        cluster.region,
+        cluster.topic,
+        ctx.signalContext ?? EMPTY_SIGNAL_CONTEXT,
+        ctx.maxSignalAdjustment ?? 0,
+      );
+
+      return {
+        cluster,
+        significance: clamp(base + adjustment + signalNudge, 0, 10),
+      };
     }),
   );
 }

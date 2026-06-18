@@ -47,6 +47,24 @@ describe('ChatPreferencesRepo', () => {
     expect((await repo.get(2))?.regions).toBeUndefined(); // chat 2 didn't inherit chat 1
   });
 
+  it('round-trips feedback weights and the undo snapshot (ADR-0026)', async () => {
+    const repo = new DrizzleChatPreferencesRepo(await createTestDb());
+    const saved = await repo.set(42, {
+      topicWeights: { AI: 1.5, Sports: 0 },
+      regionWeights: { Israel: 1.5 },
+      prev: { topicWeights: { AI: 1 }, defaultMinutes: 3 },
+    });
+    expect(saved.topicWeights).toEqual({ AI: 1.5, Sports: 0 });
+    expect(await repo.get(42)).toEqual(saved);
+
+    // A later patch leaves the weights intact (merge semantics).
+    await repo.set(42, { defaultMinutes: 7 });
+    const got = await repo.get(42);
+    expect(got?.topicWeights).toEqual({ AI: 1.5, Sports: 0 });
+    expect(got?.regionWeights).toEqual({ Israel: 1.5 });
+    expect(got?.defaultMinutes).toBe(7);
+  });
+
   it('clear removes the chat so it falls back to defaults', async () => {
     const repo = new DrizzleChatPreferencesRepo(await createTestDb());
     await repo.set(42, { topics: ['AI'] });

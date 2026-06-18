@@ -1,11 +1,11 @@
 # ADR-0021: Lean media-aware source expansion — keep 2-value Region, add the Story/Signal split, adopt a media + 4-theme source set
 
-- **Status:** Accepted — **partially implemented 2026-06-17**: the 7 Story/BOTH sources
+- **Status:** Accepted — **fully implemented 2026-06-18**: the 7 Story/BOTH sources
   (`guardian`, `timesofisrael`, `knesset-votes`, `hf-papers`, `nber`, `nature`, `psyarxiv`)
-  are built behind the `SourceAdapter` seam, with a shared RSS parser. The 2 SIGNAL sources
-  (`wikipedia-pageviews`, `worldbank`) and the Story/Signal split (§2) are **deferred** to a
-  focused follow-up — the 7 fit the existing Story pipeline because `SourceMetadata` already
-  carries `points`/`mentions`/`tone`.
+  shipped 2026-06-17 behind the `SourceAdapter` seam with a shared RSS parser; the 2 SIGNAL
+  sources (`wikipedia-pageviews`, `worldbank`) and the Story/Signal split (§2) shipped
+  2026-06-18 — the mechanism is settled in [ADR-0025](0025-story-signal-split-numeric-signal-sources.md)
+  (a companion `SignalSource` seam + a bounded partition nudge).
 - **Date:** 2026-06-17
 - **Deciders:** Project Horizon team
 

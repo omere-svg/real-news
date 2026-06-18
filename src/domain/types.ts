@@ -28,23 +28,42 @@ export const TOPICS: readonly Topic[] = [
   'Other',
 ] as const;
 
-/** Identifier of a Source we extract from. */
-export type SourceId =
-  | 'hackernews'
-  | 'gdelt'
-  | 'datagovil'
-  | 'arxiv'
-  | 'knesset'
-  | 'secedgar'
-  | 'wikipedia'
+/**
+ * Source identifiers, split by role (ADR-0021 §2, ADR-0025). These arrays are
+ * the single source of truth — the types below and the runtime routing in the
+ * composition root both derive from them, so the Story/Signal split the ADRs
+ * describe is enforced by the compiler, not re-asserted by hand.
+ */
+export const STORY_SOURCE_IDS = [
+  'hackernews',
+  'gdelt',
+  'datagovil',
+  'arxiv',
+  'knesset',
+  'secedgar',
+  'wikipedia',
   // Phase 4 — media + thematic anchors (ADR-0021).
-  | 'guardian'
-  | 'timesofisrael'
-  | 'knesset-votes'
-  | 'hf-papers'
-  | 'nber'
-  | 'nature'
-  | 'psyarxiv';
+  'guardian',
+  'timesofisrael',
+  'knesset-votes',
+  'hf-papers',
+  'nber',
+  'nature',
+  'psyarxiv',
+] as const;
+
+/** Numeric Signal sources (ADR-0025) — feed significance, never a Story. */
+export const SIGNAL_SOURCE_IDS = ['wikipedia-pageviews', 'worldbank'] as const;
+
+/** Every Source id, both roles — the vocabulary config validates against. */
+export const SOURCE_IDS = [...STORY_SOURCE_IDS, ...SIGNAL_SOURCE_IDS] as const;
+
+/** A Story source (emits Raw Items into the pipeline). */
+export type StorySourceId = (typeof STORY_SOURCE_IDS)[number];
+/** A Signal source (emits numeric observations into scoring context). */
+export type SignalSourceId = (typeof SIGNAL_SOURCE_IDS)[number];
+/** Identifier of a Source we extract from — either role. */
+export type SourceId = StorySourceId | SignalSourceId;
 
 // --- Raw Item: immutable provenance from a single Source ---
 
@@ -53,7 +72,7 @@ export type SourceId =
  * Never mutated after capture.
  */
 export interface RawItem {
-  readonly source: SourceId;
+  readonly source: StorySourceId;
   /** Stable id within the source's namespace (e.g. HN item id, arXiv id). */
   readonly externalId: string;
   readonly title: string;
@@ -104,6 +123,26 @@ export interface Signals {
   readonly corroboration: number;
 }
 
+// --- Signal observation: a numeric point from a Signal source (ADR-0025) ---
+
+/**
+ * One numeric reading from a Signal source (Wikipedia Pageviews, World Bank).
+ * Unlike a `RawItem` it carries no narrative — it feeds significance as scoring
+ * context (a bounded partition nudge), never a standalone Story (ADR-0021 §2).
+ */
+export interface SignalObservation {
+  readonly source: SignalSourceId;
+  /** Partition this reading informs. */
+  readonly region: Region;
+  /** Finer partition, or null when the signal is region-wide (e.g. attention). */
+  readonly topic: Topic | null;
+  /** Entity/series identifier (e.g. `he.wikipedia:article:202405`, `USA:NY.GDP.MKTP.CD`). */
+  readonly key: string;
+  /** The reading: view count, macro volatility, … Always >= 0. */
+  readonly value: number;
+  readonly observedAt: number;
+}
+
 // --- Cluster: items judged to be the same Story during a tick ---
 
 export interface Cluster {
@@ -131,6 +170,6 @@ export interface Story {
 }
 
 export interface RawItemRef {
-  readonly source: SourceId;
+  readonly source: StorySourceId;
   readonly externalId: string;
 }

@@ -14,6 +14,8 @@ export type Command =
   | { kind: 'prefsShow' }
   | { kind: 'prefsSet'; field: PrefsField; value: string }
   | { kind: 'prefsClear' }
+  | { kind: 'feedback'; text: string }
+  | { kind: 'feedbackUndo' }
   | { kind: 'unknown'; text: string };
 
 const PREFS_FIELDS: readonly PrefsField[] = ['topics', 'regions', 'minutes'];
@@ -63,6 +65,13 @@ export function parseCommand(text: string): Command {
         return { kind: 'prefsSet', field: sub as PrefsField, value: args.slice(1).join(' ') };
       }
       return { kind: 'prefsShow' };
+    }
+    case 'feedback': {
+      // "/feedback undo" reverts the last change; otherwise the rest is free text.
+      if (args.length === 1 && args[0]?.toLowerCase() === 'undo') {
+        return { kind: 'feedbackUndo' };
+      }
+      return { kind: 'feedback', text: args.join(' ') };
     }
     default:
       return { kind: 'unknown', text };

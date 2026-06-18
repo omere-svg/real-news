@@ -1,10 +1,10 @@
 import { parseRssItems } from './rss.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
-import type { Region, RawItem, SourceId, Topic } from '../domain/types.js';
+import type { Region, RawItem, SourceId, StorySourceId, Topic } from '../domain/types.js';
 
 export interface RssSourceDeps {
-  readonly id: SourceId;
+  readonly id: StorySourceId;
   /** The public RSS/RDF feed URL (ADR-0021 — summaries + link only, no body). */
   readonly feedUrl: string;
   /** Region this feed asserts (e.g. World for Guardian, Israel for Times of Israel). */

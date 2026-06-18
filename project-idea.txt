@@ -15,8 +15,35 @@ When a user requests a summary—whether a concise text bullet brief, a unified 
 2. **Strictly Zero Scraping**
    To maximize architectural longevity and eliminate fragile UI-dependent code, data acquisition relies *only* on official, public, and stable developer APIs.
 
+   **Source Objectivity Tiers.** Not all APIs are equally trustworthy, and they play
+   different roles. Every Source is classified into one of four tiers, which sets its
+   editorial weight (`sourceWeight`, ADR-0008) and whether its output is a *Story* or a
+   *Signal*:
+   * **Tier A — Primary / official data.** Government statistics offices, central banks,
+     regulators, scientific instruments (e.g. SEC EDGAR, Knesset, World Bank, NBER, Nature,
+     national bureaus of statistics). Facts, not framing. Highest weight; the spine.
+   * **Tier B — Neutral aggregators / metadata.** Don't editorialize; expose objective
+     *measurements about* coverage — volume, tone, mention counts, attention (e.g. GDELT,
+     Wikipedia pageviews, Google Trends). Content may carry source bias, but the metadata we
+     score on is objective.
+   * **Tier C — Engagement / attention platforms.** Surface *what people attend to*, not truth
+     (e.g. Hacker News, Reddit, GitHub). Admitted strictly as a popularity **signal**
+     (`points` / `mentions`), never as ground truth.
+   * **Tier D — Editorial wires.** Reuters/AP/Guardian/NYT-style. Useful for breadth and clean
+     headline text, but carry editorial selection. Admitted below Tier A/B and only behind
+     multi-source `corroboration` to wash out single-outlet bias.
+
+   **Story vs. Signal.** A Source either produces content records (`RawItem` → a Story) or
+   feeds numeric context into significance scoring (a Signal, e.g. FX rates, macro indicators,
+   trend indices). The two are handled distinctly; a numeric macro feed never appears as a
+   standalone story.
+
 3. **Geographic & Topical Database Partitioning**
    The local server data engine maintains strict data boundaries. Incoming news vectors are structurally categorized into distinct fields based on **Region** (e.g., Israel vs. General World Info), **Topic** (e.g., AI, Geopolitics, Sports, Politics), and **Relevance** (popularity and signifcance).
+   The Region partition is a small, closed controlled vocabulary — `Israel` / `World` — sized to
+   the MVP's Israel-based user (**ADR-0021**). A per-bloc expansion (`US`, `China`, `India`, `EU`,
+   …) was researched and **deferred**, not adopted; it is parked as a documented future option in
+   `docs/research/source-shortlist.md` and would be an explicit schema/ADR decision, never free text.
 
 4. **Asynchronous Server Caching**
    To eliminate runtime latency and minimize token waste, all API connections, LLM evaluation pipelines, and deduplication tasks happen asynchronously in a background sync loop. The user-facing presentation layer operates entirely as a read-only viewer of the pre-compiled server intelligence database.

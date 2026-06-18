@@ -5,8 +5,11 @@ import { cluster } from './cluster.js';
 import { resolve, type IdentifiedCluster } from './resolve.js';
 import { score } from './score.js';
 import { analyze } from './analyze.js';
+import { observeSignals } from './observe-signals.js';
+import { assembleSignalContext } from '../scoring/signal-context.js';
 import { representativeOf } from '../domain/cluster.js';
 import type { SourceAdapter } from '../sources/source-adapter.js';
+import type { SignalSource } from '../sources/signal-source.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { StoryRepo, StoryUpsert } from '../db/story-repo.js';
 import type { LLMClient } from '../llm/llm-client.js';
@@ -22,10 +25,14 @@ export interface TickConfig {
   readonly maxEditorialAdjustment: number;
   readonly deepAnalysisTopN: number;
   readonly sourceWeights: Partial<Record<SourceId, number>>;
+  /** Max absolute numeric-Signal nudge to significance (ADR-0025); 0/absent disables it. */
+  readonly maxSignalAdjustment?: number;
 }
 
 export interface TickRunnerDeps {
   readonly sources: readonly SourceAdapter[];
+  /** Numeric Signal sources (ADR-0025); optional — absent means no signal nudge. */
+  readonly signalSources?: readonly SignalSource[];
   readonly rawItemRepo: RawItemRepo;
   readonly storyRepo: StoryRepo;
   readonly llm: LLMClient;
@@ -40,6 +47,11 @@ export interface TickReport {
   readonly skipped: SourceId[];
   readonly failed: SourceFailure[];
   readonly storiesUpserted: number;
+  /** Numeric Signal observations collected this tick (ADR-0025). */
+  readonly signalsObserved: number;
+  /** Signal sources skipped (health) or that threw (isolated). */
+  readonly signalsSkipped: SourceId[];
+  readonly signalsFailed: SourceFailure[];
 }
 
 /**
@@ -57,6 +69,10 @@ export class TickRunner {
     const extraction = await extract(this.deps.sources);
     await rawItemRepo.upsert(extraction.items);
 
+    // Numeric Signal context for this tick (ADR-0025): observed fresh, used in-tick.
+    const signals = await observeSignals(this.deps.signalSources ?? []);
+    const signalContext = assembleSignalContext(signals.observations);
+
     const classified = await classify(extraction.items, llm);
     const embedded = await embed(classified, embedder);
     const clusters = await cluster(embedded, llm, {
@@ -73,6 +89,8 @@ export class TickRunner {
       recencyHalfLifeHours: config.recencyHalfLifeHours,
       maxEditorialAdjustment: config.maxEditorialAdjustment,
       sourceWeights: config.sourceWeights,
+      signalContext,
+      maxSignalAdjustment: config.maxSignalAdjustment ?? 0,
     });
     const analyzed = await analyze(scored, llm, config.deepAnalysisTopN);
 
@@ -88,6 +106,9 @@ export class TickRunner {
       skipped: extraction.skipped,
       failed: extraction.failed,
       storiesUpserted: analyzed.length,
+      signalsObserved: signals.observations.length,
+      signalsSkipped: signals.skipped,
+      signalsFailed: signals.failed,
     };
   }
 }

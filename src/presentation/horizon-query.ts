@@ -75,7 +75,12 @@ export class HorizonQuery implements QueryEngine {
     return script.trim() || brief; // degrade to the brief (ADR-0014)
   }
 
-  /** Read a Significance-ranked pool filtered by the request, then budget it. */
+  /**
+   * Read a Significance-ranked pool (hard-filtered by any explicit request
+   * region/topic), drop muted partitions, and budget it under a preference-weighted
+   * priority (ADR-0026). Significance stays global; weighting is per-user
+   * Presentation — the displayed score is never altered, only the ordering.
+   */
   private async select(
     request: BriefRequest,
     wordsPerMinute: number,
@@ -85,12 +90,22 @@ export class HorizonQuery implements QueryEngine {
       ...(request.regions?.length ? { region: request.regions } : {}),
       ...(request.topics?.length ? { topic: request.topics } : {}),
     });
-    return budgetStories(pool, request.minutes, {
+
+    const tw = request.topicWeights;
+    const rw = request.regionWeights;
+    const weighted = tw || rw;
+    const rank = (s: Story): number =>
+      s.significance * (tw?.[s.topic] ?? 1) * (rw?.[s.region] ?? 1);
+    // Muted partitions (weight 0 ⇒ rank 0) are excluded entirely.
+    const candidates = weighted ? pool.filter((s) => rank(s) > 0) : pool;
+
+    return budgetStories(candidates, request.minutes, {
       wordsPerMinute,
       wordCost: this.deps.params.wordCost,
       minDepth: this.deps.params.minDepth,
       minStories: this.deps.params.minStories,
       maxStories: this.deps.params.maxStories,
+      ...(weighted ? { rank } : {}),
     });
   }
 }

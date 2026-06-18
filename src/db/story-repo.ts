@@ -4,6 +4,7 @@ import {
   eq,
   gte,
   inArray,
+  or,
   type AnyColumn,
   type SQL,
 } from 'drizzle-orm';
@@ -106,8 +107,17 @@ export class DrizzleStoryRepo implements StoryRepo {
         },
       });
 
-    // Replace this story's membership with the given refs.
-    await this.db.delete(membership).where(eq(membership.storyId, input.id));
+    // Replace this story's membership with the given refs. Clear both this
+    // story's existing rows AND any rows that currently own an incoming ref —
+    // clustering can reassign a source item from another story across ticks,
+    // and the (source, externalId) primary key lets a ref belong to one story
+    // only, so the prior owner must release it before we re-insert.
+    const ownsIncoming = input.memberRefs.map((ref) =>
+      and(eq(membership.source, ref.source), eq(membership.externalId, ref.externalId)),
+    );
+    await this.db
+      .delete(membership)
+      .where(or(eq(membership.storyId, input.id), ...ownsIncoming));
     if (input.memberRefs.length > 0) {
       await this.db.insert(membership).values(
         input.memberRefs.map((ref) => ({

@@ -23,4 +23,7 @@ export interface BriefRequest {
   readonly minutes: number;
   readonly regions?: readonly Region[];
   readonly topics?: readonly Topic[];
+  /** Soft per-partition ranking weights from feedback (ADR-0026); absent ≡ neutral. */
+  readonly topicWeights?: Partial<Record<Topic, number>>;
+  readonly regionWeights?: Partial<Record<Region, number>>;
 }

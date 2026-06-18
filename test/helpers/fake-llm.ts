@@ -3,6 +3,8 @@ import type {
   AnalyzeInput,
   Classification,
   ClassifyInput,
+  FeedbackInput,
+  FeedbackIntent,
   LLMClient,
   NarrateInput,
   StoryStub,
@@ -14,6 +16,7 @@ export interface FakeLLMOptions {
   adjust?: number;
   analyze?: string | ((input: AnalyzeInput) => string);
   narrate?: string | ((input: NarrateInput) => string);
+  feedback?: FeedbackIntent | ((input: FeedbackInput) => FeedbackIntent);
 }
 
 /** A deterministic LLMClient for tests, with call counters per method. */
@@ -23,6 +26,7 @@ export class FakeLLM implements LLMClient {
   adjustCalls = 0;
   analyzeCalls = 0;
   narrateCalls = 0;
+  feedbackCalls = 0;
 
   constructor(private readonly options: FakeLLMOptions = {}) {}
 
@@ -57,5 +61,12 @@ export class FakeLLM implements LLMClient {
     const n = this.options.narrate;
     if (typeof n === 'function') return n(input);
     return n ?? `Narrated (${input.minutes}m): ${input.brief}`;
+  }
+
+  async interpretFeedback(input: FeedbackInput): Promise<FeedbackIntent> {
+    this.feedbackCalls += 1;
+    const f = this.options.feedback;
+    if (typeof f === 'function') return f(input);
+    return f ?? { topics: [], regions: [], length: null, summary: '' };
   }
 }

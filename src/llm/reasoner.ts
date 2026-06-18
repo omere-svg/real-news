@@ -5,11 +5,13 @@ import type {
   AnalyzeInput,
   Classification,
   ClassifyInput,
+  FeedbackInput,
+  FeedbackIntent,
   LLMClient,
   NarrateInput,
   StoryStub,
 } from './llm-client.js';
-import { REGIONS, TOPICS } from '../domain/types.js';
+import { REGIONS, TOPICS, type Region, type Topic } from '../domain/types.js';
 
 /**
  * The Reasoner (ADR-0016): the editorial half of the model seam. Owns every
@@ -24,6 +26,23 @@ const classificationSchema = z.object({
 });
 const sameStorySchema = z.object({ same: z.boolean() });
 const adjustmentSchema = z.object({ adjustment: z.number() });
+
+const weightDirectionSchema = z.enum(['more', 'less', 'mute', 'reset']);
+const lengthDirectionSchema = z.enum(['shorter', 'longer', 'reset']);
+// Lenient: topic/region are free strings here, then filtered to the controlled
+// vocabulary below — an unknown name is dropped, never a parse failure (ADR-0026).
+const feedbackIntentSchema = z.object({
+  topics: z.array(z.object({ topic: z.string(), direction: weightDirectionSchema })).default([]),
+  regions: z.array(z.object({ region: z.string(), direction: weightDirectionSchema })).default([]),
+  length: lengthDirectionSchema.nullable().default(null),
+  summary: z.string().default(''),
+});
+
+/** The canonical vocabulary member matching `raw` (case-insensitive), or null. */
+function canonical<T extends string>(vocab: readonly T[], raw: string): T | null {
+  const needle = raw.trim().toLowerCase();
+  return vocab.find((v) => v.toLowerCase() === needle) ?? null;
+}
 
 export class Reasoner implements LLMClient {
   constructor(private readonly transport: ChatTransport) {}
@@ -77,5 +96,32 @@ export class Reasoner implements LLMClient {
         `directions. Output only the script text.\n\n${input.brief}`,
       { tier: 'deep', maxTokens: 1024 },
     );
+  }
+
+  async interpretFeedback(input: FeedbackInput): Promise<FeedbackIntent> {
+    const json = await this.transport.completeJson(
+      `Interpret a news reader's free-text feedback into preference changes. ` +
+        `Respond with a JSON object: ` +
+        `{"topics":[{"topic":<one of ${JSON.stringify(TOPICS)}>,"direction":"more"|"less"|"mute"|"reset"}], ` +
+        `"regions":[{"region":<one of ${JSON.stringify(REGIONS)}>,"direction":"more"|"less"|"mute"|"reset"}], ` +
+        `"length":"shorter"|"longer"|"reset"|null, ` +
+        `"summary":<one short sentence confirming what you understood>}.\n\n` +
+        `Use "more"/"less" for emphasis, "mute" to hide a topic entirely, "reset" to clear a ` +
+        `prior bias. Set "length" only if they comment on brief length. Only use the listed ` +
+        `Topics/Regions; omit anything you can't map. Keep the summary friendly and concrete.\n\n` +
+        `Feedback: ${input.text}`,
+      { tier: 'cheap', maxTokens: 384 },
+    );
+
+    const parsed = feedbackIntentSchema.parse(json);
+    // Drop entries outside the controlled vocabulary (ADR-0026).
+    const topics = parsed.topics
+      .map((t) => ({ topic: canonical(TOPICS as readonly Topic[], t.topic), direction: t.direction }))
+      .filter((t): t is { topic: Topic; direction: typeof t.direction } => t.topic !== null);
+    const regions = parsed.regions
+      .map((r) => ({ region: canonical(REGIONS as readonly Region[], r.region), direction: r.direction }))
+      .filter((r): r is { region: Region; direction: typeof r.direction } => r.region !== null);
+
+    return { topics, regions, length: parsed.length, summary: parsed.summary };
   }
 }

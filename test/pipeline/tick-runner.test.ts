@@ -7,10 +7,11 @@ import { FakeClock } from '../helpers/fake-clock.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
 import { FakeEmbedder } from '../helpers/fake-embedder.js';
 import { FakeSource } from '../helpers/fake-source.js';
-import type { RawItem, SourceId } from '../../src/domain/types.js';
+import { FakeSignalSource } from '../helpers/fake-signal-source.js';
+import type { RawItem, SignalObservation, SourceId, StorySourceId } from '../../src/domain/types.js';
 
 function item(
-  source: SourceId,
+  source: StorySourceId,
   externalId: string,
   title: string,
   metadata: RawItem['metadata'] = {},
@@ -39,22 +40,36 @@ const config = {
 
 async function build(overrides: {
   sources: FakeSource[];
+  signalSources?: FakeSignalSource[];
   embedder?: FakeEmbedder;
   llm?: FakeLLM;
+  maxSignalAdjustment?: number;
 }) {
   const db = await createTestDb();
   const rawItemRepo = new DrizzleRawItemRepo(db);
   const storyRepo = new DrizzleStoryRepo(db, new FakeClock(1000));
   const runner = new TickRunner({
     sources: overrides.sources,
+    ...(overrides.signalSources ? { signalSources: overrides.signalSources } : {}),
     rawItemRepo,
     storyRepo,
     llm: overrides.llm ?? new FakeLLM({ analyze: 'Why it matters.' }),
     embedder: overrides.embedder ?? new FakeEmbedder(),
     clock: new FakeClock(100 * 3_600_000),
-    config,
+    config: { ...config, maxSignalAdjustment: overrides.maxSignalAdjustment ?? 0 },
   });
   return { runner, rawItemRepo, storyRepo };
+}
+
+function signal(region: 'World' | 'Israel', value: number): SignalObservation {
+  return {
+    source: 'wikipedia-pageviews',
+    region,
+    topic: null,
+    key: `${region}:k:202605`,
+    value,
+    observedAt: 0,
+  };
 }
 
 describe('TickRunner', () => {
@@ -177,6 +192,56 @@ describe('TickRunner', () => {
     expect(stories).toHaveLength(1); // merged, not duplicated across ticks
     const distinctSources = new Set(stories[0]?.memberRefs.map((r) => r.source));
     expect(distinctSources).toEqual(new Set(['hackernews', 'gdelt']));
+  });
+
+  it('numeric Signals lift the significance of a matching-partition story (ADR-0025)', async () => {
+    const makeSources = () => [
+      new FakeSource('hackernews', {
+        items: [item('hackernews', '1', 'AI breakthrough', { region: 'World', topic: 'AI', points: 50 })],
+      }),
+    ];
+    const embedder = () => new FakeEmbedder({ 'AI breakthrough': [1, 0, 0] });
+
+    // Baseline: no signals.
+    const plain = await build({ sources: makeSources(), embedder: embedder() });
+    await plain.runner.run();
+    const [plainStory] = await plain.storyRepo.all();
+
+    // With a strong World attention surge and a non-zero max nudge.
+    const boosted = await build({
+      sources: makeSources(),
+      embedder: embedder(),
+      signalSources: [new FakeSignalSource('wikipedia-pageviews', { observations: [signal('World', 400_000)] })],
+      maxSignalAdjustment: 1.5,
+    });
+    const report = await boosted.runner.run();
+    const [boostedStory] = await boosted.storyRepo.all();
+
+    expect(report.signalsObserved).toBe(1);
+    expect(boostedStory!.significance).toBeGreaterThan(plainStory!.significance);
+  });
+
+  it('isolates an unhealthy or throwing Signal source without crashing the tick', async () => {
+    const { runner, storyRepo } = await build({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Live story', { region: 'World', topic: 'AI' })],
+        }),
+      ],
+      embedder: new FakeEmbedder({ 'Live story': [1, 0, 0] }),
+      signalSources: [
+        new FakeSignalSource('wikipedia-pageviews', { healthy: false }),
+        new FakeSignalSource('worldbank', { observeError: 'boom' }),
+      ],
+      maxSignalAdjustment: 1.0,
+    });
+
+    const report = await runner.run();
+
+    expect(report.signalsSkipped).toEqual(['wikipedia-pageviews']);
+    expect(report.signalsFailed.map((f) => f.source)).toEqual(['worldbank']);
+    expect(report.storiesUpserted).toBe(1); // tick still completes
+    expect(await storyRepo.all()).toHaveLength(1);
   });
 
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {

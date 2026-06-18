@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { assembleSignals, score } from '../../src/pipeline/score.js';
 import { computeBaseScore } from '../../src/scoring/compute-base-score.js';
+import {
+  assembleSignalContext,
+  signalAdjustment,
+} from '../../src/scoring/signal-context.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
 import { FakeClock } from '../helpers/fake-clock.js';
-import type { Cluster, RawItem, SourceId } from '../../src/domain/types.js';
+import type { Cluster, RawItem, SourceId, StorySourceId } from '../../src/domain/types.js';
 
 const HOUR = 3_600_000;
 const NOW = 100 * HOUR;
 
 function member(
-  source: SourceId,
+  source: StorySourceId,
   externalId: string,
   metadata: RawItem['metadata'],
   publishedAt: number | null = null,
@@ -81,5 +85,45 @@ describe('score stage', () => {
 
     const slammed = await score([c], new FakeLLM({ adjust: -99 }), ctx);
     expect(slammed[0]?.significance).toBeCloseTo(Math.max(0, base - 1.5), 5);
+  });
+
+  it('adds a bounded numeric-Signal nudge for the cluster partition (ADR-0025)', async () => {
+    const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]); // World / AI
+    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {
+      recencyHalfLifeHours: 24,
+    });
+
+    // A World-wide attention surge should lift World stories via the (World,*) bucket.
+    const signalContext = assembleSignalContext([
+      {
+        source: 'wikipedia-pageviews',
+        region: 'World',
+        topic: null,
+        key: 'en.wikipedia:AI:202605',
+        value: 400_000,
+        observedAt: NOW,
+      },
+    ]);
+    const maxSignalAdjustment = 1.0;
+    const expectedNudge = signalAdjustment('World', 'AI', signalContext, maxSignalAdjustment);
+
+    const [scored] = await score([c], new FakeLLM({ adjust: 0 }), {
+      ...ctx,
+      signalContext,
+      maxSignalAdjustment,
+    });
+
+    expect(expectedNudge).toBeGreaterThan(0);
+    expect(scored?.significance).toBeCloseTo(Math.min(10, base + expectedNudge), 5);
+  });
+
+  it('leaves scoring untouched when no Signal context is supplied', async () => {
+    const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
+    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {
+      recencyHalfLifeHours: 24,
+    });
+
+    const [scored] = await score([c], new FakeLLM({ adjust: 0 }), ctx);
+    expect(scored?.significance).toBeCloseTo(base, 5);
   });
 });

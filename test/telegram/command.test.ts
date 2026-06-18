@@ -57,4 +57,19 @@ describe('parseCommand', () => {
     expect(parseCommand('/wat')).toEqual({ kind: 'unknown', text: '/wat' });
     expect(parseCommand('   ')).toEqual({ kind: 'unknown', text: '   ' });
   });
+
+  it('parses /feedback with free text, and /feedback undo as its own command', () => {
+    expect(parseCommand('/feedback more AI, less sports, shorter')).toEqual({
+      kind: 'feedback',
+      text: 'more AI, less sports, shorter',
+    });
+    expect(parseCommand('/feedback undo')).toEqual({ kind: 'feedbackUndo' });
+    expect(parseCommand('/feedback UNDO')).toEqual({ kind: 'feedbackUndo' });
+    // "undo" inside a longer sentence is feedback text, not the undo command.
+    expect(parseCommand('/feedback undo the sports thing please')).toEqual({
+      kind: 'feedback',
+      text: 'undo the sports thing please',
+    });
+    expect(parseCommand('/feedback')).toEqual({ kind: 'feedback', text: '' });
+  });
 });

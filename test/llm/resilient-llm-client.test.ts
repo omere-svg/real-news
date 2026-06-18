@@ -20,6 +20,9 @@ const brokenLLM: LLMClient = {
   narrate: async () => {
     throw new Error('api down');
   },
+  interpretFeedback: async () => {
+    throw new Error('api down');
+  },
 };
 
 const classifyInput = { title: 't', text: null };
@@ -54,5 +57,11 @@ describe('ResilientLLMClient', () => {
       }),
     ).toBe(''); // no analysis rather than a crash
     expect(await llm.narrate({ minutes: 5, brief: 'b' })).toBe(''); // caller falls back to the brief
+    expect(await llm.interpretFeedback({ text: 'more ai' })).toEqual({
+      topics: [],
+      regions: [],
+      length: null,
+      summary: '',
+    }); // no-op intent: feedback didn't land, change nothing
   });
 });

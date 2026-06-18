@@ -36,7 +36,20 @@ export interface LLMClient {
    * narration (ADR-0014). Read-path only artifact that touches the model.
    */
   narrate(input: NarrateInput): Promise<string>;
+
+  /**
+   * Cheap tier (Haiku): interpret a user's free-text feedback into a structured
+   * preference intent (ADR-0026). Pure NLU — it names directions, never numbers;
+   * the deterministic weight math lives in `applyFeedback`.
+   */
+  interpretFeedback(input: FeedbackInput): Promise<FeedbackIntent>;
 }
+
+/**
+ * The narrow seam the Telegram bot depends on for feedback (ADR-0026) — it has
+ * no business calling classify/analyze/narrate. Any `LLMClient` satisfies it.
+ */
+export type FeedbackInterpreter = Pick<LLMClient, 'interpretFeedback'>;
 
 export interface ClassifyInput {
   readonly title: string;
@@ -72,4 +85,29 @@ export interface NarrateInput {
   readonly minutes: number;
   /** The deterministic text brief to render as spoken narration. */
   readonly brief: string;
+}
+
+// --- Feedback interpretation (ADR-0026) ---
+
+/** Which way the user wants a partition's weight to move. */
+export type WeightDirection = 'more' | 'less' | 'mute' | 'reset';
+/** How the user wants brief length to move. */
+export type LengthDirection = 'shorter' | 'longer' | 'reset';
+
+export interface FeedbackInput {
+  /** The user's raw feedback text. */
+  readonly text: string;
+}
+
+/**
+ * The structured intent parsed from free-text feedback. Directions only — the
+ * numeric weight math is applied deterministically by `applyFeedback` (ADR-0026).
+ * Invalid Topics/Regions are dropped at the Reasoner's schema boundary.
+ */
+export interface FeedbackIntent {
+  readonly topics: ReadonlyArray<{ topic: Topic; direction: WeightDirection }>;
+  readonly regions: ReadonlyArray<{ region: Region; direction: WeightDirection }>;
+  readonly length: LengthDirection | null;
+  /** A short human-readable confirmation of what was understood, for the reply. */
+  readonly summary: string;
 }

@@ -3,6 +3,8 @@ import type {
   AnalyzeInput,
   Classification,
   ClassifyInput,
+  FeedbackInput,
+  FeedbackIntent,
   LLMClient,
   NarrateInput,
   StoryStub,
@@ -63,6 +65,16 @@ export class ResilientLLMClient implements LLMClient {
     } catch (err) {
       this.onError('narrate', err);
       return ''; // caller falls back to the deterministic brief (ADR-0014)
+    }
+  }
+
+  async interpretFeedback(input: FeedbackInput): Promise<FeedbackIntent> {
+    try {
+      return await this.delegate.interpretFeedback(input);
+    } catch (err) {
+      this.onError('interpretFeedback', err);
+      // Degrade to a no-op intent: change nothing, tell the caller it didn't land.
+      return { topics: [], regions: [], length: null, summary: '' };
     }
   }
 }

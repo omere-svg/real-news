@@ -13,6 +13,8 @@ import type {
 import type { BriefRequest, QueryEngine } from '../../src/presentation/query-engine.js';
 import type { Synthesizer } from '../../src/telegram/synthesizer.js';
 import type { Topic } from '../../src/domain/types.js';
+import { FakeLLM } from '../helpers/fake-llm.js';
+import type { FeedbackInterpreter, FeedbackIntent } from '../../src/llm/llm-client.js';
 
 class FakeTransport implements TelegramTransport {
   readonly messages: { chatId: number; text: string }[] = [];
@@ -63,6 +65,7 @@ async function build(opts: {
   limits?: Partial<BotLimits>;
   limiter?: RateLimiter;
   maxMinutes?: number;
+  feedback?: FeedbackInterpreter;
 } = {}) {
   const transport = new FakeTransport();
   const query = new FakeQuery();
@@ -82,9 +85,15 @@ async function build(opts: {
     openAccess: opts.openAccess ?? true,
     synthesizer: opts.synthesizer === undefined ? audioSynth : opts.synthesizer,
     defaults: { minutes: 3 },
+    ...(opts.feedback ? { feedback: opts.feedback } : {}),
     ...(opts.allowedChatIds ? { allowedChatIds: opts.allowedChatIds } : {}),
   });
   return { bot, transport, query, prefs, usage, clock };
+}
+
+/** A FeedbackInterpreter that returns a canned intent (the model is stubbed). */
+function fakeInterpreter(intent: FeedbackIntent): FeedbackInterpreter {
+  return new FakeLLM({ feedback: intent });
 }
 
 const update = (chatId: number, text: string): TelegramUpdate => ({
@@ -208,5 +217,74 @@ describe('HorizonBot', () => {
     const { bot, query } = await build({ maxMinutes: 5 });
     await bot.handle(update(5, '/brief 100'));
     expect(query.lastRequest?.minutes).toBe(5);
+  });
+
+  describe('/feedback (ADR-0026)', () => {
+    const intent: FeedbackIntent = {
+      topics: [
+        { topic: 'AI', direction: 'more' },
+        { topic: 'Sports', direction: 'mute' },
+      ],
+      regions: [],
+      length: 'shorter',
+      summary: 'More AI, no Sports, shorter briefs.',
+    };
+
+    it('interprets feedback, persists weights + minutes, and confirms', async () => {
+      const { bot, transport, prefs } = await build({ feedback: fakeInterpreter(intent) });
+
+      await bot.handle(update(5, '/feedback love AI, hide sports, keep it short'));
+
+      const saved = await prefs.get(5);
+      expect(saved?.topicWeights?.AI).toBeGreaterThan(1); // boosted
+      expect(saved?.topicWeights?.Sports).toBe(0); // muted
+      expect(saved?.defaultMinutes).toBeLessThan(3); // "shorter" nudged below the default
+      expect(transport.messages.at(-1)?.text).toContain('More AI, no Sports'); // the summary
+    });
+
+    it('feeds the saved weights into the next brief request', async () => {
+      const { bot, query, prefs } = await build({ feedback: fakeInterpreter(intent) });
+      await bot.handle(update(5, '/feedback more ai, mute sports'));
+
+      await bot.handle(update(5, '/brief'));
+      expect(query.lastRequest?.topicWeights?.AI).toBeGreaterThan(1);
+      expect(query.lastRequest?.topicWeights?.Sports).toBe(0);
+    });
+
+    it('undo reverts to the pre-feedback state', async () => {
+      const { bot, transport, prefs } = await build({ feedback: fakeInterpreter(intent) });
+      await bot.handle(update(5, '/feedback more ai, mute sports'));
+      expect((await prefs.get(5))?.topicWeights?.AI).toBeGreaterThan(1);
+
+      await bot.handle(update(5, '/feedback undo'));
+      const reverted = await prefs.get(5);
+      expect(reverted?.topicWeights?.AI).toBeUndefined(); // back to neutral
+      expect(transport.messages.at(-1)?.text).toMatch(/reverted/i);
+    });
+
+    it('undo with nothing to revert says so', async () => {
+      const { bot, transport } = await build({ feedback: fakeInterpreter(intent) });
+      await bot.handle(update(5, '/feedback undo'));
+      expect(transport.messages.at(-1)?.text).toMatch(/nothing to undo/i);
+    });
+
+    it('an unmappable feedback changes nothing and says so', async () => {
+      const empty: FeedbackIntent = { topics: [], regions: [], length: null, summary: '' };
+      const { bot, transport, prefs } = await build({ feedback: fakeInterpreter(empty) });
+
+      await bot.handle(update(5, '/feedback blah blah'));
+      expect(await prefs.get(5)).toBeNull(); // nothing persisted
+      expect(transport.messages.at(-1)?.text).toMatch(/couldn't map/i);
+    });
+
+    it('empty /feedback shows usage; with no interpreter wired it is unavailable', async () => {
+      const withInterp = await build({ feedback: fakeInterpreter(intent) });
+      await withInterp.bot.handle(update(5, '/feedback'));
+      expect(withInterp.transport.messages.at(-1)?.text).toMatch(/tell me what to change/i);
+
+      const noInterp = await build(); // feedback dep omitted
+      await noInterp.bot.handle(update(5, '/feedback more ai'));
+      expect(noInterp.transport.messages.at(-1)?.text).toMatch(/not available/i);
+    });
   });
 });
