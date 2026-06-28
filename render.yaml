@@ -1,0 +1,28 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec) — ADR-0031 deploy path.
+# Connect this repo in the Render dashboard ("New + → Blueprint"); every push to
+# `main` then auto-builds the Dockerfile and redeploys. Free plan, no card.
+#
+# DB: the free instance disk is ephemeral, so use a hosted Turso (libsql://) DB —
+# set DB_URL + DB_AUTH_TOKEN below (the code already supports it, src/db/client.ts).
+# Keep-alive: the free web service sleeps after 15 min idle, which would pause the
+# tick loop — ping /health every ~10 min from a free pinger (see docs/DEPLOY-RENDER.md).
+services:
+  - type: web
+    name: project-horizon
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true # redeploy on every push to the connected branch
+    envVars:
+      # Bind to all interfaces so Render can route traffic (app defaults to localhost).
+      - key: HOST
+        value: 0.0.0.0
+      # Secrets — set these in the Render dashboard, never committed (sync: false).
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DB_URL # Turso libsql://… URL (hosted DB; disk here is ephemeral)
+        sync: false
+      - key: DB_AUTH_TOKEN # Turso auth token
+        sync: false
