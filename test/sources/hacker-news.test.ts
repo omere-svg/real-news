@@ -82,7 +82,6 @@ describe('HackerNewsSource', () => {
     });
 
     const [raw] = await source.extract();
-    expect(raw?.metadata.region).toBeUndefined();
     expect(raw?.metadata.topic).toBeUndefined();
   });
 

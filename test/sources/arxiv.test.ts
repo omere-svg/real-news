@@ -30,7 +30,6 @@ describe('ArxivSource', () => {
     expect(raw?.url).toBe('http://arxiv.org/abs/2401.01234v1');
     expect(raw?.text).toBe('We study LLMs in depth.');
     expect(raw?.publishedAt).toBe(Date.parse('2026-06-10T12:00:00Z'));
-    expect(raw?.metadata.region).toBe('World');
     expect(raw?.metadata.topic).toBe('AI');
   });
 

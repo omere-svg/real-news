@@ -19,20 +19,18 @@ describe('classify stage', () => {
   it('uses source metadata when present, without calling the LLM', async () => {
     const llm = new FakeLLM();
     const [classified] = await classify(
-      [item({ region: 'Israel', topic: 'Politics' })],
+      [item({ topic: 'Israel' })],
       llm,
     );
 
-    expect(classified?.region).toBe('Israel');
-    expect(classified?.topic).toBe('Politics');
+    expect(classified?.topic).toBe('Israel');
     expect(llm.classifyCalls).toBe(0);
   });
 
   it('falls back to the LLM when metadata is missing', async () => {
-    const llm = new FakeLLM({ classify: { region: 'World', topic: 'AI' } });
+    const llm = new FakeLLM({ classify: { topic: 'AI' } });
     const [classified] = await classify([item({})], llm);
 
-    expect(classified?.region).toBe('World');
     expect(classified?.topic).toBe('AI');
     expect(llm.classifyCalls).toBe(1);
   });

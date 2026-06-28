@@ -6,7 +6,7 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
-import type { Region, SourceMetadata, StorySourceId, Topic } from '../domain/types.js';
+import type { SourceMetadata, StorySourceId, Topic } from '../domain/types.js';
 import type { PreviousPreferences } from './chat-preferences-repo.js';
 
 /**
@@ -37,9 +37,9 @@ export const stories = sqliteTable('stories', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   url: text('url'),
-  region: text('region').$type<Region>().notNull(),
   topic: text('topic').$type<Topic>().notNull(),
   significance: real('significance').notNull(),
+  summary: text('summary'),
   whyItMatters: text('why_it_matters'),
   firstSeenAt: integer('first_seen_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
@@ -85,13 +85,14 @@ export const membership = sqliteTable(
 export const chatPreferences = sqliteTable('chat_preferences', {
   chatId: integer('chat_id').primaryKey(),
   topics: text('topics', { mode: 'json' }).$type<Topic[]>(),
-  regions: text('regions', { mode: 'json' }).$type<Region[]>(),
   defaultMinutes: real('default_minutes'),
   // Soft preference weights from free-text feedback (ADR-0026); absent ≡ neutral.
   topicWeights: text('topic_weights', { mode: 'json' }).$type<Partial<Record<Topic, number>>>(),
-  regionWeights: text('region_weights', { mode: 'json' }).$type<Partial<Record<Region, number>>>(),
   // One-level undo snapshot of the feedback-affected fields (ADR-0026).
   prev: text('prev', { mode: 'json' }).$type<PreviousPreferences>(),
+  // Free-text "things that matter to me" injected into the LLM content paths
+  // (podcast narration, chat) on every request (ADR-0028); absent ≡ none.
+  memory: text('memory'),
 });
 
 /**

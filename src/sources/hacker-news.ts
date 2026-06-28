@@ -29,7 +29,7 @@ export interface HackerNewsDeps {
 
 /**
  * Hacker News adapter over the official Firebase API (ADR-0004). Global
- * tech/AI source. Leaves Region/Topic unset — HN exposes neither reliably, so
+ * tech/AI source. Leaves Topic unset — HN doesn't expose it reliably, so
  * classification falls back to the Reasoner (ADR-0009).
  */
 export class HackerNewsSource implements SourceAdapter {

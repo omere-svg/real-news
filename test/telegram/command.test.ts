@@ -45,11 +45,21 @@ describe('parseCommand', () => {
       field: 'minutes',
       value: '15',
     });
-    expect(parseCommand('/prefs regions Israel')).toEqual({
-      kind: 'prefsSet',
-      field: 'regions',
-      value: 'Israel',
+  });
+
+  it('parses /remember, /forget, and /chat (ADR-0028/0029)', () => {
+    expect(parseCommand('/remember I run a logistics startup in Haifa')).toEqual({
+      kind: 'remember',
+      text: 'I run a logistics startup in Haifa',
     });
+    expect(parseCommand('/remember')).toEqual({ kind: 'remember', text: '' });
+    expect(parseCommand('/forget')).toEqual({ kind: 'forget' });
+    expect(parseCommand('/chat what happened with the merger?')).toEqual({
+      kind: 'chat',
+      text: 'what happened with the merger?',
+    });
+    expect(parseCommand('/ask anything')).toEqual({ kind: 'chat', text: 'anything' });
+    expect(parseCommand('/chat')).toEqual({ kind: 'chat', text: '' });
   });
 
   it('treats an unknown or empty input as unknown', () => {

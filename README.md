@@ -9,19 +9,23 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
 
 ## What it does
 
-1. **Extraction worker** — pulls from **13 Story APIs/feeds** behind one `SourceAdapter`
+1. **Extraction worker** — pulls from **18 Story APIs/feeds** behind one `SourceAdapter`
    contract (Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, Guardian, Times
-   of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv) plus **2 numeric Signal
-   sources** behind a sibling `SignalSource` seam (Wikipedia Pageviews attention, World Bank
-   macro — ADR-0025), with per-source health checks so a dead endpoint never crashes the loop.
+   of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv, plus TheSportsDB→Sports,
+   WHO Outbreaks→Health, and NASA EONET / USGS / GDACS→Climate — ADR-0031) plus **5 numeric
+   Signal sources** behind a sibling `SignalSource` seam (Wikipedia Pageviews attention, World
+   Bank macro — ADR-0025; CoinGecko + Frankfurter FX → Business, OpenAlex → Science — ADR-0031),
+   with per-source health checks so a dead endpoint never crashes the loop.
 2. **Two-tier cache** — `raw_items` (idempotent provenance) → `stories` (finalized, scored,
    classified) + `membership` (corroboration), in SQLite; plus `story_vectors` (cross-tick
    dedup) and `chat_preferences` / `usage` (the bot).
-3. **Reasoning loop** — classify (Region/Topic) → embed → cluster → **resolve** (cross-tick
+3. **Reasoning loop** — classify (Topic) → embed → cluster → **resolve** (cross-tick
    merge) → score (0–10 from verifiable signals + bounded LLM nudge + bounded numeric-Signal
-   nudge from attention/macro context) → "why it matters" → upsert. Runs every tick.
+   nudge from attention/macro context) → factual **summary** + **"why it matters"** → upsert.
+   Runs every tick.
 4. **Presentation** — a read-only web viewer/JSON API **and** a Telegram bot deliver
-   time-budgeted briefs, topic outlines, and podcast audio from the pre-digested cache.
+   time-budgeted briefs, topic outlines, podcast audio, and chat about the news from the
+   pre-digested cache.
 
 Tiered OpenAI (gpt-4o-mini + gpt-4o) does the reasoning, embeddings, and TTS; **if no API key
 is set, the loop degrades gracefully** — real data + signal scoring, no AI enrichment.
@@ -40,18 +44,18 @@ Open **http://localhost:3000**. The first tick runs on boot, then every
 
 - **With `OPENAI_API_KEY`** — full quality: AI classification, dedup confirmation, and
   "why it matters" analysis.
-- **Without it** — runs anyway: real Hacker News stories, real 0–10 signal scores, region
-  defaults to World / topic to Other, "why it matters" left blank.
+- **Without it** — runs anyway: real Hacker News stories, real 0–10 signal scores, topic
+  defaults to Other, summary and "why it matters" left blank.
 
 ```bash
 npm test         # the whole engine
 npm run typecheck
 ```
 
-## Telegram bot (ADR-0019/0020)
+## Telegram bot (ADR-0019/0020/0028/0029/0030)
 
-A second read-only surface over the same cache: time-budgeted briefs, topic outlines, and
-**podcast audio** in chat, with per-chat preferences.
+A second read-only surface over the same cache: time-budgeted briefs, topic outlines,
+**podcast audio**, and **chat about the news**, with per-chat preferences and memory.
 
 ```bash
 # 1. Create a bot with @BotFather, copy the token into .env:
@@ -60,15 +64,27 @@ A second read-only surface over the same cache: time-budgeted briefs, topic outl
 npm start
 ```
 
-Then message your bot: `/start`, `/brief 3`, `/outline AI`, `/podcast 1`, `/prefs topics
-AI,Geopolitics`. Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as
-text. Restrict who can use the bot with `telegram.allowedChatIds`.
+**Just talk to it (ADR-0030).** Plain English and tap-to-run buttons are the primary UX — the
+Reasoner routes free text ("what's new in AI?", "make it shorter") to the right action, and
+`/start` surfaces inline menus. Slash commands still work as aliases: `/brief 3`, `/outline AI`,
+`/podcast 1`, `/chat <question>`, `/prefs topics AI,Geopolitics`, `/remember <note>`, `/forget`.
+Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as text. Restrict who
+can use the bot with `telegram.allowedChatIds`.
+
+**Chat about the news (ADR-0029):** ask a question and the bot answers from the cached Stories,
+telling you when it couldn't. An optional **web-search fallback** (Tavily) kicks in only when the
+cache can't answer and only when configured — `telegram.chat.webSearch.provider: tavily` plus a
+`TAVILY_API_KEY`; it's `none` (cache-only) by default.
+
+**Personal memory (ADR-0028):** `/remember I'm a backend dev in Tel Aviv` keeps a free-text note
+that colors narration and chat phrasing; `/forget` clears it. Memory shapes *wording*; preference
+weights shape *ranking* — they're separate.
 
 **Tune it in plain English (ADR-0026):** `/feedback more AI, less sports, keep it shorter` — the
-Reasoner reads the free text and adjusts per-topic/region **preference weights** that bias your
-briefs (mute a topic, boost another, change length). `/prefs` shows the current tuning;
-`/feedback undo` reverts the last change. Significance stays objective; the weighting is yours
-alone, applied at ranking time.
+Reasoner reads the free text and adjusts per-topic **preference weights** that bias your briefs
+(mute a topic, boost another, change length). `/prefs` shows the current tuning; `/feedback undo`
+reverts the last change. Significance stays objective; the weighting is yours alone, applied at
+ranking time.
 
 **End-to-end check (no Telegram token needed):** `npm run verify:bot` drives the real bot
 through a stub transport against the real query engine + OpenAI TTS, prints every reply, and
@@ -95,6 +111,7 @@ boot). Secrets and deploy knobs come from the environment:
 |---|---|---|
 | `OPENAI_API_KEY` | — | OpenAI reasoning tiers, embeddings, and TTS (optional; ADR-0012/0018/0020) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot, when `telegram.enabled` (ADR-0019) |
+| `TAVILY_API_KEY` | — | Chat web-search fallback, when `telegram.chat.webSearch.provider: tavily` (ADR-0029) |
 | `PORT` | `3000` | HTTP port |
 | `HOST` | `127.0.0.1` | Bind address; localhost by default, `0.0.0.0` to expose (ADR-0023) |
 | `DB_URL` | `file:./data/horizon.db` | SQLite file, or a Turso `libsql://…` URL |
@@ -103,7 +120,7 @@ boot). Secrets and deploy knobs come from the environment:
 
 ## API
 
-- `GET /api/stories?region=World&topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
+- `GET /api/stories?topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
 - `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
 - `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
 - `GET /api/podcast?minutes=3` → `{ script }` — **off by default** (`presentation.webPodcastEnabled`, ADR-0023)

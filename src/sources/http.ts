@@ -42,8 +42,11 @@ export function makeFetchJson(
   limits: FetchLimits,
 ): JsonFetcher {
   return async (url, options) => {
+    // Default Accept follows the parse mode: text feeds (RSS/Atom) must not claim
+    // application/json — some servers (e.g. GDACS) 406 on it. A caller header wins.
+    const defaultAccept = options?.as === 'text' ? '*/*' : 'application/json';
     const res = await fetchImpl(url, {
-      headers: { accept: 'application/json', ...options?.headers },
+      headers: { accept: defaultAccept, ...options?.headers },
       signal: AbortSignal.timeout(limits.timeoutMs),
     });
     if (!res.ok) {

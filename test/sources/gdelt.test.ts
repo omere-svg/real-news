@@ -25,8 +25,7 @@ describe('GdeltSource', () => {
     expect(raw?.title).toBe('Earthquake rocks the region');
     expect(raw?.url).toBe('https://example.com/quake');
     expect(raw?.publishedAt).toBe(Date.parse('2026-06-12T12:00:00Z'));
-    // region/topic left for the classifier (publisher country != subject)
-    expect(raw?.metadata.region).toBeUndefined();
+    // topic left for the classifier (publisher country != subject)
     expect(raw?.metadata.topic).toBeUndefined();
   });
 

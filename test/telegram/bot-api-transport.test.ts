@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { toUpdates, splitForTelegram } from '../../src/telegram/bot-api-transport.js';
+import {
+  toInlineKeyboard,
+  toUpdates,
+  splitForTelegram,
+} from '../../src/telegram/bot-api-transport.js';
 
 describe('splitForTelegram', () => {
   it('keeps a short message as a single chunk', () => {
@@ -21,6 +25,21 @@ describe('splitForTelegram', () => {
     const chunks = splitForTelegram(text, 100);
     expect(chunks.every((c) => c.length <= 100)).toBe(true);
     expect(chunks.join('\n')).toContain('story line number 49');
+  });
+});
+
+describe('toInlineKeyboard', () => {
+  it('keeps a short row on one line', () => {
+    expect(toInlineKeyboard([{ text: 'A', data: 'a' }])).toEqual([
+      [{ text: 'A', callback_data: 'a' }],
+    ]);
+  });
+
+  it('wraps a long list into rows so a menu stays readable (ADR-0030)', () => {
+    const buttons = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((d) => ({ text: d, data: d }));
+    const rows = toInlineKeyboard(buttons, 3);
+    expect(rows.map((r) => r.length)).toEqual([3, 3, 1]); // 7 across rows of 3
+    expect(rows[0]?.[0]).toEqual({ text: 'a', callback_data: 'a' });
   });
 });
 
@@ -48,6 +67,20 @@ describe('toUpdates', () => {
       ],
     };
     expect(toUpdates(raw)).toEqual([{ updateId: 3, chatId: 9, text: 'hi' }]);
+  });
+
+  it('maps an inline button tap (callback query) to an update (ADR-0028)', () => {
+    const raw = {
+      result: [
+        {
+          update_id: 20,
+          callback_query: { id: 'cq1', data: 'fb', message: { chat: { id: 5 } } },
+        },
+      ],
+    };
+    expect(toUpdates(raw)).toEqual([
+      { updateId: 20, chatId: 5, text: '', callbackData: 'fb', callbackQueryId: 'cq1' },
+    ]);
   });
 
   it('tolerates a missing or empty result', () => {

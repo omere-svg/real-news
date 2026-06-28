@@ -41,7 +41,6 @@ describe('WikipediaSource', () => {
     expect(raw?.externalId).toBe('Major_summit');
     expect(raw?.title).toBe('A major diplomatic summit concluded today.'); // tags stripped, ws collapsed
     expect(raw?.url).toBe('https://en.wikipedia.org/wiki/Major_summit');
-    expect(raw?.metadata.region).toBe('World');
     expect(raw?.metadata.topic).toBeUndefined(); // classifier decides
   });
 

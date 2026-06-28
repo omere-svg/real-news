@@ -26,7 +26,7 @@ export interface ArxivDeps {
 
 /**
  * arXiv adapter over the official Atom API (ADR-0004). AI/research source —
- * sets Region=World, Topic=AI (from the cs.AI category), so it skips the LLM
+ * sets Topic=AI (from the cs.AI category), so it skips the LLM
  * classifier (ADR-0009).
  */
 export class ArxivSource implements SourceAdapter {
@@ -70,7 +70,7 @@ export class ArxivSource implements SourceAdapter {
       url: entry.id,
       text: entry.summary ? collapse(entry.summary) : null,
       publishedAt: entry.published ? Date.parse(entry.published) : null,
-      metadata: { region: 'World', topic: 'AI' },
+      metadata: { topic: 'AI' },
     };
   }
 }

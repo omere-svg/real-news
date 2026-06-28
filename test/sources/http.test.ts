@@ -15,6 +15,25 @@ describe('fetchJson (hardened)', () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('requests JSON by default but */* for text feeds (some RSS servers 406 on application/json)', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => response('{"ok":true}'));
+    const fetchJson = makeFetchJson(fetchImpl, { timeoutMs: 5000, maxBytes: 1_000_000 });
+
+    await fetchJson('https://x/api');
+    expect((fetchImpl.mock.calls[0]?.[1].headers as Record<string, string>).accept).toBe(
+      'application/json',
+    );
+
+    await fetchJson('https://x/feed', { as: 'text' });
+    expect((fetchImpl.mock.calls[1]?.[1].headers as Record<string, string>).accept).toBe('*/*');
+
+    // An explicit caller header still wins.
+    await fetchJson('https://x/feed', { as: 'text', headers: { accept: 'application/rss+xml' } });
+    expect((fetchImpl.mock.calls[2]?.[1].headers as Record<string, string>).accept).toBe(
+      'application/rss+xml',
+    );
+  });
+
   it('throws on a non-2xx response', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('nope', { status: 503 }));
     const fetchJson = makeFetchJson(fetchImpl, { timeoutMs: 5000, maxBytes: 1_000_000 });

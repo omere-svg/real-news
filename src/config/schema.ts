@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { REGIONS, SOURCE_IDS, TOPICS } from '../domain/types.js';
+import { SOURCE_IDS, TOPICS } from '../domain/types.js';
 
 /**
  * The configuration contract (ADR-0003). The single source of truth for the
@@ -8,9 +8,8 @@ import { REGIONS, SOURCE_IDS, TOPICS } from '../domain/types.js';
  */
 
 const topicSchema = z.enum(TOPICS as [string, ...string[]]);
-const regionSchema = z.enum(REGIONS as [string, ...string[]]);
 
-// Derived from the single source of truth in domain/types (like regionSchema/topicSchema),
+// Derived from the single source of truth in domain/types (like topicSchema),
 // so the config vocabulary can never drift from the SourceId types.
 export const sourceIdSchema = z.enum(SOURCE_IDS);
 
@@ -36,6 +35,15 @@ export const configSchema = z.object({
     deepModel: z.string().default('gpt-4o'),
     /** Only the top-N most significant Clusters get the deep tier. */
     deepAnalysisTopN: z.number().int().positive().default(10),
+    /**
+     * On boot, regenerate the factual summary + why-it-matters for cached Stories
+     * that lack a summary (e.g. created before the field existed, or never top-N).
+     * Runs in the background, most-significant first, so the displayed brief
+     * self-heals after a restart without a manual backfill.
+     */
+    backfillOnBoot: z.boolean().default(true),
+    /** Max Stories the boot backfill will (re)analyze — bounds one-time cost. */
+    backfillMaxOnBoot: z.number().int().nonnegative().default(200),
   }),
 
   http: z
@@ -80,6 +88,8 @@ export const configSchema = z.object({
       enabled: z.boolean().default(false),
       /** Long-poll server-side wait per cycle. */
       pollTimeoutSeconds: z.number().int().positive().default(30),
+      /** Understand plain-language messages, not just slash commands (ADR-0030). */
+      naturalLanguage: z.boolean().default(true),
       /** Allowlist of chat ids the bot answers (ADR-0022). */
       allowedChatIds: z.array(z.number().int()).default([]),
       /** Answer everyone when the allowlist is empty. Default-deny otherwise (ADR-0022). */
@@ -105,14 +115,28 @@ export const configSchema = z.object({
           voice: z.string().default('alloy'),
         })
         .default({}),
+      /** Conversational chat about the news (ADR-0029). */
+      chat: z
+        .object({
+          /** Enable the cache-grounded chat / free-text questions. */
+          enabled: z.boolean().default(false),
+          /** Web-search fallback when the cache can't answer (ADR-0029). */
+          webSearch: z
+            .object({
+              /** `none` keeps it cache-only (Principle 4); `tavily` enables live lookup. */
+              provider: z.enum(['none', 'tavily']).default('none'),
+              /** Max web results to pull per escalated question. */
+              maxResults: z.number().int().positive().default(5),
+            })
+            .default({}),
+        })
+        .default({}),
     })
     .default({}),
 
   presentation: z.object({
     /** Default topic preferences for the attention budget (Principle 5, ADR-0015). */
     preferredTopics: z.array(topicSchema).default([]),
-    /** Default region preferences (Principle 5, ADR-0015). */
-    preferredRegions: z.array(regionSchema).default([]),
     /** Default attention budget in minutes when a request omits it. */
     defaultMinutes: z.number().positive().default(3),
     /** Hard cap on requested minutes — clamps cost amplification (ADR-0023). */

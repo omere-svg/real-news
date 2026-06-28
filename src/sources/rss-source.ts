@@ -1,15 +1,13 @@
 import { parseRssItems } from './rss.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
-import type { Region, RawItem, SourceId, StorySourceId, Topic } from '../domain/types.js';
+import type { RawItem, SourceId, StorySourceId, Topic } from '../domain/types.js';
 
 export interface RssSourceDeps {
   readonly id: StorySourceId;
   /** The public RSS/RDF feed URL (ADR-0021 — summaries + link only, no body). */
   readonly feedUrl: string;
-  /** Region this feed asserts (e.g. World for Guardian, Israel for Times of Israel). */
-  readonly region: Region;
-  /** Topic if the feed maps to one (e.g. NBER⇒Business); omit to let the Reasoner classify. */
+  /** Topic if the feed maps to one (e.g. NBER⇒Business, Times of Israel⇒Israel); omit to let the Reasoner classify. */
   readonly topic?: Topic;
   readonly fetchJson: JsonFetcher;
   readonly maxItems: number;
@@ -18,9 +16,9 @@ export interface RssSourceDeps {
 /**
  * Generic public-RSS Source adapter (ADR-0021). One deep adapter behind the
  * Source seam serves every keyless RSS feed (Guardian, Times of Israel, NBER,
- * Nature) — they differ only by feed URL and asserted Region/Topic. Ingests
- * headline + summary + link only (never full body); the stable item link is the
- * dedup key. Skips items without a link.
+ * Nature) — they differ only by feed URL and asserted Topic. Ingests headline +
+ * summary + link only (never full body); the stable item link is the dedup key.
+ * Skips items without a link.
  */
 export class RssSource implements SourceAdapter {
   readonly id: SourceId;
@@ -52,7 +50,6 @@ export class RssSource implements SourceAdapter {
         text: item.description,
         publishedAt: item.publishedAt,
         metadata: {
-          region: this.deps.region,
           ...(this.deps.topic ? { topic: this.deps.topic } : {}),
         },
       }));

@@ -27,7 +27,7 @@ export interface HfPapersDeps {
 
 /**
  * Hugging Face Daily Papers adapter (ADR-0021). The community-ranked "what's hot
- * in AI" layer arXiv's firehose lacks. Region=World, Topic=AI (skips the
+ * in AI" layer arXiv's firehose lacks. Topic=AI (skips the
  * classifier, ADR-0009); a BOTH source — `upvotes`→points and `numComments`→
  * mentions enrich significance (ADR-0008). Summaries + link only.
  */
@@ -54,7 +54,6 @@ export class HfPapersSource implements SourceAdapter {
       .map((e) => {
         const p = e.paper;
         const metadata: SourceMetadata = {
-          region: 'World',
           topic: 'AI',
           ...(typeof p.upvotes === 'number' ? { points: p.upvotes } : {}),
           ...(typeof e.numComments === 'number' ? { mentions: e.numComments } : {}),

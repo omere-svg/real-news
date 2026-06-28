@@ -1,15 +1,21 @@
+import { TOPICS } from '../domain/types.js';
+
 /** Defaults the viewer seeds its controls from (ADR-0015). */
 export interface UiDefaults {
   readonly minutes: number;
-  /** Pre-selected when exactly one region is preferred; else "All". */
-  readonly region?: string;
-  /** Pre-selected when exactly one topic is preferred; else "All". */
-  readonly topic?: string;
+  /** Pre-checked topics; empty/omitted means none checked ("All"). */
+  readonly topics?: readonly string[];
 }
 
-/** Mark a <select>/<option> selected for the given value (controlled vocab → safe). */
-function sel(value: string | undefined, candidate: string): string {
-  return value === candidate ? ' selected' : '';
+/** Render the topic multi-select as a checkbox group, pre-checking defaults. */
+function topicCheckboxes(checked: readonly string[]): string {
+  const set = new Set(checked);
+  return TOPICS.map(
+    (t) =>
+      `<label class="chk"><input type="checkbox" name="topic" value="${t}"${
+        set.has(t) ? ' checked' : ''
+      } />${t}</label>`,
+  ).join('');
 }
 
 /**
@@ -32,6 +38,10 @@ export function renderUI(defaults: UiDefaults): string {
   .sub { color:var(--muted); font-size:13px; margin-top:4px; }
   .filters { max-width:860px; margin:12px auto; padding:0 20px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   select { background:var(--card); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:6px 10px; }
+  .topics { display:flex; gap:6px; flex-wrap:wrap; align-items:center; background:var(--card); border:1px solid #2a2f3a; border-radius:8px; padding:5px 8px; }
+  .topics .lbl { color:var(--muted); font-size:13px; }
+  .chk { display:inline-flex; align-items:center; gap:4px; font-size:13px; color:var(--fg); cursor:pointer; }
+  .chk input { accent-color:var(--accent); }
   .budget { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
   .budget input { accent-color:var(--accent); }
   main { max-width:860px; margin:0 auto; padding:8px 20px 60px; }
@@ -61,17 +71,19 @@ export function renderUI(defaults: UiDefaults): string {
     <option value="outline">Topic outline</option>
     <option value="podcast">Podcast script</option>
   </select>
-  <select id="region"><option value="">All regions</option><option${sel(defaults.region, 'World')}>World</option><option${sel(defaults.region, 'Israel')}>Israel</option></select>
-  <select id="topic"><option value="">All topics</option><option${sel(defaults.topic, 'AI')}>AI</option><option${sel(defaults.topic, 'Geopolitics')}>Geopolitics</option><option${sel(defaults.topic, 'Politics')}>Politics</option><option${sel(defaults.topic, 'Sports')}>Sports</option><option${sel(defaults.topic, 'Business')}>Business</option><option${sel(defaults.topic, 'Science')}>Science</option><option${sel(defaults.topic, 'Other')}>Other</option></select>
+  <div class="topics" id="topics"><span class="lbl">Topics:</span>${topicCheckboxes(defaults.topics ?? [])}</div>
   <label class="budget" id="budgetCtl">⏱ <input id="minutes" type="range" min="1" max="30" value="${defaults.minutes}" /> <span id="minutesLabel">${defaults.minutes} min</span></label>
 </div>
 <main id="list"><div class="empty">Loading…</div></main>
 <script>
 const list = document.getElementById('list');
 const formatSel = document.getElementById('format');
-const regionSel = document.getElementById('region');
-const topicSel = document.getElementById('topic');
+const topicsBox = document.getElementById('topics');
 const minutesInput = document.getElementById('minutes');
+
+function selectedTopics() {
+  return [...topicsBox.querySelectorAll('input[name="topic"]:checked')].map(c => c.value);
+}
 const minutesLabel = document.getElementById('minutesLabel');
 const budgetCtl = document.getElementById('budgetCtl');
 const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
@@ -80,30 +92,27 @@ function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt
 
 async function load() {
   const format = formatSel.value;
-  const region = regionSel.value;
-  const topic = topicSel.value;
+  const topics = selectedTopics();
   budgetCtl.style.display = format === 'stories' ? 'none' : 'flex';
   minutesLabel.textContent = minutesInput.value + ' min';
 
-  if (format === 'stories') return loadStories(region, topic);
+  if (format === 'stories') return loadStories(topics);
 
-  if (format === 'outline' && !topic) {
-    list.innerHTML = '<div class="empty">Pick a topic for the outline.</div>';
+  if (format === 'outline' && topics.length !== 1) {
+    list.innerHTML = '<div class="empty">Pick exactly one topic for the outline.</div>';
     return;
   }
   const params = new URLSearchParams({ minutes: minutesInput.value });
-  if (region) params.set('region', region);
-  if (topic) params.set('topic', topic);
+  for (const t of topics) params.append('topic', t);
   const res = await fetch('/api/' + format + '?' + params);
   const body = await res.json();
   const text = body[DOC_FIELD[format]] || '';
   list.innerHTML = '<div class="card"><pre class="doc">' + esc(text) + '</pre></div>';
 }
 
-async function loadStories(region, topic) {
+async function loadStories(topics) {
   const params = new URLSearchParams({ limit: '50' });
-  if (region) params.set('region', region);
-  if (topic) params.set('topic', topic);
+  for (const t of topics) params.append('topic', t);
   const res = await fetch('/api/stories?' + params);
   const { stories } = await res.json();
   if (!stories.length) { list.innerHTML = '<div class="empty">No stories yet. The worker fills the cache on each tick.</div>'; return; }
@@ -112,15 +121,14 @@ async function loadStories(region, topic) {
     const sources = [...new Set(s.memberRefs.map(r => r.source))].join(', ');
     return '<div class="card"><div class="row"><p class="title">'+title+'</p>'+
       '<span class="score">'+s.significance.toFixed(1)+'</span></div>'+
-      '<div class="badges"><span class="badge">'+esc(s.region)+'</span><span class="badge">'+esc(s.topic)+'</span></div>'+
+      '<div class="badges"><span class="badge">'+esc(s.topic)+'</span></div>'+
       (s.whyItMatters ? '<p class="why">'+esc(s.whyItMatters)+'</p>' : '')+
       '<div class="meta">'+s.memberRefs.length+' source(s): '+esc(sources)+'</div></div>';
   }).join('');
 }
 
 formatSel.onchange = load;
-regionSel.onchange = load;
-topicSel.onchange = load;
+topicsBox.addEventListener('change', load);
 minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + ' min'; };
 minutesInput.onchange = load;
 load();

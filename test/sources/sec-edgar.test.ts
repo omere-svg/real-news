@@ -35,7 +35,6 @@ describe('SecEdgarSource', () => {
     expect(raw?.title).toContain('8-K');
     expect(raw?.url).toContain('/Archives/edgar/data/');
     expect(raw?.publishedAt).toBe(Date.parse('2026-06-11'));
-    expect(raw?.metadata.region).toBe('World');
     expect(raw?.metadata.topic).toBe('Business');
   });
 

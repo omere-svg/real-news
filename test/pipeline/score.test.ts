@@ -30,7 +30,7 @@ function member(
 }
 
 function cluster(items: RawItem[]): Cluster {
-  return { items, region: 'World', topic: 'AI' };
+  return { items, topic: 'AI' };
 }
 
 const ctx = {
@@ -93,19 +93,21 @@ describe('score stage', () => {
       recencyHalfLifeHours: 24,
     });
 
-    // A World-wide attention surge should lift World stories via the (World,*) bucket.
-    const signalContext = assembleSignalContext([
-      {
-        source: 'wikipedia-pageviews',
-        region: 'World',
-        topic: null,
-        key: 'en.wikipedia:AI:202605',
-        value: 400_000,
-        observedAt: NOW,
-      },
-    ]);
+    // A global attention surge should lift all stories via the (*) bucket.
+    const signalContext = assembleSignalContext(
+      [
+        {
+          source: 'wikipedia-pageviews',
+          topic: null,
+          key: 'en.wikipedia:AI:202605',
+          value: 400_000,
+          observedAt: NOW,
+        },
+      ],
+      { 'wikipedia-pageviews': 500_000 },
+    );
     const maxSignalAdjustment = 1.0;
-    const expectedNudge = signalAdjustment('World', 'AI', signalContext, maxSignalAdjustment);
+    const expectedNudge = signalAdjustment('AI', signalContext, maxSignalAdjustment);
 
     const [scored] = await score([c], new FakeLLM({ adjust: 0 }), {
       ...ctx,

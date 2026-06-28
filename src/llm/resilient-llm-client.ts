@@ -3,10 +3,17 @@ import type {
   AnalyzeInput,
   Classification,
   ClassifyInput,
+  DiscussInput,
+  DiscussResult,
   FeedbackInput,
   FeedbackIntent,
   LLMClient,
   NarrateInput,
+  PrefsInput,
+  PrefsPatch,
+  RouteInput,
+  RouterIntent,
+  StoryAnalysis,
   StoryStub,
 } from './llm-client.js';
 
@@ -28,7 +35,7 @@ export class ResilientLLMClient implements LLMClient {
       return await this.delegate.classify(input);
     } catch (err) {
       this.onError('classify', err);
-      return { region: 'World', topic: 'Other' };
+      return { topic: 'Other' };
     }
   }
 
@@ -50,12 +57,12 @@ export class ResilientLLMClient implements LLMClient {
     }
   }
 
-  async analyze(input: AnalyzeInput): Promise<string> {
+  async analyze(input: AnalyzeInput): Promise<StoryAnalysis> {
     try {
       return await this.delegate.analyze(input);
     } catch (err) {
       this.onError('analyze', err);
-      return '';
+      return { summary: '', whyItMatters: '' }; // no analysis rather than a crash
     }
   }
 
@@ -74,7 +81,40 @@ export class ResilientLLMClient implements LLMClient {
     } catch (err) {
       this.onError('interpretFeedback', err);
       // Degrade to a no-op intent: change nothing, tell the caller it didn't land.
-      return { topics: [], regions: [], length: null, summary: '' };
+      return { topics: [], length: null, summary: '' };
+    }
+  }
+
+  async discuss(input: DiscussInput): Promise<DiscussResult> {
+    try {
+      return await this.delegate.discuss(input);
+    } catch (err) {
+      this.onError('discuss', err);
+      // Degrade to an honest non-answer; never escalate to web on an error.
+      return {
+        answer: "I couldn't look into that just now — please try again in a moment.",
+        answeredFromNews: true,
+      };
+    }
+  }
+
+  async routeIntent(input: RouteInput): Promise<RouterIntent> {
+    try {
+      return await this.delegate.routeIntent(input);
+    } catch (err) {
+      this.onError('routeIntent', err);
+      // Degrade to the menu: when we can't tell what they meant, show the options.
+      return { action: 'help', minutes: null, topic: null };
+    }
+  }
+
+  async interpretPrefs(input: PrefsInput): Promise<PrefsPatch> {
+    try {
+      return await this.delegate.interpretPrefs(input);
+    } catch (err) {
+      this.onError('interpretPrefs', err);
+      // Degrade to a no-op patch: change nothing, tell the caller it didn't land.
+      return { topics: null, minutes: null, summary: '' };
     }
   }
 }

@@ -15,7 +15,7 @@ function scored(externalId: string, significance: number): ScoredCluster {
     metadata: {},
   };
   return {
-    cluster: { items: [item], region: 'World', topic: 'AI' },
+    cluster: { items: [item], topic: 'AI' },
     significance,
   };
 }

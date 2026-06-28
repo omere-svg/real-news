@@ -46,7 +46,6 @@ describe('WorldBankSource', () => {
     expect(requested).toContain('format=json');
     expect(obs).toMatchObject({
       source: 'worldbank',
-      region: 'World',
       topic: 'Business',
       observedAt: NOW,
     });

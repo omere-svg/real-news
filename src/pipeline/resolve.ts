@@ -11,7 +11,7 @@ const HOUR_MS = 3_600_000;
 
 /**
  * Cross-tick identity resolution (ADR-0017). After within-tick clustering, each
- * Cluster is matched against recent stored Stories of the same Region/Topic: the
+ * Cluster is matched against recent stored Stories of the same Topic: the
  * closest stored embedding above the threshold is escalated to the Reasoner, and
  * on a confirmed match the Cluster adopts that Story's id and absorbs its prior
  * member Raw Items so it accretes corroboration across ticks. Otherwise it gets a
@@ -77,7 +77,6 @@ export async function resolve(
     const vector = vectorByItem.get(refKey(rep)) ?? [];
 
     const candidates = await deps.storyRepo.recentVectors({
-      region: cluster.region,
       topic: cluster.topic,
       sinceMs,
     });

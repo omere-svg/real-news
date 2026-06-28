@@ -1,9 +1,8 @@
-import type { Cluster, RawItem, Region, Topic } from '../domain/types.js';
+import type { Cluster, RawItem, Topic } from '../domain/types.js';
 
 /** A RawItem after the classify stage (ADR-0009). */
 export interface ClassifiedItem {
   readonly item: RawItem;
-  readonly region: Region;
   readonly topic: Topic;
 }
 
@@ -20,7 +19,9 @@ export interface ScoredCluster {
 
 /** A ScoredCluster after the analyze stage (ADR-0006). */
 export interface AnalyzedCluster extends ScoredCluster {
+  /** Factual "what happened" recap; null unless this Cluster was deep-analyzed. */
+  readonly summary: string | null;
   readonly whyItMatters: string | null;
 }
 
-export type { Cluster, RawItem, Region, Topic };
+export type { Cluster, RawItem, Topic };

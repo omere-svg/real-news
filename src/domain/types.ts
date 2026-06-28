@@ -5,11 +5,11 @@
 
 // --- Partitions (controlled vocabularies, never free text) ---
 
-/** The geographic partition of a Story. Closed set in Phase 1. */
-export type Region = 'Israel' | 'World';
-export const REGIONS: readonly Region[] = ['Israel', 'World'] as const;
-
-/** The domain partition of a Story. Controlled vocabulary. */
+/**
+ * The single partition of a Story. Controlled vocabulary. `Israel` is a topic
+ * like any other: a place you can follow, not a separate geographic axis — a
+ * story primarily about Israel is classified `Israel` (place wins over subject).
+ */
 export type Topic =
   | 'AI'
   | 'Geopolitics'
@@ -17,6 +17,9 @@ export type Topic =
   | 'Sports'
   | 'Business'
   | 'Science'
+  | 'Health'
+  | 'Climate'
+  | 'Israel'
   | 'Other';
 export const TOPICS: readonly Topic[] = [
   'AI',
@@ -25,6 +28,9 @@ export const TOPICS: readonly Topic[] = [
   'Sports',
   'Business',
   'Science',
+  'Health',
+  'Climate',
+  'Israel',
   'Other',
 ] as const;
 
@@ -50,10 +56,23 @@ export const STORY_SOURCE_IDS = [
   'nber',
   'nature',
   'psyarxiv',
+  // ADR-0031 — keyless wave: Sports, Health, Climate.
+  'thesportsdb', // Sports — live match results/scores
+  'who-outbreaks', // Health — WHO Disease Outbreak News
+  'nasa-eonet', // Climate — natural-event tracker
+  'usgs-quakes', // Climate — significant earthquakes
+  'gdacs', // Climate — global disaster alerts (RSS)
 ] as const;
 
 /** Numeric Signal sources (ADR-0025) — feed significance, never a Story. */
-export const SIGNAL_SOURCE_IDS = ['wikipedia-pageviews', 'worldbank'] as const;
+export const SIGNAL_SOURCE_IDS = [
+  'wikipedia-pageviews',
+  'worldbank',
+  // ADR-0031 — keyless wave: Business + Science signal depth.
+  'coingecko', // Business — crypto price-momentum
+  'frankfurter', // Business — FX volatility
+  'openalex', // Science — recent-research citation impact
+] as const;
 
 /** Every Source id, both roles — the vocabulary config validates against. */
 export const SOURCE_IDS = [...STORY_SOURCE_IDS, ...SIGNAL_SOURCE_IDS] as const;
@@ -90,9 +109,7 @@ export interface RawItem {
  * (ADR-0008). All optional — absence drives the LLM fallback / signal defaults.
  */
 export interface SourceMetadata {
-  /** Region the Source asserts, if any (e.g. data.gov.il ⇒ Israel). */
-  readonly region?: Region;
-  /** Topic the Source asserts, if any (e.g. arXiv category ⇒ AI/Science). */
+  /** Topic the Source asserts, if any (e.g. arXiv category ⇒ AI; Knesset ⇒ Israel). */
   readonly topic?: Topic;
   /** Popularity score the Source exposes (e.g. HN points). */
   readonly points?: number;
@@ -132,9 +149,7 @@ export interface Signals {
  */
 export interface SignalObservation {
   readonly source: SignalSourceId;
-  /** Partition this reading informs. */
-  readonly region: Region;
-  /** Finer partition, or null when the signal is region-wide (e.g. attention). */
+  /** Topic this reading informs, or null when it's a global signal (e.g. world attention). */
   readonly topic: Topic | null;
   /** Entity/series identifier (e.g. `he.wikipedia:article:202405`, `USA:NY.GDP.MKTP.CD`). */
   readonly key: string;
@@ -147,7 +162,6 @@ export interface SignalObservation {
 
 export interface Cluster {
   readonly items: readonly RawItem[];
-  readonly region: Region;
   readonly topic: Topic;
 }
 
@@ -157,11 +171,12 @@ export interface Story {
   readonly id: string;
   readonly title: string;
   readonly url: string | null;
-  readonly region: Region;
   readonly topic: Topic;
   /** Significance in [0.0, 10.0]. */
   readonly significance: number;
-  /** The editorial justification. Null until the Opus tier analyzes it. */
+  /** A concise factual "what happened" summary. Null until the deep tier writes it. */
+  readonly summary: string | null;
+  /** The editorial justification. Null until the deep tier analyzes it. */
   readonly whyItMatters: string | null;
   /** externalIds of the Raw Items merged into this Story (provenance). */
   readonly memberRefs: readonly RawItemRef[];

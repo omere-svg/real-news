@@ -6,7 +6,7 @@ import { resolve, type IdentifiedCluster } from './resolve.js';
 import { score } from './score.js';
 import { analyze } from './analyze.js';
 import { observeSignals } from './observe-signals.js';
-import { assembleSignalContext } from '../scoring/signal-context.js';
+import { assembleSignalContext, type SaturationRefs } from '../scoring/signal-context.js';
 import { representativeOf } from '../domain/cluster.js';
 import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { SignalSource } from '../sources/signal-source.js';
@@ -70,8 +70,14 @@ export class TickRunner {
     await rawItemRepo.upsert(extraction.items);
 
     // Numeric Signal context for this tick (ADR-0025): observed fresh, used in-tick.
-    const signals = await observeSignals(this.deps.signalSources ?? []);
-    const signalContext = assembleSignalContext(signals.observations);
+    // Each source owns its saturation scale; derive the map from the live sources
+    // so a new signal source can never be added without declaring one (ADR-0031).
+    const signalSources = this.deps.signalSources ?? [];
+    const signals = await observeSignals(signalSources);
+    const refBySource: SaturationRefs = Object.fromEntries(
+      signalSources.map((s) => [s.id, s.saturationReference]),
+    );
+    const signalContext = assembleSignalContext(signals.observations, refBySource);
 
     const classified = await classify(extraction.items, llm);
     const embedded = await embed(classified, embedder);
@@ -115,19 +121,49 @@ export class TickRunner {
 
 /** Build a StoryUpsert from an analyzed Cluster under its resolved Story id (ADR-0017). */
 function toStoryUpsert(analyzed: AnalyzedCluster, id: string): StoryUpsert {
-  const { cluster, significance, whyItMatters } = analyzed;
+  const { cluster, significance, summary, whyItMatters } = analyzed;
   const rep = representativeOf(cluster);
   return {
     id,
     title: rep.title,
-    url: rep.url,
-    region: cluster.region,
+    // Always keep a link to a corroborating article: prefer the representative's
+    // url, else the first member that carries one (some sources lack urls).
+    url: rep.url ?? cluster.items.find((i) => i.url)?.url ?? null,
     topic: cluster.topic,
     significance,
+    // The deep tier writes a polished factual summary only for top-N Clusters;
+    // for the rest, fall back to the source's own text so every Story still has a
+    // "what happened" line (ADR-0006/0024). Title-only items (no text) stay null
+    // and are healed later by the LLM backfill.
+    summary: summary ?? leadSummary(rep.text),
     whyItMatters,
     memberRefs: cluster.items.map((i) => ({
       source: i.source,
       externalId: i.externalId,
     })),
   };
+}
+
+const SUMMARY_MAX_CHARS = 280;
+
+/**
+ * A deterministic "what happened" from a source snippet: strip markup, collapse
+ * whitespace, keep the first couple of sentences, and cap the length. Null when
+ * there is no usable text. Pure — no LLM, so every text-bearing Story gets a
+ * factual line regardless of the analyze budget.
+ */
+function leadSummary(text: string | null): string | null {
+  if (!text) return null;
+  const clean = text
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(?:#\d+|[a-z]+);/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return null;
+
+  const sentences = clean.match(/[^.!?]*[.!?](?:\s|$)/g);
+  const lead = (sentences ? sentences.slice(0, 2).join('').trim() : '') || clean;
+  return lead.length > SUMMARY_MAX_CHARS
+    ? `${lead.slice(0, SUMMARY_MAX_CHARS).trimEnd()}…`
+    : lead;
 }

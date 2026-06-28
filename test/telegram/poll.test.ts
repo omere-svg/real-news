@@ -7,6 +7,7 @@ function transportReturning(updates: TelegramUpdate[]): TelegramTransport {
     sendMessage: async () => {},
     sendAudio: async () => {},
     getUpdates: async () => updates,
+    answerCallback: async () => {},
   };
 }
 

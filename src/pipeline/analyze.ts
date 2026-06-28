@@ -3,9 +3,10 @@ import type { LLMClient } from '../llm/llm-client.js';
 import type { AnalyzedCluster, ScoredCluster } from './types.js';
 
 /**
- * Analyze stage (ADR-0006). The expensive Opus tier writes the Why-It-Matters
- * justification, but only for the `topN` most significant Clusters — the rest
- * carry a null justification. Original order is preserved for downstream upsert.
+ * Analyze stage (ADR-0006). The expensive Opus tier writes both the factual
+ * "what happened" summary and the Why-It-Matters justification in one call, but
+ * only for the `topN` most significant Clusters — the rest carry nulls. Original
+ * order is preserved for downstream upsert.
  */
 export async function analyze(
   clusters: readonly ScoredCluster[],
@@ -22,17 +23,18 @@ export async function analyze(
 
   return Promise.all(
     clusters.map(async (scored, i) => {
-      if (!topIndices.has(i)) return { ...scored, whyItMatters: null };
+      if (!topIndices.has(i)) {
+        return { ...scored, summary: null, whyItMatters: null };
+      }
 
       const lead = representativeOf(scored.cluster);
-      const whyItMatters = await llm.analyze({
+      const { summary, whyItMatters } = await llm.analyze({
         title: lead.title,
         text: lead.text,
-        region: scored.cluster.region,
         topic: scored.cluster.topic,
         significance: scored.significance,
       });
-      return { ...scored, whyItMatters };
+      return { ...scored, summary, whyItMatters };
     }),
   );
 }

@@ -2,17 +2,21 @@ import { z } from 'zod';
 import type { SignalSource } from './signal-source.js';
 import type { JsonFetcher } from './http.js';
 import type { Clock } from '../scheduler/clock.js';
-import type { Region, SignalObservation } from '../domain/types.js';
+import type { SignalObservation, Topic } from '../domain/types.js';
 
 const BASE = 'https://wikimedia.org/api/rest_v1/metrics/pageviews/top';
 
 // Wikimedia requires a descriptive User-Agent; omitting it can get the IP blocked.
 const HEADERS = { 'user-agent': 'project-horizon (horizon@example.com)' };
 
-/** Wikipedia language editions we poll, and the Region each informs (ADR-0025). */
-const PROJECTS: readonly { project: string; region: Region }[] = [
-  { project: 'en.wikipedia', region: 'World' },
-  { project: 'he.wikipedia', region: 'Israel' },
+/**
+ * Wikipedia language editions we poll, and the Topic each informs (ADR-0025).
+ * Hebrew attention maps to the `Israel` topic; the global English edition has no
+ * single topic, so it nudges every story (`topic: null` ⇒ global bucket).
+ */
+const PROJECTS: readonly { project: string; topic: Topic | null }[] = [
+  { project: 'en.wikipedia', topic: null },
+  { project: 'he.wikipedia', topic: 'Israel' },
 ];
 
 /** Main-page slugs across our projects — high-traffic noise, not a story signal. */
@@ -41,12 +45,15 @@ export interface WikipediaPageviewsDeps {
 /**
  * Wikipedia Pageviews Signal source (ADR-0025). Reads each language edition's
  * most-viewed articles for the previous *complete* month (the current month is
- * still accruing) and emits them as region-scoped attention observations —
- * `en.wikipedia` ⇒ World, `he.wikipedia` ⇒ Israel. Pure attention volume, no
- * topic, never a Story. A `User-Agent` is required by the API (set in `main`).
+ * still accruing) and emits them as attention observations — `he.wikipedia` ⇒
+ * the `Israel` topic, `en.wikipedia` ⇒ a global nudge across all topics. Pure
+ * attention volume, never a Story. A `User-Agent` is required by the API.
  */
 export class WikipediaPageviewsSource implements SignalSource {
   readonly id = 'wikipedia-pageviews' as const;
+
+  /** ~peak monthly views for a hot article — the attention-saturation scale (ADR-0031). */
+  readonly saturationReference = 500_000;
 
   constructor(private readonly deps: WikipediaPageviewsDeps) {}
 
@@ -80,7 +87,7 @@ export class WikipediaPageviewsSource implements SignalSource {
     const { yyyymm } = this.period();
 
     const perProject = await Promise.all(
-      PROJECTS.map(async ({ project, region }) => {
+      PROJECTS.map(async ({ project, topic }) => {
         const parsed = responseSchema.parse(
           await this.deps.fetchJson(this.url(project), { headers: HEADERS }),
         );
@@ -91,8 +98,7 @@ export class WikipediaPageviewsSource implements SignalSource {
           .map(
             (a): SignalObservation => ({
               source: 'wikipedia-pageviews',
-              region,
-              topic: null,
+              topic,
               key: `${project}:${a.article}:${yyyymm}`,
               value: a.views,
               observedAt: now,

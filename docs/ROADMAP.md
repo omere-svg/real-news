@@ -1,10 +1,16 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-18 (**230 tests green, 27 ADRs**). Phases 1–4 complete
+the plan to finish it. Updated 2026-06-28 (**295 tests green, 32 ADRs**). Phases 1–4 complete
 (all 9 Phase-4 sources built, incl. the 2 numeric Signal sources + the Story/Signal split,
-ADR-0025); security & resource hardening and brief-readability complete. Only Phase 5
-(productionize) remains.
+ADR-0025); security & resource hardening and brief-readability complete. **ADR-0031** adds the
+`Health` + `Climate` Topics and a keyless source wave (TheSportsDB→Sports, WHO→Health, NASA
+EONET/USGS/GDACS→Climate; CoinGecko/Frankfurter→Business + OpenAlex→Science signals), and moves
+each Signal source's saturation scale onto the `SignalSource` seam. **Phase 6
+(presentation deepening) is now done** — brief provenance links, per-chat memory + inline
+per-answer feedback, a cache-grounded chat-about-the-news with an off-by-default web
+fallback, and a natural-language + buttons UX over the bot (ADR-0027/0028/0029/0030).
+Only Phase 5 (productionize) remains.
 
 ---
 
@@ -12,7 +18,7 @@ ADR-0025); security & resource hardening and brief-readability complete. Only Ph
 
 | Layer | Modules | Status |
 |---|---|---|
-| **Extraction worker** (Feature 1) | `pipeline/extract` + **13 Story adapters** behind the `SourceAdapter` seam (ADR-0004): Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, **Guardian, Times of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv** (ADR-0021); plus **2 Signal adapters** behind the sibling `SignalSource` seam (`pipeline/observe-signals`): **Wikipedia Pageviews, World Bank** (ADR-0025). Shared `rss.ts` parser for RSS/RDF feeds. Health-checked, per-source failure isolation. | ✅ |
+| **Extraction worker** (Feature 1) | `pipeline/extract` + **18 Story adapters** behind the `SourceAdapter` seam (ADR-0004): Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, **Guardian, Times of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv** (ADR-0021), **TheSportsDB (Sports), WHO Outbreaks (Health), NASA EONET / USGS / GDACS (Climate)** (ADR-0031); plus **5 Signal adapters** behind the sibling `SignalSource` seam (`pipeline/observe-signals`): **Wikipedia Pageviews, World Bank** (ADR-0025), **CoinGecko, Frankfurter FX, OpenAlex** (ADR-0031). Shared `rss.ts` parser for RSS/RDF feeds. Health-checked, per-source failure isolation. | ✅ |
 | **Relational cache** (Feature 2) | SQLite + Drizzle (ADR-0002/0005): `raw_items` → `stories` → `membership`, plus `story_vectors` (ADR-0017), `chat_preferences` + `usage` (ADR-0019/0022). Idempotent upsert (reassigns a member across Stories without a `(source, externalId)` PK collision); filtered `topStories`. | ✅ |
 | **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze → upsert`, sequenced by `TickRunner`. `computeBaseScore` (verifiable signals) + bounded LLM nudge. `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Neural `OpenAIEmbedder` + hashing fallback (ADR-0018). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
 | **Scheduler / daemon** | In-process tick loop every X min (`main.ts`, ADR-0001). | ✅ |
@@ -31,13 +37,19 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain l
 |---|---|
 | **Text bullet brief** | ✅ `HorizonQuery.textBrief` (ADR-0014), readability floor (ADR-0024) |
 | **Audio podcast** | ✅ `podcastScript` → `narrate` → OpenAI TTS audio in Telegram (ADR-0020) |
-| **Topic-focused outline** | ✅ `topicOutline`, grouped by Region (ADR-0014) |
+| **Topic-focused outline** | ✅ `topicOutline`, flat by significance (ADR-0014; region grouping dropped in ADR-0030) |
 | **Attention & time budgeting** (Principle 5) | ✅ `budgetStories` — readability-first allocator (ADR-0013/0024) |
 | **User preferences** | ✅ config defaults (ADR-0015) + per-chat persisted prefs for the bot (ADR-0022) |
 | **Cross-tick dedup** | ✅ `resolve` stage + persisted `story_vectors` (ADR-0017) |
 | **Neural embedder** | ✅ `OpenAIEmbedder` + resilient hashing fallback (ADR-0018) |
 | **Mainstream-media + thematic sources** | ✅ 7 added: Guardian, Times of Israel, Knesset Votes, HF Papers, NBER, Nature, PsyArXiv (ADR-0021) |
 | **Numeric Signal sources** (Wikipedia Pageviews, World Bank) + Story/Signal split | ✅ `SignalSource` seam + bounded partition nudge into scoring (ADR-0025) |
+| **Source provenance in the brief** | ✅ per-bullet `🔗 url` in the deterministic renderer; upsert guarantees a member's article link (ADR-0027) |
+| **Personal memory + in-flow feedback** | ✅ `/remember`+`/forget` injected into LLM paths; per-answer "Give feedback" button (ADR-0028) |
+| **Chat about the news** | ✅ cache-grounded `discuss` with off-by-default web fallback (ADR-0029) |
+| **Natural-language + buttons UX** | ✅ cheap-tier intent router + tap-to-run menus; slash commands kept as aliases (ADR-0030) |
+| **Structured story cards (what-happened + why-it-matters)** | ✅ deep tier writes a factual `summary` alongside `whyItMatters`; for non-top-N stories a deterministic `summary` falls back to the source text (markup-stripped, ≤2 sentences) so every text-bearing story has a "what happened"; renderer = 📰 headline → what happened → 💡 why it matters → 🏷 tag → 🔗 link; upsert always keeps a member's article URL; cache **self-heals on boot** for stories missing a summary (`reasoner.backfillOnBoot`) + `npm run backfill:summaries` |
+| **Knesset bill provenance** | ✅ bills now carry a real link (`BillID`=site `lawitemid`) + `SummaryLaw` text when present; Hebrew titles get a plain-English "what happened" via the backfill |
 | Real deployment (Turso + host), observability | ⚠️ Docker/README ready, not deployed |
 
 ---
@@ -65,8 +77,9 @@ clamp, web `/api/podcast` off by default, localhost bind, `fetchJson` timeout/si
 `0600`, per-chat preference isolation (ADR-0022/0023).
 
 ### ✅ Phase 4 — Breadth *(DONE)*
-*Source strategy set by **ADR-0021** (lean, media-aware MVP): 2-value Region kept; a media +
-4-theme set of 9 sources adopted; the rest PARKed in `docs/research/` as reference.*
+*Source strategy set by **ADR-0021** (lean, media-aware MVP): 2-value Region kept (later folded
+into Topic by ADR-0030 — `Israel` is now a Topic); a media + 4-theme set of 9 sources adopted;
+the rest PARKed in `docs/research/` as reference.*
 9. ✅ **Story/Signal seam + numeric Signal sources** (ADR-0025) — a companion `SignalSource`
    seam (sibling to `SourceAdapter`, so the Story pipeline is untouched); **Wikipedia
    Pageviews** (attention) + **World Bank** (macro volatility) observed in-tick and folded into
@@ -75,12 +88,35 @@ clamp, web `/api/podcast` off by default, localhost bind, `fetchJson` timeout/si
 10. ✅ **Media + thematic Story sources** (ADR-0021) — Guardian + Times of Israel (RSS),
     Knesset Votes (OData), HF Daily Papers, NBER, Nature, PsyArXiv. Shared RSS parser added.
 
-### ▶ Phase 5 — Productionize
+### ✅ Phase 6 — Presentation deepening *(DONE)*
+12. ✅ **Per-bullet source links (provenance in the brief)** (ADR-0027) — the deterministic
+    renderer appends `🔗 <article url>` to each Story, flowing into both the web `<pre>` and
+    Telegram. Pure, no I/O, budget-neutral. The upsert now guarantees a link: it falls back from
+    the representative's URL to the first member that carries one, so a Story is never link-less
+    when any corroborating item has a URL.
+13. ✅ **Per-chat memory + in-flow feedback** (ADR-0028) — `/remember`/`/forget` keep a
+    free-text personal context injected into the LLM content paths (podcast narration, chat);
+    every answer carries a one-tap "✍️ Give feedback" button that routes the next message into
+    the ADR-0026 tuning path.
+14. ✅ **Chat about the news** (ADR-0029) — after a brief, plain text (or `/chat`/`/ask`) is a
+    question answered by a cache-grounded `discuss` (deep tier), with an **off-by-default**
+    `WebSearch` seam (Tavily) escalated only when the cache can't answer. Telegram-only,
+    quota-bounded, resilient.
+15. ✅ **Natural-language + buttons UX** (ADR-0030) — a cheap-tier `routeIntent` seam maps plain
+    English to the existing commands, and tap-to-run menus (main menu + topic picker) drive the
+    bot without slash syntax. A companion `interpretPrefs` seam applies plain-language preference
+    edits (reset, set/add/remove topics, default minutes). Action taps draw the same
+    quota as typed commands; slash commands stay as power-user aliases. Gated by
+    `telegram.naturalLanguage` (default on).
+
+### ▶ Phase 5 — Productionize *(the only remaining phase)*
 11. **Deploy** (Turso + Railway/Render), **observability** (persist `TickReport`, metrics),
     GDELT rate-limit pacing.
 
 ---
 
 **Recommended next:** Phase 5 — deploy (Turso + host) + observability (persist `TickReport`).
-The entire MVP vision is now built and tested; only productionization remains. Optional
-deepening: entity-link Pageviews to clusters and persist Signal history (both noted in ADR-0025).
+The entire MVP vision plus Phase-6 deepening is built and tested; only productionization
+remains. Optional further deepening: semantic retrieval over `story_vectors` for chat
+grounding, per-member source URLs in the brief, and entity-linking Pageviews to clusters /
+persisting Signal history (noted in ADR-0025).

@@ -64,6 +64,27 @@ sources:
     enabled: true
     weight: 0.55
     maxItems: 15
+  # ADR-0031 — keyless wave: Sports, Health, Climate (all keyless, caching-legal).
+  - id: thesportsdb    # Sports — prior-day match results/scores (keyless demo key)
+    enabled: true
+    weight: 0.4
+    maxItems: 20
+  - id: who-outbreaks  # Health — WHO Disease Outbreak News (authoritative)
+    enabled: true
+    weight: 0.75
+    maxItems: 15
+  - id: nasa-eonet     # Climate — natural events (storms, wildfires, volcanoes)
+    enabled: true
+    weight: 0.65
+    maxItems: 20
+  - id: usgs-quakes    # Climate — significant earthquakes (M4.5+, severity signal)
+    enabled: true
+    weight: 0.7
+    maxItems: 20
+  - id: gdacs          # Climate — global disaster alerts (RSS, severity-scored)
+    enabled: true
+    weight: 0.65
+    maxItems: 20
   # Phase 4 — numeric Signal sources (ADR-0025). Feed significance, never a story.
   - id: wikipedia-pageviews  # cross-lingual reader attention (en⇒World, he⇒Israel)
     enabled: true
@@ -73,6 +94,19 @@ sources:
     enabled: true
     weight: 0.5
     maxItems: 8
+  # ADR-0031 — keyless Signal sources: Business + Science depth.
+  - id: coingecko            # crypto 24h price-momentum ⇒ Business signal
+    enabled: true
+    weight: 0.5
+    maxItems: 25
+  - id: frankfurter          # major-pair FX daily volatility ⇒ Business signal
+    enabled: true
+    weight: 0.5
+    maxItems: 3
+  - id: openalex             # recent-research citation impact ⇒ Science signal
+    enabled: true
+    weight: 0.5
+    maxItems: 25
 
 # The Reasoner tiers (ADR-0006/0012). OpenAI models — change to any your key can access.
 reasoner:
@@ -103,6 +137,7 @@ scoring:
 telegram:
   enabled: true
   pollTimeoutSeconds: 30
+  naturalLanguage: true   # understand plain-language messages + buttons, not just slash commands (ADR-0030)
   allowedChatIds: [2007614249]      # chat ids the bot answers (ADR-0022)
   openAccess: false       # default-deny: empty allowlist + false = answer no one
   limits:                 # rate limits + cost quotas (ADR-0022)
@@ -114,6 +149,11 @@ telegram:
     enabled: true         # podcast as audio; false sends the script as text
     model: gpt-4o-mini-tts
     voice: alloy
+  chat:                   # chat about the news (ADR-0029)
+    enabled: true         # free-text questions after a brief, /chat, /ask
+    webSearch:            # fallback when the cache can't answer
+      provider: none      # none = cache-only (Principle 4); tavily = live lookup (needs TAVILY_API_KEY)
+      maxResults: 5
 
 # Source fetch hardening (ADR-0023): bound time and response size per request.
 http:
@@ -133,7 +173,6 @@ presentation:
   preferredTopics:
     - AI
     - Geopolitics
-  preferredRegions: []
   # Budget cost model (ADR-0013): delivery rates and per-depth word costs.
   textWordsPerMinute: 220   # reading rate (brief, outline)
   audioWordsPerMinute: 150  # speaking rate (podcast script)

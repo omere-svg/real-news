@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import { configSchema, type Config } from './schema.js';
-import type { Region, SourceId, Topic } from '../domain/types.js';
+import type { SourceId, Topic } from '../domain/types.js';
 import type { TickConfig } from '../pipeline/tick-runner.js';
 import type { QueryParams } from '../presentation/horizon-query.js';
 import type { PresentationDefaults } from '../server/app.js';
@@ -62,9 +62,6 @@ export function toPresentationDefaults(config: Config): PresentationDefaults {
   const p = config.presentation;
   return {
     minutes: p.defaultMinutes,
-    ...(p.preferredRegions.length
-      ? { regions: p.preferredRegions as Region[] }
-      : {}),
     ...(p.preferredTopics.length
       ? { topics: p.preferredTopics as Topic[] }
       : {}),

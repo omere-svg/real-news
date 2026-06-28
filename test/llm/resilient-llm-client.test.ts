@@ -23,6 +23,15 @@ const brokenLLM: LLMClient = {
   interpretFeedback: async () => {
     throw new Error('api down');
   },
+  discuss: async () => {
+    throw new Error('api down');
+  },
+  routeIntent: async () => {
+    throw new Error('api down');
+  },
+  interpretPrefs: async () => {
+    throw new Error('api down');
+  },
 };
 
 const classifyInput = { title: 't', text: null };
@@ -31,11 +40,10 @@ const stub = { title: 't', text: null };
 describe('ResilientLLMClient', () => {
   it('passes results through when the delegate succeeds', async () => {
     const llm = new ResilientLLMClient(
-      new FakeLLM({ classify: { region: 'Israel', topic: 'Politics' } }),
+      new FakeLLM({ classify: { topic: 'Israel' } }),
     );
     expect(await llm.classify(classifyInput)).toEqual({
-      region: 'Israel',
-      topic: 'Politics',
+      topic: 'Israel',
     });
   });
 
@@ -43,7 +51,6 @@ describe('ResilientLLMClient', () => {
     const llm = new ResilientLLMClient(brokenLLM);
 
     expect(await llm.classify(classifyInput)).toEqual({
-      region: 'World',
       topic: 'Other',
     });
     expect(await llm.confirmSameStory(stub, stub)).toBe(false); // don't merge on uncertainty
@@ -51,17 +58,31 @@ describe('ResilientLLMClient', () => {
     expect(
       await llm.analyze({
         ...stub,
-        region: 'World',
         topic: 'AI',
         significance: 5,
       }),
-    ).toBe(''); // no analysis rather than a crash
+    ).toEqual({ summary: '', whyItMatters: '' }); // no analysis rather than a crash
     expect(await llm.narrate({ minutes: 5, brief: 'b' })).toBe(''); // caller falls back to the brief
     expect(await llm.interpretFeedback({ text: 'more ai' })).toEqual({
       topics: [],
-      regions: [],
       length: null,
       summary: '',
     }); // no-op intent: feedback didn't land, change nothing
+
+    const discussed = await llm.discuss({ question: 'q', history: [], stories: [] });
+    expect(discussed.answer).toMatch(/try again/i); // honest non-answer
+    expect(discussed.answeredFromNews).toBe(true); // never escalate to web on an error
+
+    expect(await llm.routeIntent({ text: 'give me a brief' })).toEqual({
+      action: 'help',
+      minutes: null,
+      topic: null,
+    }); // degrade to the menu when routing can't run
+
+    expect(await llm.interpretPrefs({ text: 'add politics' })).toEqual({
+      topics: null,
+      minutes: null,
+      summary: '',
+    }); // no-op patch: the preference edit didn't land, change nothing
   });
 });

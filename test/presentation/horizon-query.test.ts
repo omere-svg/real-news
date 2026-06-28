@@ -24,7 +24,6 @@ function upsert(over: Partial<StoryUpsert> = {}): StoryUpsert {
     id: 's',
     title: 'A story',
     url: null,
-    region: 'World',
     topic: 'AI',
     significance: 5,
     whyItMatters: null,
@@ -54,6 +53,54 @@ describe('HorizonQuery', () => {
     expect(brief.indexOf('Alpha')).toBeLessThan(brief.indexOf('Bravo'));
     expect(brief).toContain('9.0');
     expect(brief).toContain('Alpha matters. Detail.'); // top story rendered in full
+  });
+
+  it('textBrief appends each story\'s source link for provenance (ADR-0027)', async () => {
+    const repo = await seed(
+      upsert({ id: 'a', title: 'Alpha', significance: 9, url: 'https://example.com/alpha' }),
+      upsert({ id: 'b', title: 'Bravo', significance: 4, url: null }),
+    );
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+    const brief = await q.textBrief({ minutes: 3 });
+
+    expect(brief).toContain('🔗 https://example.com/alpha'); // linked
+    expect(brief.match(/🔗/g)?.length).toBe(1); // the url-less story has no link line
+  });
+
+  it('renders each story as a structured block: headline, summary, why-it-matters, descriptor, link', async () => {
+    const repo = await seed(
+      upsert({
+        id: 'a',
+        title: 'Alpha',
+        topic: 'AI',
+        significance: 9,
+        summary: 'First thing happened. Second thing too.',
+        whyItMatters: 'It changes the landscape.',
+        url: 'https://example.com/a',
+      }),
+    );
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+    const brief = await q.textBrief({ minutes: 5 }); // enough budget for full depth
+    const block = brief.split('\n\n').at(-1)!.split('\n');
+
+    expect(block[0]).toBe('📰 Alpha'); // headline first
+    expect(block[1]).toBe('First thing happened. Second thing too.'); // what happened
+    expect(block).toContain('💡 It changes the landscape.'); // why it matters
+    expect(block).toContain('🏷 AI · significance 9.0'); // short descriptor
+    expect(block.at(-1)).toBe('🔗 https://example.com/a'); // link last
+  });
+
+  it('brief depth trims the what-happened summary to two sentences', async () => {
+    const repo = await seed(
+      upsert({ id: 'a', title: 'Alpha', significance: 9, summary: 'One. Two. Three.' }),
+    );
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+    const brief = await q.textBrief({ minutes: 1 }); // 20-word budget ⇒ brief depth
+    expect(brief).toContain('One. Two.');
+    expect(brief).not.toContain('Three.');
   });
 
   it('textBrief filters by the requested topics', async () => {
@@ -116,22 +163,21 @@ describe('HorizonQuery', () => {
     expect(await q.textBrief({ minutes: 0 })).toContain('No stories');
   });
 
-  it('topicOutline groups the topic by region and excludes other topics', async () => {
+  it('topicOutline lists the topic ordered by significance and excludes other topics', async () => {
     const repo = await seed(
-      upsert({ id: 'w', title: 'World AI', region: 'World', topic: 'AI', significance: 8 }),
-      upsert({ id: 'i', title: 'Israel AI', region: 'Israel', topic: 'AI', significance: 7 }),
-      upsert({ id: 'p', title: 'World Politics', region: 'World', topic: 'Politics', significance: 9 }),
+      upsert({ id: 'a1', title: 'AI one', topic: 'AI', significance: 8 }),
+      upsert({ id: 'a2', title: 'AI two', topic: 'AI', significance: 7 }),
+      upsert({ id: 'p', title: 'A politics piece', topic: 'Politics', significance: 9 }),
     );
     const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
 
     const outline = await q.topicOutline('AI', { minutes: 10 });
 
     expect(outline).toContain('AI outline');
-    expect(outline).toContain('World');
-    expect(outline).toContain('Israel');
-    expect(outline).toContain('World AI');
-    expect(outline).toContain('Israel AI');
-    expect(outline).not.toContain('World Politics');
+    expect(outline).toContain('AI one');
+    expect(outline).toContain('AI two');
+    expect(outline.indexOf('AI one')).toBeLessThan(outline.indexOf('AI two')); // by significance
+    expect(outline).not.toContain('A politics piece');
   });
 
   it('podcastScript narrates the budgeted brief via the deep tier', async () => {

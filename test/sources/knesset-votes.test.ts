@@ -29,7 +29,7 @@ describe('KnessetVotesSource', () => {
       source: 'knesset-votes',
       externalId: '34515',
       url: null,
-      metadata: { region: 'Israel', topic: 'Politics', points: 52, mentions: 55 },
+      metadata: { topic: 'Israel', points: 52, mentions: 55 },
     });
     expect(item?.title).toContain('הצעת סיכום');
     expect(item?.publishedAt).toBe(Date.parse('2021-07-13T00:00:00'));

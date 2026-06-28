@@ -10,6 +10,7 @@ import {
 import { openDb } from './db/client.js';
 import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
+import type { StoryRepo } from './db/story-repo.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
 import { ArxivSource } from './sources/arxiv.js';
 import { GdeltSource } from './sources/gdelt.js';
@@ -20,8 +21,15 @@ import { RssSource } from './sources/rss-source.js';
 import { HfPapersSource } from './sources/hf-papers.js';
 import { PsyArxivSource } from './sources/psyarxiv.js';
 import { KnessetVotesSource } from './sources/knesset-votes.js';
+import { TheSportsDbSource } from './sources/thesportsdb.js';
+import { WhoOutbreaksSource } from './sources/who-outbreaks.js';
+import { NasaEonetSource } from './sources/nasa-eonet.js';
+import { UsgsQuakesSource } from './sources/usgs-quakes.js';
 import { WikipediaPageviewsSource } from './sources/wikipedia-pageviews.js';
 import { WorldBankSource } from './sources/worldbank.js';
+import { CoinGeckoSource } from './sources/coingecko.js';
+import { FrankfurterSource } from './sources/frankfurter.js';
+import { OpenAlexSource } from './sources/openalex.js';
 import { makeFetchJson } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
 import type { SignalSource } from './sources/signal-source.js';
@@ -36,6 +44,7 @@ import { ResilientEmbedder } from './embedding/resilient-embedder.js';
 import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
 import { TickRunner } from './pipeline/tick-runner.js';
+import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
 import { DrizzleChatPreferencesRepo } from './db/chat-preferences-repo.js';
@@ -46,6 +55,9 @@ import { OpenAITTS } from './telegram/openai-tts.js';
 import { ResilientSynthesizer } from './telegram/resilient-synthesizer.js';
 import { HorizonBot } from './telegram/horizon-bot.js';
 import { pollOnce } from './telegram/poll.js';
+import { TavilyWebSearch } from './web/tavily-web-search.js';
+import { ResilientWebSearch } from './web/resilient-web-search.js';
+import type { WebSearch } from './web/web-search.js';
 import { SIGNAL_SOURCE_IDS } from './domain/types.js';
 import type { SignalSourceId, SourceId } from './domain/types.js';
 import type { Synthesizer } from './telegram/synthesizer.js';
@@ -86,19 +98,30 @@ function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | n
       return new WikipediaSource({ ...base, clock: systemClock });
     // Phase 4 — media + thematic anchors (ADR-0021).
     case 'guardian':
-      return new RssSource({ ...base, id: 'guardian', feedUrl: 'https://www.theguardian.com/world/rss', region: 'World', topic: 'Geopolitics' });
+      return new RssSource({ ...base, id: 'guardian', feedUrl: 'https://www.theguardian.com/world/rss', topic: 'Geopolitics' });
     case 'timesofisrael':
-      return new RssSource({ ...base, id: 'timesofisrael', feedUrl: 'https://www.timesofisrael.com/feed/', region: 'Israel' });
+      return new RssSource({ ...base, id: 'timesofisrael', feedUrl: 'https://www.timesofisrael.com/feed/', topic: 'Israel' });
     case 'nber':
-      return new RssSource({ ...base, id: 'nber', feedUrl: 'https://back.nber.org/rss/new.xml', region: 'World', topic: 'Business' });
+      return new RssSource({ ...base, id: 'nber', feedUrl: 'https://back.nber.org/rss/new.xml', topic: 'Business' });
     case 'nature':
-      return new RssSource({ ...base, id: 'nature', feedUrl: 'https://www.nature.com/nature.rss', region: 'World', topic: 'Science' });
+      return new RssSource({ ...base, id: 'nature', feedUrl: 'https://www.nature.com/nature.rss', topic: 'Science' });
     case 'hf-papers':
       return new HfPapersSource(base);
     case 'psyarxiv':
       return new PsyArxivSource(base);
     case 'knesset-votes':
       return new KnessetVotesSource(base);
+    // ADR-0031 — keyless wave: Sports, Health, Climate.
+    case 'thesportsdb':
+      return new TheSportsDbSource({ ...base, clock: systemClock });
+    case 'who-outbreaks':
+      return new WhoOutbreaksSource(base);
+    case 'nasa-eonet':
+      return new NasaEonetSource(base);
+    case 'usgs-quakes':
+      return new UsgsQuakesSource(base);
+    case 'gdacs':
+      return new RssSource({ ...base, id: 'gdacs', feedUrl: 'https://www.gdacs.org/xml/rss.xml', topic: 'Climate' });
     default:
       console.warn(`[horizon] source "${s.id}" has no adapter yet — skipping.`);
       return null;
@@ -135,6 +158,13 @@ function buildSignalSource(id: SignalSourceId, s: SourceConfig, fetchJson: JsonF
       return new WikipediaPageviewsSource(base);
     case 'worldbank':
       return new WorldBankSource(base);
+    // ADR-0031 — keyless wave: Business + Science signal depth.
+    case 'coingecko':
+      return new CoinGeckoSource(base);
+    case 'frankfurter':
+      return new FrankfurterSource(base);
+    case 'openalex':
+      return new OpenAlexSource(base);
     default: {
       const _exhaustive: never = id;
       return _exhaustive;
@@ -214,6 +244,22 @@ async function main(): Promise<void> {
   void runTick();
   setInterval(() => void runTick(), config.tickIntervalMinutes * 60_000);
 
+  // Self-heal cached Stories that lack a factual summary (e.g. created before the
+  // field existed, or never top-N) — in the background, most-significant first, so
+  // the brief fixes itself after a restart without a manual backfill (ADR-0006).
+  if (config.reasoner.backfillOnBoot) {
+    void backfillSummaries(
+      { storyRepo, rawItemRepo, llm },
+      {
+        max: config.reasoner.backfillMaxOnBoot,
+        onProgress: (done, total) => {
+          if (done === 1) console.log(`[backfill] healing ${total} stories missing a summary…`);
+          if (done === total) console.log(`[backfill] done: ${total} stories updated.`);
+        },
+      },
+    ).catch((err) => console.error('[backfill] failed:', err));
+  }
+
   const defaults = toPresentationDefaults(config);
   const app = createApp(storyRepo, queryEngine, defaults, {
     maxMinutes: config.presentation.maxMinutes,
@@ -222,7 +268,21 @@ async function main(): Promise<void> {
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
-  if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults, llm);
+  if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo);
+}
+
+/** Build the web-search fallback for chat (ADR-0029), or null when off / unkeyed. */
+function buildWebSearch(config: Config): WebSearch | null {
+  const ws = config.telegram.chat.webSearch;
+  if (ws.provider !== 'tavily') return null;
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) {
+    console.warn('[telegram] chat.webSearch=tavily but TAVILY_API_KEY is missing — staying cache-only.');
+    return null;
+  }
+  return new ResilientWebSearch(
+    new TavilyWebSearch({ apiKey, maxResults: ws.maxResults }),
+  );
 }
 
 /** Start the Telegram bot long-poll loop (ADR-0019), if enabled and tokened. */
@@ -232,6 +292,7 @@ function startTelegramBot(
   query: QueryEngine,
   defaults: ReturnType<typeof toPresentationDefaults>,
   llm: LLMClient,
+  storyRepo: StoryRepo,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -252,11 +313,20 @@ function startTelegramBot(
     ? new ResilientSynthesizer(new OpenAITTS({ model: tts.model, voice: tts.voice }))
     : null;
 
+  // Chat about the news (ADR-0029): wired only when enabled; web search stays
+  // off unless explicitly configured and keyed (Principle 4).
+  const chat = tg.chat.enabled;
+  const webSearch = chat ? buildWebSearch(config) : null;
+
   const transport = new BotApiTransport({ token });
   const bot = new HorizonBot({
     transport,
     query,
     feedback: llm, // /feedback interpretation reuses the Reasoner (ADR-0026)
+    // NL routing + plain-language preference edits reuse the Reasoner (ADR-0030).
+    ...(tg.naturalLanguage ? { router: llm, prefsInterpreter: llm } : {}),
+    ...(chat ? { discussant: llm, storyRepo } : {}), // chat reuses the Reasoner (ADR-0029)
+    ...(webSearch ? { webSearch } : {}),
     prefs: new DrizzleChatPreferencesRepo(db),
     usage: new DrizzleUsageRepo(db),
     clock: systemClock,

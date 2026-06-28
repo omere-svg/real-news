@@ -49,12 +49,15 @@ export interface WorldBankDeps {
 /**
  * World Bank Open Data Signal source (ADR-0025). For each tracked macro series
  * it reads the recent annual values and emits **volatility** — the absolute
- * swing between the two most recent non-null readings — as a World/Business
+ * swing between the two most recent non-null readings — as a Business
  * scoring signal. Raw magnitudes (trillion-dollar GDP) would saturate the
  * signal, so we measure movement, not level. Never a Story.
  */
 export class WorldBankSource implements SignalSource {
   readonly id = 'worldbank' as const;
+
+  /** ~10 percentage-point year-over-year swing is a strong macro signal (ADR-0031). */
+  readonly saturationReference = 10;
 
   constructor(private readonly deps: WorldBankDeps) {}
 
@@ -91,7 +94,6 @@ export class WorldBankSource implements SignalSource {
 
         return {
           source: 'worldbank',
-          region: 'World',
           topic: 'Business',
           key: `${latest.countryiso3code}:${latest.indicator.id}:${latest.date}`,
           value: Math.abs(latest.value - prior.value),

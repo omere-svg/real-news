@@ -14,7 +14,7 @@ function classified(title: string): ClassifiedItem {
     publishedAt: null,
     metadata: {},
   };
-  return { item, region: 'World', topic: 'AI' };
+  return { item, topic: 'AI' };
 }
 
 describe('embed stage', () => {

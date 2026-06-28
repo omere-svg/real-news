@@ -1,4 +1,4 @@
-import type { Region, Topic } from '../domain/types.js';
+import type { Topic } from '../domain/types.js';
 import type { FeedbackIntent, WeightDirection } from '../llm/llm-client.js';
 
 /**
@@ -12,8 +12,6 @@ import type { FeedbackIntent, WeightDirection } from '../llm/llm-client.js';
 export interface PreferenceProfile {
   /** Per-topic ranking weight; absent ≡ neutral. */
   readonly topicWeights: Partial<Record<Topic, number>>;
-  /** Per-region ranking weight; absent ≡ neutral. */
-  readonly regionWeights: Partial<Record<Region, number>>;
   /** Feedback-set default budget; absent ≡ use the config/chat default. */
   readonly minutes?: number;
 }
@@ -76,10 +74,6 @@ export function applyFeedback(
     profile.topicWeights,
     intent.topics.map((t) => ({ key: t.topic, direction: t.direction })),
   );
-  const regionWeights = applyDirections(
-    profile.regionWeights,
-    intent.regions.map((r) => ({ key: r.region, direction: r.direction })),
-  );
 
   let minutes = profile.minutes;
   if (intent.length === 'reset') {
@@ -92,7 +86,6 @@ export function applyFeedback(
 
   return {
     topicWeights,
-    regionWeights,
     ...(minutes !== undefined ? { minutes } : {}),
   };
 }

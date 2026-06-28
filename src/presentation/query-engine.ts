@@ -1,4 +1,4 @@
-import type { Region, Topic } from '../domain/types.js';
+import type { Topic } from '../domain/types.js';
 
 /**
  * The Presentation seam (ADR-0011). Generates user-facing artifacts from the
@@ -21,9 +21,9 @@ export interface QueryEngine {
 export interface BriefRequest {
   /** User's attention budget, mapped to information density (Principle 5). */
   readonly minutes: number;
-  readonly regions?: readonly Region[];
   readonly topics?: readonly Topic[];
-  /** Soft per-partition ranking weights from feedback (ADR-0026); absent ≡ neutral. */
+  /** Soft per-topic ranking weights from feedback (ADR-0026); absent ≡ neutral. */
   readonly topicWeights?: Partial<Record<Topic, number>>;
-  readonly regionWeights?: Partial<Record<Region, number>>;
+  /** The user's free-text personal context, injected into LLM paths (ADR-0028). */
+  readonly memory?: string;
 }

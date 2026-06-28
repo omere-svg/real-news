@@ -4,7 +4,7 @@ import { XMLParser } from 'fast-xml-parser';
  * Shared RSS/Atom-RDF parsing for the media + thematic Source adapters
  * (ADR-0021). One place owns the two feed shapes — RSS 2.0 (`rss.channel.item`)
  * and RDF/RSS-1.0 (`rdf:RDF.item`, e.g. Nature) — so each adapter only maps the
- * normalized item to its Region/Topic, never re-parses XML. `fast-xml-parser`
+ * normalized item to its Topic, never re-parses XML. `fast-xml-parser`
  * does not expand external/DTD entities, so this stays XXE-safe (ADR-0023).
  */
 export interface RssItem {

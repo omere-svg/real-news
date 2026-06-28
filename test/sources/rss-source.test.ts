@@ -15,11 +15,10 @@ const feedFetcher: JsonFetcher = async (_url, opts) => {
 };
 
 describe('RssSource', () => {
-  it('maps RSS items to RawItems with the configured region/topic', async () => {
+  it('maps RSS items to RawItems with the configured topic', async () => {
     const source = new RssSource({
       id: 'guardian',
       feedUrl: 'https://x/rss',
-      region: 'World',
       topic: 'Geopolitics',
       fetchJson: feedFetcher,
       maxItems: 10,
@@ -33,21 +32,19 @@ describe('RssSource', () => {
       title: 'Story one',
       url: 'https://g.com/1',
       text: 'Summary one.',
-      metadata: { region: 'World', topic: 'Geopolitics' },
+      metadata: { topic: 'Geopolitics' },
     });
     expect(items[0]?.publishedAt).toBe(Date.parse('Tue, 10 Jun 2026 12:00:00 GMT'));
   });
 
-  it('omits topic when not configured (classifier decides — e.g. Times of Israel)', async () => {
+  it('omits topic when not configured (classifier decides)', async () => {
     const source = new RssSource({
       id: 'timesofisrael',
       feedUrl: 'https://x/rss',
-      region: 'Israel',
       fetchJson: feedFetcher,
       maxItems: 10,
     });
     const [item] = await source.extract();
-    expect(item?.metadata.region).toBe('Israel');
     expect(item?.metadata.topic).toBeUndefined();
   });
 
@@ -55,7 +52,6 @@ describe('RssSource', () => {
     const source = new RssSource({
       id: 'nber',
       feedUrl: 'https://x/rss',
-      region: 'World',
       topic: 'Business',
       fetchJson: feedFetcher,
       maxItems: 0,
@@ -67,7 +63,6 @@ describe('RssSource', () => {
     const source = new RssSource({
       id: 'nature',
       feedUrl: 'https://x/rss',
-      region: 'World',
       topic: 'Science',
       fetchJson: async () => {
         throw new Error('down');

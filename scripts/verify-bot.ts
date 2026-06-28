@@ -56,7 +56,6 @@ function story(over: Partial<StoryUpsert>): StoryUpsert {
     id: 'x',
     title: 'A story',
     url: null,
-    region: 'World',
     topic: 'AI',
     significance: 5,
     whyItMatters: null,
@@ -75,10 +74,10 @@ async function main(): Promise<void> {
 
   // Seed a realistic Story cache (the bot reads this; no live tick needed).
   const seed: StoryUpsert[] = [
-    story({ id: 's1', title: 'Frontier lab ships a new reasoning model', topic: 'AI', region: 'World', significance: 9.1, whyItMatters: 'It resets the cost/quality frontier for agentic apps. Competitors must respond within weeks.', memberRefs: [{ source: 'hackernews', externalId: '1' }] }),
-    story({ id: 's2', title: 'Knesset passes contested budget amendment', topic: 'Politics', region: 'Israel', significance: 7.4, whyItMatters: 'It shifts coalition leverage ahead of the next session.', memberRefs: [{ source: 'knesset', externalId: '2' }] }),
-    story({ id: 's3', title: 'Ceasefire talks resume in the region', topic: 'Geopolitics', region: 'World', significance: 8.2, whyItMatters: 'A durable pause would reroute energy and shipping risk premia.', memberRefs: [{ source: 'gdelt', externalId: '3' }] }),
-    story({ id: 's4', title: 'Major chipmaker guides revenue sharply higher', topic: 'Business', region: 'World', significance: 6.8, whyItMatters: 'Signals sustained AI capex; ripples through suppliers.', memberRefs: [{ source: 'secedgar', externalId: '4' }] }),
+    story({ id: 's1', title: 'Frontier lab ships a new reasoning model', topic: 'AI', significance: 9.1, whyItMatters: 'It resets the cost/quality frontier for agentic apps. Competitors must respond within weeks.', memberRefs: [{ source: 'hackernews', externalId: '1' }] }),
+    story({ id: 's2', title: 'Knesset passes contested budget amendment', topic: 'Israel', significance: 7.4, whyItMatters: 'It shifts coalition leverage ahead of the next session.', memberRefs: [{ source: 'knesset', externalId: '2' }] }),
+    story({ id: 's3', title: 'Ceasefire talks resume in the region', topic: 'Geopolitics', significance: 8.2, whyItMatters: 'A durable pause would reroute energy and shipping risk premia.', memberRefs: [{ source: 'gdelt', externalId: '3' }] }),
+    story({ id: 's4', title: 'Major chipmaker guides revenue sharply higher', topic: 'Business', significance: 6.8, whyItMatters: 'Signals sustained AI capex; ripples through suppliers.', memberRefs: [{ source: 'secedgar', externalId: '4' }] }),
   ];
   for (const s of seed) await storyRepo.upsert(s);
 

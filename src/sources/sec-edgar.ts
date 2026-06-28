@@ -47,8 +47,8 @@ export interface SecEdgarDeps {
 
 /**
  * SEC EDGAR adapter over the official full-text search API (ADR-0004). US
- * corporate filings (8-Ks = material finance events). Region=World,
- * Topic=Business (ADR-0009). Requires a descriptive User-Agent header.
+ * corporate filings (8-Ks = material finance events). Topic=Business
+ * (ADR-0009). Requires a descriptive User-Agent header.
  */
 export class SecEdgarSource implements SourceAdapter {
   readonly id = 'secedgar' as const;
@@ -84,7 +84,7 @@ export class SecEdgarSource implements SourceAdapter {
         url: edgarUrl(hit._id, s.ciks?.[0]),
         text: null,
         publishedAt: s.file_date ? Date.parse(s.file_date) : null,
-        metadata: { region: 'World' as const, topic: 'Business' as const },
+        metadata: { topic: 'Business' as const },
       };
     });
   }

@@ -31,17 +31,17 @@ class FakeTransport implements ChatTransport {
 
 describe('Reasoner', () => {
   it('classify: parses the JSON reply and uses the cheap tier', async () => {
-    const t = new FakeTransport({ region: 'Israel', topic: 'Politics' });
+    const t = new FakeTransport({ topic: 'Israel' });
     const out = await new Reasoner(t).classify({ title: 'Knesset vote', text: null });
 
-    expect(out).toEqual({ region: 'Israel', topic: 'Politics' });
+    expect(out).toEqual({ topic: 'Israel' });
     expect(t.calls[0]?.kind).toBe('json');
     expect(t.calls[0]?.opts.tier).toBe('cheap');
     expect(t.calls[0]?.prompt).toContain('Knesset vote');
   });
 
   it('classify: rejects an out-of-vocabulary reply (Zod guards the contract)', async () => {
-    const t = new FakeTransport({ region: 'Mars', topic: 'AI' });
+    const t = new FakeTransport({ topic: 'Crypto' });
     await expect(
       new Reasoner(t).classify({ title: 'x', text: null }),
     ).rejects.toThrow();
@@ -67,17 +67,22 @@ describe('Reasoner', () => {
     expect(adj).toBeCloseTo(1.25, 5);
   });
 
-  it('analyze: free-form completion on the deep tier, prompt carries the story', async () => {
-    const t = new FakeTransport({}, 'It matters because.');
+  it('analyze: parses summary + why-it-matters JSON on the deep tier', async () => {
+    const t = new FakeTransport({
+      summary: 'Two firms merged.',
+      whyItMatters: 'It reshapes the market.',
+    });
     const out = await new Reasoner(t).analyze({
       title: 'Big merger',
       text: null,
-      region: 'World',
       topic: 'Business',
       significance: 8,
     });
-    expect(out).toBe('It matters because.');
-    expect(t.calls[0]?.kind).toBe('text');
+    expect(out).toEqual({
+      summary: 'Two firms merged.',
+      whyItMatters: 'It reshapes the market.',
+    });
+    expect(t.calls[0]?.kind).toBe('json');
     expect(t.calls[0]?.opts.tier).toBe('deep');
     expect(t.calls[0]?.prompt).toContain('Big merger');
   });
@@ -90,13 +95,83 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.prompt).toContain('BRIEF BODY');
   });
 
+  it('narrate: weaves the reader memory into the prompt when present (ADR-0028)', async () => {
+    const t = new FakeTransport({}, 'script');
+    await new Reasoner(t).narrate({
+      minutes: 5,
+      brief: 'BRIEF BODY',
+      memory: 'I trade commodities and care about shipping.',
+    });
+    expect(t.calls[0]?.prompt).toContain('I trade commodities and care about shipping.');
+  });
+
+  it('discuss: grounds the answer in cache stories on the deep tier (ADR-0029)', async () => {
+    const t = new FakeTransport({ answer: 'Rates held steady.', answeredFromNews: true });
+    const out = await new Reasoner(t).discuss({
+      question: 'What did the central bank do?',
+      history: [],
+      stories: [
+        {
+          title: 'Bank of Israel holds rates',
+          whyItMatters: 'Signals caution on inflation.',
+          topic: 'Business',
+          significance: 7,
+          url: 'https://example.com/boi',
+        },
+      ],
+    });
+
+    expect(out).toEqual({ answer: 'Rates held steady.', answeredFromNews: true });
+    expect(t.calls[0]?.kind).toBe('json');
+    expect(t.calls[0]?.opts.tier).toBe('deep');
+    expect(t.calls[0]?.prompt).toContain('Bank of Israel holds rates');
+    expect(t.calls[0]?.prompt).toContain('What did the central bank do?');
+    expect(t.calls[0]?.prompt).not.toContain('WEB RESULTS'); // no web block on the first pass
+  });
+
+  it('discuss: includes web results and memory when provided (ADR-0028/0029)', async () => {
+    const t = new FakeTransport({ answer: 'Per recent reports…', answeredFromNews: true });
+    await new Reasoner(t).discuss({
+      question: 'Latest on the merger?',
+      history: [{ role: 'user', content: 'earlier question' }],
+      stories: [],
+      web: [{ title: 'Merger approved', url: 'https://news.example/m', snippet: 'Regulators cleared it.' }],
+      memory: 'I hold shares in the acquirer.',
+    });
+    const prompt = t.calls[0]?.prompt ?? '';
+    expect(prompt).toContain('WEB RESULTS');
+    expect(prompt).toContain('Regulators cleared it.');
+    expect(prompt).toContain('I hold shares in the acquirer.');
+    expect(prompt).toContain('earlier question');
+  });
+
+  it('interpretPrefs: parses a list change + minutes on the cheap tier (ADR-0030)', async () => {
+    const t = new FakeTransport({
+      topics: { mode: 'add', values: ['Politics'] },
+      minutes: 5,
+      summary: 'Added Politics, 5 min.',
+    });
+    const patch = await new Reasoner(t).interpretPrefs({ text: 'add politics and 5 minutes' });
+
+    expect(t.calls[0]?.kind).toBe('json');
+    expect(t.calls[0]?.opts.tier).toBe('cheap');
+    expect(patch.topics).toEqual({ mode: 'add', values: ['Politics'] });
+    expect(patch.minutes).toBe(5);
+  });
+
+  it('interpretPrefs: tolerates a sparse reply, defaulting omitted fields to null', async () => {
+    const t = new FakeTransport({ summary: 'ok' });
+    const patch = await new Reasoner(t).interpretPrefs({ text: 'hmm' });
+    expect(patch).toEqual({ topics: null, minutes: null, summary: 'ok' });
+  });
+
   it('interpretFeedback: parses intent on the cheap tier and keeps the feedback text', async () => {
     const t = new FakeTransport({
       topics: [
         { topic: 'AI', direction: 'more' },
         { topic: 'Sports', direction: 'mute' },
+        { topic: 'Israel', direction: 'more' },
       ],
-      regions: [{ region: 'Israel', direction: 'more' }],
       length: 'shorter',
       summary: 'More AI, no Sports, shorter, more Israel.',
     });
@@ -110,17 +185,32 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.prompt).toContain('hide sports');
     expect(intent.topics).toContainEqual({ topic: 'AI', direction: 'more' });
     expect(intent.topics).toContainEqual({ topic: 'Sports', direction: 'mute' });
-    expect(intent.regions).toContainEqual({ region: 'Israel', direction: 'more' });
+    expect(intent.topics).toContainEqual({ topic: 'Israel', direction: 'more' });
     expect(intent.length).toBe('shorter');
   });
 
-  it('interpretFeedback: silently drops out-of-vocabulary topics/regions', async () => {
+  it('routeIntent: classifies on the cheap tier and extracts minutes (ADR-0030)', async () => {
+    const t = new FakeTransport({ action: 'brief', minutes: 5, topic: null });
+    const intent = await new Reasoner(t).routeIntent({ text: 'give me a 5 minute catch-up' });
+
+    expect(intent).toEqual({ action: 'brief', minutes: 5, topic: null });
+    expect(t.calls[0]?.kind).toBe('json');
+    expect(t.calls[0]?.opts.tier).toBe('cheap');
+    expect(t.calls[0]?.prompt).toContain('give me a 5 minute catch-up');
+  });
+
+  it('routeIntent: an unknown action degrades to help, not a throw', async () => {
+    const t = new FakeTransport({ action: 'banana', minutes: 'soon', topic: 42 });
+    const intent = await new Reasoner(t).routeIntent({ text: 'hi there' });
+    expect(intent).toEqual({ action: 'help', minutes: null, topic: null });
+  });
+
+  it('interpretFeedback: silently drops out-of-vocabulary topics', async () => {
     const t = new FakeTransport({
       topics: [
         { topic: 'AI', direction: 'more' },
         { topic: 'Crypto', direction: 'more' }, // not in the controlled vocabulary
       ],
-      regions: [{ region: 'Mars', direction: 'less' }], // not a Region
       length: null,
       summary: 'More AI.',
     });
@@ -128,6 +218,5 @@ describe('Reasoner', () => {
     const intent = await new Reasoner(t).interpretFeedback({ text: 'more ai and crypto' });
 
     expect(intent.topics).toEqual([{ topic: 'AI', direction: 'more' }]);
-    expect(intent.regions).toEqual([]);
   });
 });

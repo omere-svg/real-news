@@ -49,7 +49,7 @@ export interface WikipediaDeps {
 
 /**
  * Wikipedia adapter over the official REST "featured feed" (ADR-0004). Its
- * `news` block is editor-curated current events. Region=World, Topic left to
+ * `news` block is editor-curated current events. Topic is left to
  * the classifier (events span topics, ADR-0009). The feed is dated, so the
  * adapter reads the date through the Clock seam.
  */
@@ -89,7 +89,7 @@ export class WikipediaSource implements SourceAdapter {
           url: lead?.content_urls?.desktop?.page ?? null,
           text: title,
           publishedAt: now,
-          metadata: { region: 'World' as const },
+          metadata: {},
         };
       })
       .filter((i): i is RawItem => i !== null);

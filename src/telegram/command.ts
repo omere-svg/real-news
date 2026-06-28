@@ -1,9 +1,9 @@
 /**
  * The Telegram command kernel (ADR-0019). A pure parser: chat text → a typed
  * Command the dispatcher acts on. No I/O, exhaustively unit-testable. Argument
- * validation (valid topics/regions) happens later, where the vocabulary lives.
+ * validation (valid topics) happens later, where the vocabulary lives.
  */
-export type PrefsField = 'topics' | 'regions' | 'minutes';
+export type PrefsField = 'topics' | 'minutes';
 
 export type Command =
   | { kind: 'start' }
@@ -13,12 +13,17 @@ export type Command =
   | { kind: 'podcast'; minutes?: number }
   | { kind: 'prefsShow' }
   | { kind: 'prefsSet'; field: PrefsField; value: string }
+  /** A plain-language preference edit, interpreted by the bot (ADR-0030). */
+  | { kind: 'prefsNL'; text: string }
   | { kind: 'prefsClear' }
   | { kind: 'feedback'; text: string }
   | { kind: 'feedbackUndo' }
+  | { kind: 'remember'; text: string }
+  | { kind: 'forget' }
+  | { kind: 'chat'; text: string }
   | { kind: 'unknown'; text: string };
 
-const PREFS_FIELDS: readonly PrefsField[] = ['topics', 'regions', 'minutes'];
+const PREFS_FIELDS: readonly PrefsField[] = ['topics', 'minutes'];
 
 /** A positive number, or undefined if the token isn't one. */
 function positiveNumber(token: string | undefined): number | undefined {
@@ -73,6 +78,13 @@ export function parseCommand(text: string): Command {
       }
       return { kind: 'feedback', text: args.join(' ') };
     }
+    case 'remember':
+      return { kind: 'remember', text: args.join(' ') };
+    case 'forget':
+      return { kind: 'forget' };
+    case 'chat':
+    case 'ask':
+      return { kind: 'chat', text: args.join(' ') };
     default:
       return { kind: 'unknown', text };
   }

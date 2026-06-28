@@ -31,7 +31,7 @@ export interface PsyArxivDeps {
 
 /**
  * PsyArXiv adapter over the open OSF JSON:API (ADR-0021) — the "arXiv of
- * psychology". Region=World, Topic=Science (psychology has no dedicated Topic;
+ * psychology". Topic=Science (psychology has no dedicated Topic;
  * skips the classifier, ADR-0009). Title + abstract + link only; preprints are
  * flagged un-peer-reviewed in the brief.
  */
@@ -65,7 +65,7 @@ export class PsyArxivSource implements SourceAdapter {
         publishedAt: p.attributes.date_published
           ? Date.parse(p.attributes.date_published)
           : null,
-        metadata: { region: 'World' as const, topic: 'Science' as const },
+        metadata: { topic: 'Science' as const },
       }));
   }
 }

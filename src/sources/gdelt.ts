@@ -36,7 +36,7 @@ export interface GdeltDeps {
 
 /**
  * GDELT 2.1 Doc API adapter (ADR-0004). Global news/events feed. Leaves
- * Region/Topic to the classifier (ADR-0009) — GDELT's sourcecountry is the
+ * Topic to the classifier (ADR-0009) — GDELT's sourcecountry is the
  * publisher, not the story's subject. Respect GDELT's 1-request/5-second limit
  * (one call per tick).
  */

@@ -33,7 +33,7 @@ export function candidatePairs(
  * Cluster stage (ADR-0007). Two distinct concerns, now separated: the blocking
  * step (`candidatePairs`) proposes pairs cheaply; the Reasoner confirms each;
  * confirmed pairs are merged by a union-find (with path compression), so a chain
- * A~B~C forms one Cluster. Region/Topic are taken from the earliest member.
+ * A~B~C forms one Cluster. Topic is taken from the earliest member.
  */
 export async function cluster(
   items: readonly EmbeddedItem[],
@@ -80,7 +80,6 @@ export async function cluster(
     const lead = members[0] as EmbeddedItem;
     return {
       items: members.map((m) => m.item),
-      region: lead.region,
       topic: lead.topic,
     };
   });

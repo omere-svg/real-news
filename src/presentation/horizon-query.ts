@@ -1,6 +1,6 @@
 import type { StoryRepo } from '../db/story-repo.js';
-import type { LLMClient } from '../llm/llm-client.js';
-import { REGIONS, type Story, type Topic } from '../domain/types.js';
+import type { Narrator } from '../llm/llm-client.js';
+import type { Story, Topic } from '../domain/types.js';
 import {
   budgetStories,
   type BudgetedStory,
@@ -37,7 +37,8 @@ export interface QueryParams {
 
 export interface HorizonQueryDeps {
   readonly storyRepo: StoryRepo;
-  readonly llm: LLMClient;
+  /** Only the podcast path touches the model — narrate, nothing else (ADR-0014). */
+  readonly llm: Narrator;
   readonly params: QueryParams;
 }
 
@@ -71,13 +72,14 @@ export class HorizonQuery implements QueryEngine {
     const script = await this.deps.llm.narrate({
       minutes: request.minutes,
       brief,
+      ...(request.memory ? { memory: request.memory } : {}),
     });
     return script.trim() || brief; // degrade to the brief (ADR-0014)
   }
 
   /**
    * Read a Significance-ranked pool (hard-filtered by any explicit request
-   * region/topic), drop muted partitions, and budget it under a preference-weighted
+   * topic), drop muted topics, and budget it under a preference-weighted
    * priority (ADR-0026). Significance stays global; weighting is per-user
    * Presentation — the displayed score is never altered, only the ordering.
    */
@@ -87,16 +89,13 @@ export class HorizonQuery implements QueryEngine {
   ): Promise<BudgetedStory[]> {
     const pool = await this.deps.storyRepo.topStories({
       limit: this.deps.params.candidatePool,
-      ...(request.regions?.length ? { region: request.regions } : {}),
       ...(request.topics?.length ? { topic: request.topics } : {}),
     });
 
     const tw = request.topicWeights;
-    const rw = request.regionWeights;
-    const weighted = tw || rw;
-    const rank = (s: Story): number =>
-      s.significance * (tw?.[s.topic] ?? 1) * (rw?.[s.region] ?? 1);
-    // Muted partitions (weight 0 ⇒ rank 0) are excluded entirely.
+    const weighted = Boolean(tw);
+    const rank = (s: Story): number => s.significance * (tw?.[s.topic] ?? 1);
+    // Muted topics (weight 0 ⇒ rank 0) are excluded entirely.
     const candidates = weighted ? pool.filter((s) => rank(s) > 0) : pool;
 
     return budgetStories(candidates, request.minutes, {
@@ -112,23 +111,50 @@ export class HorizonQuery implements QueryEngine {
 
 // --- Deterministic renderers (no LLM, no I/O) ---
 
-function headlineLine(story: Story): string {
-  return `• ${story.title}  (${story.significance.toFixed(1)} · ${story.region}/${story.topic})`;
-}
-
-/** Render one Story to the detail its budgeted depth allows (ADR-0013). */
+/**
+ * Render one Story as a consistent, scannable block (ADR-0024 readability):
+ *   📰 <headline>
+ *   <what-happened summary>              (the factual recap; brief+ depth)
+ *   💡 <why it matters>                  (the editorial description; full depth)
+ *   🏷 <topic · significance>            (the short descriptor)
+ *   🔗 <source link>                     (provenance, ADR-0027)
+ * `headline` depth shows only the headline, descriptor, and link; `brief` adds the
+ * factual summary (trimmed to two sentences); `full` adds the why-it-matters
+ * description. The link is the Story's canonical `url`.
+ */
 function renderStory({ story, depth }: BudgetedStory): string {
-  const head = headlineLine(story);
-  const why = story.whyItMatters?.trim();
-  if (depth === 'headline' || !why) return head;
-  if (depth === 'brief') return `${head}\n  ${firstSentence(why)}`;
-  return `${head}\n  ${why}`;
+  const lines = [`📰 ${story.title}`];
+  if (depth !== 'headline') {
+    const summary = story.summary?.trim();
+    if (summary) {
+      lines.push(depth === 'brief' ? firstSentences(summary, 2) : summary);
+    }
+    if (depth === 'full') {
+      const why = story.whyItMatters?.trim();
+      if (why) lines.push(`💡 ${why}`);
+    }
+  }
+  lines.push(descriptorLine(story));
+  const src = sourceLine(story);
+  if (src) lines.push(src);
+  return lines.join('\n');
 }
 
-/** The first sentence of an analysis, for the mid `brief` depth. */
-function firstSentence(text: string): string {
-  const match = text.match(/^.*?[.!?](?:\s|$)/);
-  return (match ? match[0] : text).trim();
+/** The short descriptor: topic + significance, a one-line "what kind / how big". */
+function descriptorLine(story: Story): string {
+  return `🏷 ${story.topic} · significance ${story.significance.toFixed(1)}`;
+}
+
+/** The provenance line for a Story: its canonical source link, if any (ADR-0027). */
+function sourceLine(story: Story): string {
+  return story.url ? `🔗 ${story.url}` : '';
+}
+
+/** The first `n` sentences of an analysis, for the mid `brief` depth. */
+function firstSentences(text: string, n: number): string {
+  const matches = text.match(/[^.!?]*[.!?](?:\s|$)/g);
+  if (!matches) return text.trim();
+  return matches.slice(0, n).join('').trim() || text.trim();
 }
 
 function renderBrief(selection: BudgetedStory[], minutes: number): string {
@@ -137,25 +163,13 @@ function renderBrief(selection: BudgetedStory[], minutes: number): string {
   }
   const noun = selection.length === 1 ? 'story' : 'stories';
   const header = `Horizon brief — ${minutes} min, ${selection.length} ${noun}`;
-  return [header, '', ...selection.map(renderStory)].join('\n');
+  return [header, '', selection.map(renderStory).join('\n\n')].join('\n');
 }
 
 function renderOutline(topic: Topic, selection: BudgetedStory[]): string {
   if (selection.length === 0) {
     return `No ${topic} stories available.`;
   }
-  const byRegion = new Map<string, BudgetedStory[]>();
-  for (const entry of selection) {
-    const bucket = byRegion.get(entry.story.region) ?? [];
-    bucket.push(entry);
-    byRegion.set(entry.story.region, bucket);
-  }
-
-  const sections: string[] = [`${topic} outline`, ''];
-  for (const region of REGIONS) {
-    const items = byRegion.get(region);
-    if (!items?.length) continue;
-    sections.push(`## ${region}`, ...items.map(renderStory), '');
-  }
-  return sections.join('\n').trimEnd();
+  const header = `${topic} outline`;
+  return [header, '', selection.map(renderStory).join('\n\n')].join('\n');
 }

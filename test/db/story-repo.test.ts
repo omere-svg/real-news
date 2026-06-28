@@ -9,7 +9,6 @@ function storyUpsert(overrides: Partial<StoryUpsert> = {}): StoryUpsert {
     id: 's1',
     title: 'A story',
     url: null,
-    region: 'World',
     topic: 'AI',
     significance: 5,
     whyItMatters: null,
@@ -111,7 +110,6 @@ describe('StoryRepo', () => {
       await repo.upsert(
         storyUpsert({
           id: 'a',
-          region: 'World',
           topic: 'AI',
           significance: 9,
           memberRefs: [{ source: 'hackernews', externalId: 'a1' }],
@@ -120,7 +118,6 @@ describe('StoryRepo', () => {
       await repo.upsert(
         storyUpsert({
           id: 'b',
-          region: 'Israel',
           topic: 'Politics',
           significance: 4,
           memberRefs: [{ source: 'gdelt', externalId: 'b1' }],
@@ -129,7 +126,6 @@ describe('StoryRepo', () => {
       await repo.upsert(
         storyUpsert({
           id: 'c',
-          region: 'World',
           topic: 'AI',
           significance: 7,
           memberRefs: [{ source: 'arxiv', externalId: 'c1' }],
@@ -144,16 +140,15 @@ describe('StoryRepo', () => {
       expect(top.map((s) => s.id)).toEqual(['a', 'c', 'b']);
     });
 
-    it('filters by region and topic', async () => {
+    it('filters by topic', async () => {
       const repo = await seed();
-      const top = await repo.topStories({ region: 'World', topic: 'AI' });
+      const top = await repo.topStories({ topic: 'AI' });
       expect(top.map((s) => s.id)).toEqual(['a', 'c']);
     });
 
-    it('filters by region/topic arrays (IN-list)', async () => {
+    it('filters by topic arrays (IN-list)', async () => {
       const repo = await seed();
       const top = await repo.topStories({
-        region: ['World', 'Israel'],
         topic: ['AI', 'Politics'],
       });
       expect(top.map((s) => s.id)).toEqual(['a', 'c', 'b']);
@@ -180,27 +175,25 @@ describe('StoryRepo', () => {
     it('stores and reads back a representative vector for a story', async () => {
       const db = await createTestDb();
       const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
-      await repo.upsert(storyUpsert({ id: 'a', region: 'World', topic: 'AI' }));
+      await repo.upsert(storyUpsert({ id: 'a', topic: 'AI' }));
 
       await repo.putVector('a', [0.1, 0.2, 0.3]);
       await repo.putVector('a', [1, 0, 0]); // overwrites in place
 
       const got = await repo.recentVectors({
-        region: 'World',
         topic: 'AI',
         sinceMs: 0,
       });
       expect(got).toEqual([{ storyId: 'a', vector: [1, 0, 0] }]);
     });
 
-    it('recentVectors blocks by region/topic and the recency window', async () => {
+    it('recentVectors blocks by topic and the recency window', async () => {
       const db = await createTestDb();
       const clock = new FakeClock(5000);
       const repo = new DrizzleStoryRepo(db, clock);
       await repo.upsert(
         storyUpsert({
           id: 'ai',
-          region: 'World',
           topic: 'AI',
           memberRefs: [{ source: 'hackernews', externalId: 'ai1' }],
         }),
@@ -208,7 +201,6 @@ describe('StoryRepo', () => {
       await repo.upsert(
         storyUpsert({
           id: 'pol',
-          region: 'World',
           topic: 'Politics',
           memberRefs: [{ source: 'gdelt', externalId: 'pol1' }],
         }),
@@ -217,14 +209,12 @@ describe('StoryRepo', () => {
       await repo.putVector('pol', [0, 1, 0]);
 
       const aiOnly = await repo.recentVectors({
-        region: 'World',
         topic: 'AI',
         sinceMs: 0,
       });
       expect(aiOnly.map((v) => v.storyId)).toEqual(['ai']);
 
       const tooOld = await repo.recentVectors({
-        region: 'World',
         topic: 'AI',
         sinceMs: 6000, // story updatedAt=5000 is older than the window
       });

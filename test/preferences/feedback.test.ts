@@ -3,11 +3,11 @@ import { applyFeedback, NEUTRAL_WEIGHT } from '../../src/preferences/feedback.js
 import type { PreferenceProfile } from '../../src/preferences/feedback.js';
 import type { FeedbackIntent } from '../../src/llm/llm-client.js';
 
-const EMPTY: PreferenceProfile = { topicWeights: {}, regionWeights: {} };
+const EMPTY: PreferenceProfile = { topicWeights: {} };
 const OPTS = { minutesFallback: 5, maxMinutes: 60 };
 
 function intent(over: Partial<FeedbackIntent> = {}): FeedbackIntent {
-  return { topics: [], regions: [], length: null, summary: '', ...over };
+  return { topics: [], length: null, summary: '', ...over };
 }
 
 describe('applyFeedback', () => {
@@ -37,9 +37,9 @@ describe('applyFeedback', () => {
     expect(p.topicWeights.AI).toBeGreaterThan(NEUTRAL_WEIGHT);
   });
 
-  it('applies region directions the same way', () => {
-    const p = applyFeedback(EMPTY, intent({ regions: [{ region: 'Israel', direction: 'more' }] }), OPTS);
-    expect(p.regionWeights.Israel).toBeGreaterThan(NEUTRAL_WEIGHT);
+  it('applies the Israel topic the same way as any other', () => {
+    const p = applyFeedback(EMPTY, intent({ topics: [{ topic: 'Israel', direction: 'more' }] }), OPTS);
+    expect(p.topicWeights.Israel).toBeGreaterThan(NEUTRAL_WEIGHT);
   });
 
   it('"shorter"/"longer" nudge minutes from the fallback and clamp to maxMinutes', () => {
@@ -60,7 +60,7 @@ describe('applyFeedback', () => {
   });
 
   it('an empty intent leaves the profile unchanged and never mutates the input', () => {
-    const before: PreferenceProfile = { topicWeights: { AI: 1.5 }, regionWeights: {}, minutes: 8 };
+    const before: PreferenceProfile = { topicWeights: { AI: 1.5 }, minutes: 8 };
     const frozen = JSON.stringify(before);
     const after = applyFeedback(before, intent(), OPTS);
 

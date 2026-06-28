@@ -99,7 +99,6 @@ export async function score(
       );
 
       const signalNudge = signalAdjustment(
-        cluster.region,
         cluster.topic,
         ctx.signalContext ?? EMPTY_SIGNAL_CONTEXT,
         ctx.maxSignalAdjustment ?? 0,

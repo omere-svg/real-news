@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
-import type { Region, Topic } from '../domain/types.js';
+import type { Topic } from '../domain/types.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
 import { renderUI } from './ui.js';
@@ -16,7 +16,6 @@ import { renderUI } from './ui.js';
 /** Default attention budget + preferences applied when the request omits them. */
 export interface PresentationDefaults {
   readonly minutes: number;
-  readonly regions?: readonly Region[];
   readonly topics?: readonly Topic[];
 }
 
@@ -40,10 +39,10 @@ export function createApp(
 
   app.get('/api/stories', async (c) => {
     const q = c.req.query();
+    const topics = c.req.queries('topic') as Topic[] | undefined;
     const query: StoryQuery = {
       limit: q.limit ? Number(q.limit) : 50,
-      ...(q.region ? { region: q.region as Region } : {}),
-      ...(q.topic ? { topic: q.topic as Topic } : {}),
+      ...(topics?.length ? { topic: topics } : {}),
       ...(q.minSignificance
         ? { minSignificance: Number(q.minSignificance) }
         : {}),
@@ -71,8 +70,7 @@ export function createApp(
     c.html(
       renderUI({
         minutes: defaults.minutes,
-        ...(defaults.regions?.length === 1 ? { region: defaults.regions[0] } : {}),
-        ...(defaults.topics?.length === 1 ? { topic: defaults.topics[0] } : {}),
+        ...(defaults.topics?.length ? { topics: defaults.topics } : {}),
       }),
     ),
   );
@@ -87,18 +85,12 @@ function briefRequestOf(
   web: WebOptions,
 ): BriefRequest {
   const minutesParam = c.req.query('minutes');
-  const regions = c.req.queries('region') as Region[] | undefined;
   const topics = c.req.queries('topic') as Topic[] | undefined;
   return {
     minutes: normalizeMinutes(
       minutesParam ? Number(minutesParam) : defaults.minutes,
       web.maxMinutes,
     ),
-    ...(regions?.length
-      ? { regions }
-      : defaults.regions
-        ? { regions: defaults.regions }
-        : {}),
     ...(topics?.length
       ? { topics }
       : defaults.topics

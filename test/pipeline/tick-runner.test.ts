@@ -61,12 +61,11 @@ async function build(overrides: {
   return { runner, rawItemRepo, storyRepo };
 }
 
-function signal(region: 'World' | 'Israel', value: number): SignalObservation {
+function signal(topic: SignalObservation['topic'], value: number): SignalObservation {
   return {
     source: 'wikipedia-pageviews',
-    region,
-    topic: null,
-    key: `${region}:k:202605`,
+    topic,
+    key: `${topic ?? 'global'}:k:202605`,
     value,
     observedAt: 0,
   };
@@ -79,7 +78,6 @@ describe('TickRunner', () => {
         new FakeSource('hackernews', {
           items: [
             item('hackernews', '1', 'AI breakthrough', {
-              region: 'World',
               topic: 'AI',
               points: 300,
             }),
@@ -96,18 +94,51 @@ describe('TickRunner', () => {
     expect(await rawItemRepo.all()).toHaveLength(1); // raw persisted too
 
     const [story] = await storyRepo.all();
-    expect(story?.region).toBe('World');
     expect(story?.topic).toBe('AI');
     expect(story?.significance).toBeGreaterThan(0);
     expect(story?.whyItMatters).toBe('Why it matters.'); // in top-N
     expect(story?.memberRefs).toHaveLength(1);
   });
 
+  it('falls back to the source text for a Story the deep tier skipped (ADR-0024)', async () => {
+    const db = await createTestDb();
+    const rawItemRepo = new DrizzleRawItemRepo(db);
+    const storyRepo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const withText: RawItem = {
+      source: 'guardian',
+      externalId: 'g1',
+      title: 'Parliament passes the bill',
+      url: 'https://example.com/bill',
+      text: '<p>The parliament passed the bill today.</p> More detail followed afterwards.',
+      publishedAt: 0,
+      metadata: { topic: 'Israel' },
+    };
+    const runner = new TickRunner({
+      sources: [new FakeSource('guardian', { items: [withText] })],
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM(),
+      embedder: new FakeEmbedder({ 'Parliament passes the bill': [1, 0, 0] }),
+      clock: new FakeClock(100 * 3_600_000),
+      config: { ...config, deepAnalysisTopN: 0, maxSignalAdjustment: 0 },
+    });
+
+    await runner.run();
+
+    const [story] = await storyRepo.all();
+    // Markup stripped, first sentences kept — a factual line without an LLM call.
+    expect(story?.summary).toBe(
+      'The parliament passed the bill today. More detail followed afterwards.',
+    );
+    expect(story?.whyItMatters).toBeNull(); // not deep-analyzed
+    expect(story?.url).toBe('https://example.com/bill');
+  });
+
   it('reports skipped and failed sources without crashing the tick', async () => {
     const { runner, storyRepo } = await build({
       sources: [
         new FakeSource('hackernews', {
-          items: [item('hackernews', '1', 'Live story', { topic: 'AI', region: 'World' })],
+          items: [item('hackernews', '1', 'Live story', { topic: 'AI' })],
         }),
         new FakeSource('gdelt', { healthy: false }),
         new FakeSource('arxiv', { extractError: 'boom' }),
@@ -127,10 +158,10 @@ describe('TickRunner', () => {
     const { runner, storyRepo } = await build({
       sources: [
         new FakeSource('hackernews', {
-          items: [item('hackernews', '1', 'Quake hits region', { region: 'World', topic: 'Geopolitics' })],
+          items: [item('hackernews', '1', 'Quake hits region', { topic: 'Geopolitics' })],
         }),
         new FakeSource('gdelt', {
-          items: [item('gdelt', '2', 'Earthquake strikes area', { region: 'World', topic: 'Geopolitics' })],
+          items: [item('gdelt', '2', 'Earthquake strikes area', { topic: 'Geopolitics' })],
         }),
       ],
       embedder: new FakeEmbedder({
@@ -172,7 +203,7 @@ describe('TickRunner', () => {
       ...deps,
       sources: [
         new FakeSource('hackernews', {
-          items: [item('hackernews', '1', 'Quake hits region', { region: 'World', topic: 'Geopolitics' })],
+          items: [item('hackernews', '1', 'Quake hits region', { topic: 'Geopolitics' })],
         }),
       ],
     }).run();
@@ -183,7 +214,7 @@ describe('TickRunner', () => {
       ...deps,
       sources: [
         new FakeSource('gdelt', {
-          items: [item('gdelt', '2', 'Earthquake strikes area', { region: 'World', topic: 'Geopolitics' })],
+          items: [item('gdelt', '2', 'Earthquake strikes area', { topic: 'Geopolitics' })],
         }),
       ],
     }).run();
@@ -197,7 +228,7 @@ describe('TickRunner', () => {
   it('numeric Signals lift the significance of a matching-partition story (ADR-0025)', async () => {
     const makeSources = () => [
       new FakeSource('hackernews', {
-        items: [item('hackernews', '1', 'AI breakthrough', { region: 'World', topic: 'AI', points: 50 })],
+        items: [item('hackernews', '1', 'AI breakthrough', { topic: 'AI', points: 50 })],
       }),
     ];
     const embedder = () => new FakeEmbedder({ 'AI breakthrough': [1, 0, 0] });
@@ -211,7 +242,7 @@ describe('TickRunner', () => {
     const boosted = await build({
       sources: makeSources(),
       embedder: embedder(),
-      signalSources: [new FakeSignalSource('wikipedia-pageviews', { observations: [signal('World', 400_000)] })],
+      signalSources: [new FakeSignalSource('wikipedia-pageviews', { observations: [signal(null, 400_000)] })],
       maxSignalAdjustment: 1.5,
     });
     const report = await boosted.runner.run();
@@ -225,7 +256,7 @@ describe('TickRunner', () => {
     const { runner, storyRepo } = await build({
       sources: [
         new FakeSource('hackernews', {
-          items: [item('hackernews', '1', 'Live story', { region: 'World', topic: 'AI' })],
+          items: [item('hackernews', '1', 'Live story', { topic: 'AI' })],
         }),
       ],
       embedder: new FakeEmbedder({ 'Live story': [1, 0, 0] }),
@@ -248,7 +279,7 @@ describe('TickRunner', () => {
     const { runner, storyRepo } = await build({
       sources: [
         new FakeSource('hackernews', {
-          items: [item('hackernews', '1', 'Stable story', { region: 'World', topic: 'AI' })],
+          items: [item('hackernews', '1', 'Stable story', { topic: 'AI' })],
         }),
       ],
       embedder: new FakeEmbedder({ 'Stable story': [1, 0, 0] }),

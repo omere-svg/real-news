@@ -23,7 +23,6 @@ async function appWithStories() {
     id: 'a',
     title: 'AI story',
     url: null,
-    region: 'World',
     topic: 'AI',
     significance: 9,
     whyItMatters: 'Because.',
@@ -33,8 +32,7 @@ async function appWithStories() {
     id: 'b',
     title: 'Israeli politics',
     url: null,
-    region: 'Israel',
-    topic: 'Politics',
+    topic: 'Israel',
     significance: 4,
     whyItMatters: null,
     memberRefs: [{ source: 'gdelt', externalId: '2' }],
@@ -47,7 +45,7 @@ async function appWith(web: { maxMinutes: number; podcastEnabled: boolean }) {
   const db = await createTestDb();
   const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
   await repo.upsert({
-    id: 'a', title: 'AI story', url: null, region: 'World', topic: 'AI',
+    id: 'a', title: 'AI story', url: null, topic: 'AI',
     significance: 9, whyItMatters: 'Because.',
     memberRefs: [{ source: 'hackernews', externalId: '1' }],
   });
@@ -64,9 +62,9 @@ describe('HTTP API', () => {
     expect(body.stories.map((s: { id: string }) => s.id)).toEqual(['a', 'b']);
   });
 
-  it('GET /api/stories filters by region query param', async () => {
+  it('GET /api/stories filters by topic query param', async () => {
     const app = await appWithStories();
-    const res = await app.request('/api/stories?region=Israel');
+    const res = await app.request('/api/stories?topic=Israel');
     const body = await res.json() as { stories: { id: string }[] };
     expect(body.stories.map((s: { id: string }) => s.id)).toEqual(['b']);
   });
@@ -88,7 +86,7 @@ describe('HTTP API', () => {
 
   it('GET /api/brief filters by topic query param', async () => {
     const app = await appWithStories();
-    const res = await app.request('/api/brief?minutes=10&topic=Politics');
+    const res = await app.request('/api/brief?minutes=10&topic=Israel');
     const body = (await res.json()) as { brief: string };
     expect(body.brief).toContain('Israeli politics');
     expect(body.brief).not.toContain('AI story');

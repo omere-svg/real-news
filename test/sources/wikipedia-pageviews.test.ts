@@ -49,19 +49,18 @@ describe('WikipediaPageviewsSource', () => {
     expect(keys.some((k) => k.includes('מיוחד:'))).toBe(false);
     expect(keys.some((k) => k.includes('עמוד_ראשי'))).toBe(false);
 
-    // en.wikipedia ⇒ World, he.wikipedia ⇒ Israel; topic stays region-wide (null).
+    // en.wikipedia ⇒ global (topic null), he.wikipedia ⇒ the Israel topic.
     const ai = observations.find((o) => o.key.includes('Artificial_intelligence'));
     expect(ai).toMatchObject({
       source: 'wikipedia-pageviews',
-      region: 'World',
       topic: null,
       value: 420_000,
       observedAt: NOW,
     });
     expect(ai?.key).toBe('en.wikipedia:Artificial_intelligence:202605');
 
-    const war = observations.find((o) => o.region === 'Israel');
-    expect(war).toMatchObject({ region: 'Israel', topic: null, value: 255_000 });
+    const war = observations.find((o) => o.topic === 'Israel');
+    expect(war).toMatchObject({ topic: 'Israel', value: 255_000 });
   });
 
   it('caps each project to maxItems (after filtering)', async () => {
@@ -69,8 +68,8 @@ describe('WikipediaPageviewsSource', () => {
     const source = new WikipediaPageviewsSource({ fetchJson, maxItems: 1, clock: new FakeClock(NOW) });
 
     const observations = await source.observe();
-    expect(observations.filter((o) => o.region === 'World')).toHaveLength(1);
-    expect(observations.filter((o) => o.region === 'Israel')).toHaveLength(1);
+    expect(observations.filter((o) => o.topic === null)).toHaveLength(1);
+    expect(observations.filter((o) => o.topic === 'Israel')).toHaveLength(1);
   });
 
   it('healthCheck is true on a parseable response, false on failure', async () => {

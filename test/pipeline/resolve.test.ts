@@ -15,7 +15,7 @@ function rawItem(source: RawItem['source'], externalId: string, title: string): 
 }
 
 function embedded(item: RawItem, vector: number[]): EmbeddedItem {
-  return { item, region: 'World', topic: 'AI', vector };
+  return { item, topic: 'AI', vector };
 }
 
 describe('bestMatch', () => {
@@ -51,7 +51,7 @@ describe('resolve', () => {
   it('assigns a fresh deterministic id when nothing matches', async () => {
     const { storyRepo, rawItemRepo, clock } = await fixtures();
     const item = rawItem('hackernews', '1', 'New thing');
-    const cluster: Cluster = { items: [item], region: 'World', topic: 'AI' };
+    const cluster: Cluster = { items: [item], topic: 'AI' };
 
     const out = await resolve(
       [cluster],
@@ -75,7 +75,6 @@ describe('resolve', () => {
       id: 'hackernews:1',
       title: prior.title,
       url: null,
-      region: 'World',
       topic: 'AI',
       significance: 5,
       whyItMatters: null,
@@ -85,7 +84,7 @@ describe('resolve', () => {
 
     // This tick: a different source/id, same event, near-identical vector.
     const fresh = rawItem('gdelt', '2', 'Earthquake strikes area');
-    const cluster: Cluster = { items: [fresh], region: 'World', topic: 'AI' };
+    const cluster: Cluster = { items: [fresh], topic: 'AI' };
 
     const out = await resolve(
       [cluster],
@@ -107,7 +106,6 @@ describe('resolve', () => {
       id: 'hackernews:1',
       title: prior.title,
       url: null,
-      region: 'World',
       topic: 'AI',
       significance: 5,
       whyItMatters: null,
@@ -116,7 +114,7 @@ describe('resolve', () => {
     await storyRepo.putVector('hackernews:1', [1, 0, 0]);
 
     const fresh = rawItem('gdelt', '2', 'Unrelated but similar vector');
-    const cluster: Cluster = { items: [fresh], region: 'World', topic: 'AI' };
+    const cluster: Cluster = { items: [fresh], topic: 'AI' };
 
     const out = await resolve(
       [cluster],
@@ -138,7 +136,6 @@ describe('resolve', () => {
       id: 'hackernews:1',
       title: prior.title,
       url: null,
-      region: 'World',
       topic: 'AI',
       significance: 5,
       whyItMatters: null,
@@ -149,7 +146,7 @@ describe('resolve', () => {
     clock.set((1000 + 200) * HOUR); // 200h later, window is 72h
 
     const fresh = rawItem('gdelt', '2', 'Same event later');
-    const cluster: Cluster = { items: [fresh], region: 'World', topic: 'AI' };
+    const cluster: Cluster = { items: [fresh], topic: 'AI' };
     const out = await resolve(
       [cluster],
       [embedded(fresh, [1, 0, 0])],

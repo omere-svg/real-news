@@ -15,7 +15,7 @@ function member(source: RawItem['source'], externalId: string): RawItem {
 }
 
 function cluster(items: RawItem[]): Cluster {
-  return { items, region: 'World', topic: 'AI' };
+  return { items, topic: 'AI' };
 }
 
 describe('Cluster projection', () => {

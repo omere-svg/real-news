@@ -86,19 +86,16 @@ describe('toPresentationDefaults', () => {
         presentation: {
           defaultMinutes: 7,
           preferredTopics: ['AI'],
-          preferredRegions: ['Israel'],
         },
       }),
     );
     expect(defaults.minutes).toBe(7);
     expect(defaults.topics).toEqual(['AI']);
-    expect(defaults.regions).toEqual(['Israel']);
   });
 
   it('omits empty preference arrays so no filter is applied', () => {
     const defaults = toPresentationDefaults(parseConfig(valid));
     expect(defaults.minutes).toBe(3); // schema default
     expect(defaults.topics).toBeUndefined();
-    expect(defaults.regions).toBeUndefined();
   });
 });

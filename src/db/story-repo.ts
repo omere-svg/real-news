@@ -12,18 +12,16 @@ import type { Db } from './client.js';
 import { membership, stories, storyVectors } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
 import type {
-  Region,
   RawItemRef,
   Story,
   Topic,
 } from '../domain/types.js';
 
 /**
- * Read-side filter for the presentation layer (ADR-0011). `region`/`topic`
- * accept a single value or an array (SQL `IN`); an empty array is no filter.
+ * Read-side filter for the presentation layer (ADR-0011). `topic` accepts a
+ * single value or an array (SQL `IN`); an empty array is no filter.
  */
 export interface StoryQuery {
-  readonly region?: Region | readonly Region[];
   readonly topic?: Topic | readonly Topic[];
   readonly minSignificance?: number;
   readonly limit?: number;
@@ -35,9 +33,8 @@ export interface StoredVector {
   readonly vector: number[];
 }
 
-/** Blocking filter for cross-tick dedup: same partition, recent window (ADR-0017). */
+/** Blocking filter for cross-tick dedup: same topic, recent window (ADR-0017). */
 export interface RecentVectorsQuery {
-  readonly region: Region;
   readonly topic: Topic;
   /** Lower bound on `updatedAt` — the recency window. */
   readonly sinceMs: number;
@@ -48,9 +45,10 @@ export interface StoryUpsert {
   readonly id: string;
   readonly title: string;
   readonly url: string | null;
-  readonly region: Region;
   readonly topic: Topic;
   readonly significance: number;
+  /** Factual "what happened" summary; omit/null when not analyzed this tick. */
+  readonly summary?: string | null;
   readonly whyItMatters: string | null;
   readonly memberRefs: readonly RawItemRef[];
 }
@@ -87,9 +85,9 @@ export class DrizzleStoryRepo implements StoryRepo {
         id: input.id,
         title: input.title,
         url: input.url,
-        region: input.region,
         topic: input.topic,
         significance: input.significance,
+        summary: input.summary ?? null,
         whyItMatters: input.whyItMatters,
         firstSeenAt: now,
         updatedAt: now,
@@ -99,9 +97,9 @@ export class DrizzleStoryRepo implements StoryRepo {
         set: {
           title: input.title,
           url: input.url,
-          region: input.region,
           topic: input.topic,
           significance: input.significance,
+          summary: input.summary ?? null,
           whyItMatters: input.whyItMatters,
           updatedAt: now,
         },
@@ -160,8 +158,6 @@ export class DrizzleStoryRepo implements StoryRepo {
 
   async topStories(query: StoryQuery): Promise<Story[]> {
     const filters: SQL[] = [];
-    const region = matchFilter(stories.region, query.region);
-    if (region) filters.push(region);
     const topic = matchFilter(stories.topic, query.topic);
     if (topic) filters.push(topic);
     if (query.minSignificance !== undefined) {
@@ -194,7 +190,6 @@ export class DrizzleStoryRepo implements StoryRepo {
       .innerJoin(stories, eq(storyVectors.storyId, stories.id))
       .where(
         and(
-          eq(stories.region, query.region),
           eq(stories.topic, query.topic),
           gte(stories.updatedAt, query.sinceMs),
         ),
@@ -253,9 +248,9 @@ function rowToStory(
     id: row.id,
     title: row.title,
     url: row.url,
-    region: row.region,
     topic: row.topic,
     significance: row.significance,
+    summary: row.summary,
     whyItMatters: row.whyItMatters,
     memberRefs,
     firstSeenAt: row.firstSeenAt,

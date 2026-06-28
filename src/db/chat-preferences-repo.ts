@@ -1,29 +1,28 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { chatPreferences } from './schema.js';
-import type { Region, Topic } from '../domain/types.js';
+import type { Topic } from '../domain/types.js';
 
 /** Snapshot of the feedback-affected fields, kept for one-level undo (ADR-0026). */
 export interface PreviousPreferences {
   readonly topicWeights?: Partial<Record<Topic, number>>;
-  readonly regionWeights?: Partial<Record<Region, number>>;
   readonly defaultMinutes?: number;
 }
 
 /**
  * Per-chat presentation preferences for the Telegram bot (ADR-0019). Any field
  * may be unset; an unset field falls back to the config defaults (ADR-0015).
- * `topicWeights`/`regionWeights` are the soft preference weights set by free-text
- * feedback (ADR-0026); `prev` is the undo snapshot.
+ * `topicWeights` are the soft preference weights set by free-text feedback
+ * (ADR-0026); `prev` is the undo snapshot.
  */
 export interface ChatPreferences {
   readonly chatId: number;
   readonly topics?: Topic[];
-  readonly regions?: Region[];
   readonly defaultMinutes?: number;
   readonly topicWeights?: Partial<Record<Topic, number>>;
-  readonly regionWeights?: Partial<Record<Region, number>>;
   readonly prev?: PreviousPreferences;
+  /** Free-text personal context injected into the LLM content paths (ADR-0028). */
+  readonly memory?: string;
 }
 
 /**
@@ -50,11 +49,10 @@ function toDomain(row: Row): ChatPreferences {
   return {
     chatId: row.chatId,
     ...(row.topics ? { topics: row.topics } : {}),
-    ...(row.regions ? { regions: row.regions } : {}),
     ...(row.defaultMinutes !== null ? { defaultMinutes: row.defaultMinutes } : {}),
     ...(row.topicWeights ? { topicWeights: row.topicWeights } : {}),
-    ...(row.regionWeights ? { regionWeights: row.regionWeights } : {}),
     ...(row.prev ? { prev: row.prev } : {}),
+    ...(row.memory ? { memory: row.memory } : {}),
   };
 }
 
@@ -82,11 +80,10 @@ export class DrizzleChatPreferencesRepo implements ChatPreferencesRepo {
     const values = {
       chatId,
       topics: field('topics'),
-      regions: field('regions'),
       defaultMinutes: field('defaultMinutes'),
       topicWeights: field('topicWeights'),
-      regionWeights: field('regionWeights'),
       prev: field('prev'),
+      memory: field('memory'),
     };
     await this.db
       .insert(chatPreferences)
@@ -95,11 +92,10 @@ export class DrizzleChatPreferencesRepo implements ChatPreferencesRepo {
         target: chatPreferences.chatId,
         set: {
           topics: values.topics,
-          regions: values.regions,
           defaultMinutes: values.defaultMinutes,
           topicWeights: values.topicWeights,
-          regionWeights: values.regionWeights,
           prev: values.prev,
+          memory: values.memory,
         },
       });
     // Read back so the returned shape exactly matches storage (drops cleared fields).

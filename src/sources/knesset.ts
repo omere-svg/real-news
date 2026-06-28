@@ -5,12 +5,23 @@ import type { RawItem } from '../domain/types.js';
 
 const BASE = 'https://knesset.gov.il/Odata/ParliamentInfo.svc/KNS_Bill()';
 
+/**
+ * Public bill page on the Knesset legislation portal. The OData `BillID` is the
+ * site's `lawitemid` (verified), so this resolves to the real bill page — the
+ * provenance link the brief shows (ADR-0027).
+ */
+function billUrl(billId: number): string {
+  return `https://main.knesset.gov.il/Activity/Legislation/Laws/Pages/LawBill.aspx?t=lawsuggestionssearch&lawitemid=${billId}`;
+}
+
 const responseSchema = z.object({
   value: z
     .array(
       z.object({
         BillID: z.number(),
         Name: z.string().nullable().optional(),
+        // The bill's official summary — usually null until it becomes law.
+        SummaryLaw: z.string().nullable().optional(),
         LastUpdatedDate: z.string().nullable().optional(),
       }),
     )
@@ -33,8 +44,8 @@ export interface KnessetDeps {
 
 /**
  * Knesset adapter over the official OData API (ADR-0004). Israeli legislative
- * feed (bills, newest first). By definition Region=Israel, Topic=Politics, so
- * it skips the LLM classifier (ADR-0009).
+ * feed (bills, newest first). By definition Topic=Israel, so it skips the LLM
+ * classifier (ADR-0009).
  */
 export class KnessetSource implements SourceAdapter {
   readonly id = 'knesset' as const;
@@ -42,7 +53,7 @@ export class KnessetSource implements SourceAdapter {
   constructor(private readonly deps: KnessetDeps) {}
 
   private url(top: number): string {
-    return `${BASE}?$top=${top}&$orderby=LastUpdatedDate%20desc&$format=json`;
+    return `${BASE}?$top=${top}&$orderby=LastUpdatedDate%20desc&$select=BillID,Name,SummaryLaw,LastUpdatedDate&$format=json`;
   }
 
   async healthCheck(): Promise<boolean> {
@@ -64,10 +75,10 @@ export class KnessetSource implements SourceAdapter {
         source: 'knesset' as const,
         externalId: String(b.BillID),
         title: b.Name as string,
-        url: null,
-        text: null,
+        url: billUrl(b.BillID),
+        text: b.SummaryLaw ?? null,
         publishedAt: parseODataDate(b.LastUpdatedDate),
-        metadata: { region: 'Israel' as const, topic: 'Politics' as const },
+        metadata: { topic: 'Israel' as const },
       }));
   }
 }

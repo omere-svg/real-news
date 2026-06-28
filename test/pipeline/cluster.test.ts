@@ -16,7 +16,7 @@ function embedded(externalId: string, vector: number[]): EmbeddedItem {
     publishedAt: null,
     metadata: {},
   };
-  return { item, region: 'World', topic: 'AI', vector };
+  return { item, topic: 'AI', vector };
 }
 
 describe('candidatePairs (embedding blocking)', () => {
@@ -41,7 +41,6 @@ describe('cluster stage', () => {
 
     expect(clusters).toHaveLength(1);
     expect(clusters[0]?.items).toHaveLength(2);
-    expect(clusters[0]?.region).toBe('World');
     expect(clusters[0]?.topic).toBe('AI');
   });
 

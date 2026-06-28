@@ -34,8 +34,8 @@ export interface KnessetVotesDeps {
 
 /**
  * Knesset recorded-votes adapter over the official Votes.svc OData feed
- * (ADR-0021). Distinct from the `knesset` bills adapter. Region=Israel,
- * Topic=Politics (skips the classifier, ADR-0009). A BOTH source: for/against/
+ * (ADR-0021). Distinct from the `knesset` bills adapter. Topic=Israel (skips
+ * the classifier, ADR-0009). A BOTH source: for/against/
  * abstain tallies become points (`total_for`), mentions (participation), and a
  * tone signal (the margin). Hebrew titles; the Reasoner can translate downstream.
  */
@@ -76,8 +76,7 @@ export class KnessetVotesSource implements SourceAdapter {
     const against = v.total_against ?? 0;
     const abstain = v.total_abstain ?? 0;
     const metadata: SourceMetadata = {
-      region: 'Israel',
-      topic: 'Politics',
+      topic: 'Israel',
       points: forV,
       mentions: forV + against + abstain,
       tone: toneOf(forV, against),

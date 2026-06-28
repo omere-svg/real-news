@@ -31,7 +31,7 @@ describe('PsyArxivSource', () => {
       title: 'Learning social preferences',
       url: 'https://osf.io/preprints/psyarxiv/wpt5b/',
       text: 'A psychology preprint abstract.',
-      metadata: { region: 'World', topic: 'Science' },
+      metadata: { topic: 'Science' },
     });
     expect(items[0]?.publishedAt).toBe(Date.parse('2026-06-16T13:29:19.436799'));
   });

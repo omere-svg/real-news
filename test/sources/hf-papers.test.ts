@@ -31,7 +31,7 @@ describe('HfPapersSource', () => {
       title: 'A trending AI paper',
       url: 'https://huggingface.co/papers/2606.17081',
       text: 'A crisp AI-written summary.', // prefers ai_summary
-      metadata: { region: 'World', topic: 'AI', points: 42, mentions: 4 },
+      metadata: { topic: 'AI', points: 42, mentions: 4 },
     });
     expect(items[0]?.publishedAt).toBe(Date.parse('2026-06-11T00:00:00.000Z'));
   });
