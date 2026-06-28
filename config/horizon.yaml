@@ -138,13 +138,15 @@ telegram:
   enabled: true
   pollTimeoutSeconds: 30
   naturalLanguage: true   # understand plain-language messages + buttons, not just slash commands (ADR-0030)
-  allowedChatIds: [2007614249]      # chat ids the bot answers (ADR-0022)
-  openAccess: false       # default-deny: empty allowlist + false = answer no one
-  limits:                 # rate limits + cost quotas (ADR-0022)
-    perMinute: 8          # burst: max commands per chat per minute
-    podcastPerDay: 30     # per-chat daily cap on the expensive podcast path
-    commandsPerDay: 100   # per-chat daily cap on all commands
-    globalPodcastPerDay: 50   # process-wide podcast ceiling (hard bill backstop)
+  allowedChatIds: []      # empty + openAccess:true = anyone can use the bot (ADR-0031)
+  openAccess: true        # OPEN to everyone; cost is bounded by the limits below
+  limits:                 # rate limits + cost quotas (ADR-0022/0031)
+    perMinute: 6          # burst: max commands per chat per minute
+    podcastPerDay: 2      # per-chat daily cap on the expensive podcast path (TTS+LLM)
+    commandsPerDay: 25    # per-chat daily cap on all commands (incl. chat questions)
+    globalPodcastPerDay: 15    # process-wide podcast ceiling per day (hard bill backstop)
+    globalCommandsPerDay: 150  # process-wide command ceiling per day across ALL users —
+                               # the total daily spend cap that makes open access safe (ADR-0031)
   tts:
     enabled: true         # podcast as audio; false sends the script as text
     model: gpt-4o-mini-tts

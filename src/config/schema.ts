@@ -105,6 +105,12 @@ export const configSchema = z.object({
           commandsPerDay: z.number().int().positive().default(100),
           /** Process-wide podcast ceiling per UTC day — the hard bill backstop. */
           globalPodcastPerDay: z.number().int().positive().default(50),
+          /**
+           * Process-wide command ceiling per UTC day — the total-cost backstop that
+           * bounds spend across ALL chats (essential under openAccess, since the
+           * chat/`discuss` LLM path is otherwise capped only per-chat). ADR-0022/0031.
+           */
+          globalCommandsPerDay: z.number().int().positive().default(1000),
         })
         .default({}),
       /** Podcast text-to-speech (ADR-0020). */

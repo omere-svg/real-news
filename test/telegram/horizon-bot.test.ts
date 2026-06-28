@@ -96,6 +96,7 @@ const GENEROUS: BotLimits = {
   podcastPerDay: 1000,
   commandsPerDay: 1000,
   globalPodcastPerDay: 1000,
+  globalCommandsPerDay: 1000,
 };
 
 async function build(opts: {
@@ -261,6 +262,17 @@ describe('HorizonBot', () => {
     await bot.handle(update(5, '/podcast')); // chat 5: ok (global=1)
     await bot.handle(update(6, '/podcast')); // chat 6: global exceeded
     expect(transport.audios).toHaveLength(1);
+  });
+
+  it('global daily command ceiling caps total spend across all chats (open-access bill guard)', async () => {
+    const { bot, transport } = await build({ limits: { globalCommandsPerDay: 1 } });
+    await bot.handle(update(5, '/brief')); // chat 5: ok (global cmd = 1)
+    await bot.handle(update(6, '/brief')); // chat 6: global cmd exceeded → blocked
+    await bot.handle(update(7, '/brief')); // chat 7: still over — no second notice
+
+    const notices = transport.messages.filter((m) => /across all users/i.test(m.text));
+    expect(notices).toHaveLength(1); // notified exactly once, then silent
+    expect(notices[0]?.chatId).toBe(6);
   });
 
   it('clamps an oversized minutes request to maxMinutes', async () => {

@@ -1,7 +1,11 @@
 # Deploy to Render (free, push-to-deploy)
 
-The free, git-push path for Project Horizon (ADR-0031 research). Every push to
-`main` auto-redeploys. Zero app code change — it uses the existing `Dockerfile`,
+> **Status: LIVE in production.** Running on Render free tier + hosted Turso, push-to-`main`
+> auto-redeploys. The Telegram bot is **open to everyone** (`telegram.openAccess: true`); spend
+> is bounded by the per-user and total daily quotas in `config/horizon.yaml` (`telegram.limits`).
+
+The free, git-push path for Project Horizon (ADR-0031). Every push to `main`
+auto-redeploys. Zero app code change — it uses the existing `Dockerfile`,
 the `/health` route, and the built-in Turso/libsql support.
 
 > **Why a keep-alive is needed.** Render's *free* web service spins down after
@@ -58,6 +62,25 @@ Add a free uptime pinger hitting the health endpoint every ~10 minutes:
 From here, `git push origin main` rebuilds and redeploys automatically
 (`autoDeploy: true`). The viewer is at `https://<your-service>.onrender.com/`,
 the API at `/api/stories`.
+
+## Troubleshooting
+
+- **`TypeError: Invalid URL` on boot / "deploy failed"** — the `DB_URL` value is malformed.
+  It must start with **`libsql://`** (not `https://`) and have **no trailing space/newline**
+  (a stray newline shows up as `%0A` in the error). Re-copy it with `turso db show <db> --url`.
+- **Viewer shows "no stories yet"** — either the first tick hasn't finished (give it a minute,
+  or it's a free-tier cold start), or the topic filter is hiding everything: uncheck the topic
+  boxes to show all topics. Confirm data exists with `GET /api/stories?minSignificance=0`.
+
+## Cost controls (who can use it, and the spend ceiling)
+
+The bot is **open to everyone** (`telegram.openAccess: true`, empty `allowedChatIds`). Spend is
+capped on two axes in `telegram.limits` — **per user** (`commandsPerDay`, `podcastPerDay`,
+`perMinute` burst) and **total across all users** (`globalCommandsPerDay`, `globalPodcastPerDay`).
+The only token-spending paths are **podcast** and **chat questions**; text briefs/outlines and the
+entire web viewer are deterministic cache reads (zero tokens). The web `/api/podcast` LLM endpoint
+stays **off** (`presentation.webPodcastEnabled: false`), so the public website spends nothing.
+Tune the numbers in `config/horizon.yaml` and push to redeploy.
 
 ## Limits / caveats (free tier)
 

@@ -70,6 +70,8 @@ export interface BotLimits {
   readonly podcastPerDay: number;
   readonly commandsPerDay: number;
   readonly globalPodcastPerDay: number;
+  /** Process-wide command ceiling per UTC day — the total-cost backstop (ADR-0031). */
+  readonly globalCommandsPerDay: number;
 }
 
 export interface HorizonBotDeps {
@@ -110,6 +112,7 @@ const LIMIT_MSG = {
   commands: 'Daily command limit reached. Try again tomorrow (UTC).',
   podcast: 'Daily podcast limit reached. Try again tomorrow (UTC).',
   global: 'The podcast service is busy right now. Please try again later.',
+  globalCommands: 'Daily service limit reached across all users. Please try again tomorrow (UTC).',
 } as const;
 
 const HELP = [
@@ -290,6 +293,15 @@ export class HorizonBot {
     const cmds = await usage.incrementAndGet(`chat:${chatId}:cmd`, day);
     if (cmds > limits.commandsPerDay) {
       if (cmds === limits.commandsPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.commands);
+      return false;
+    }
+
+    // Process-wide daily ceiling across all chats — the hard total-cost backstop
+    // that makes openAccess safe (bounds the chat/discuss LLM spend too). ADR-0031.
+    const totalCmds = await usage.incrementAndGet('global:cmd', day);
+    if (totalCmds > limits.globalCommandsPerDay) {
+      if (totalCmds === limits.globalCommandsPerDay + 1)
+        await transport.sendMessage(chatId, LIMIT_MSG.globalCommands);
       return false;
     }
 

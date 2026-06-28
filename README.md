@@ -90,14 +90,20 @@ ranking time.
 through a stub transport against the real query engine + OpenAI TTS, prints every reply, and
 writes the podcast to `/tmp/horizon-podcast.mp3`.
 
-### Security & cost controls (ADR-0022/0023)
+### Security & cost controls (ADR-0022/0023/0031)
 
-- **Default-deny access:** the bot answers no one until you list `telegram.allowedChatIds`
-  (or set `telegram.openAccess: true`).
-- **Rate limits + daily quotas** (`telegram.limits`): per-chat burst (`perMinute`), per-chat
-  daily caps (`podcastPerDay`, `commandsPerDay`), and a process-wide `globalPodcastPerDay`
-  ceiling. The podcast path (LLM + TTS) is the only user-driven OpenAI cost; quotas are
-  persisted so a restart can't reset them.
+- **Access:** the bot is **open to everyone** (`telegram.openAccess: true`, empty
+  `allowedChatIds`) so anyone can use it — spend is bounded entirely by the quotas below.
+  To lock it back down, list specific `telegram.allowedChatIds` (an explicit allowlist
+  overrides open access).
+- **Rate limits + daily quotas, both per-user and total** (`telegram.limits`): per-chat burst
+  (`perMinute`), per-chat daily caps (`podcastPerDay`, `commandsPerDay`), and **two process-wide
+  daily ceilings — `globalPodcastPerDay` and `globalCommandsPerDay`** — the hard total-spend
+  backstops that make open access safe. Every command (including a chat question, which hits the
+  LLM) counts against both the per-chat and the global command cap; podcasts additionally draw the
+  podcast caps. All counters are persisted, so a restart can't reset a day's budget. The only
+  user-driven OpenAI costs are the **podcast** (LLM + TTS) and **chat** (deep tier) paths — text
+  briefs/outlines and the whole web viewer are deterministic cache reads that spend **zero** tokens.
 - **`minutes` is clamped** to `presentation.maxMinutes`, and the LLM-backed web
   `/api/podcast` is **off by default** (`presentation.webPodcastEnabled`). The server binds
   to localhost unless you set `HOST`.
@@ -128,9 +134,17 @@ boot). Secrets and deploy knobs come from the environment:
 
 ## Deploy (public URL)
 
-The worker is a long-lived process with a local DB, so deploy it as a service (not
-serverless). Because it uses **libsql**, the DB can be a hosted **Turso** database — so the
-service disk can be ephemeral.
+**Status: live in production** on **Render** (free tier) with a hosted **Turso** (libsql)
+database — push-to-`main` auto-redeploys via [`render.yaml`](render.yaml). Full walkthrough:
+[`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md).
+
+**Share the Telegram bot:** the bot is open to everyone (see cost controls above), so just send
+people its link — `https://t.me/<your-bot-username>` (the `@username` you set in @BotFather).
+Anyone who opens it and taps **Start** can use it immediately; per-user and total daily quotas
+cap the cost.
+
+The worker is a long-lived process, so deploy it as a service (not serverless). Because it uses
+**libsql**, the DB can be a hosted **Turso** database — so the service disk can be ephemeral.
 
 1. **Database (Turso):** create a DB, grab its `libsql://…` URL + auth token.
 2. **Host (Railway / Render / Fly.io):** deploy this repo (the `Dockerfile` is ready), and set env vars:
