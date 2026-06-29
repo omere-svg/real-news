@@ -125,10 +125,10 @@ const HELP = [
   '📰 Brief — a quick rundown, sized to your time',
   '🎧 Podcast — a narrated audio episode',
   '🔎 Topic deep-dive — zoom in on one subject',
-  '🎛 Tune your feed — more/less of a topic, shorter/longer',
+  '🎛 Set your preferences — favorite topics & default brief length',
   '🧠 Remember you — keep personal context in mind',
   '',
-  'Just ask in plain English (e.g. “a 5-minute brief on AI”) — or tap a button below 👇',
+  'Just ask in plain English (e.g. “remember I like AI and want 5-minute briefs”) — or tap a button below 👇',
   '',
   `Subjects I follow: ${FOLLOWABLE_TOPICS}`,
 ].join('\n');
