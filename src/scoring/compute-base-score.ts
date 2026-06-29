@@ -1,4 +1,5 @@
 import type { ScoreComponent, Signals } from '../domain/types.js';
+import { clamp, clamp01, normalize } from './normalize.js';
 
 /** Tunables injected from config (ADR-0003) so the function stays pure. */
 export interface ScoreParams {
@@ -26,20 +27,6 @@ const AUTHORITY_CAP = 0.55;
 const ATTENTION_BOOST = 0.15;
 /** Recency floor: age de-emphasizes but never erases a major story (ADR-0034). */
 const RECENCY_FLOOR = 0.5;
-
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
-}
-
-const clamp01 = (value: number): number => clamp(value, 0, 1);
-
-/**
- * Log-normalize a raw count to ~[0, 1]: diminishing returns as it approaches
- * `ref`, so 10k vs 11k barely moves while 0 vs 100 moves a lot.
- */
-function normalize(value: number, ref: number): number {
-  return clamp01(Math.log1p(Math.max(0, value)) / Math.log1p(ref));
-}
 
 /**
  * Recency factor in [RECENCY_FLOOR, 1] (ADR-0034). Unlike a raw exponential, it

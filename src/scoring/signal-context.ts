@@ -1,4 +1,5 @@
 import type { SignalObservation, SourceId, Topic } from '../domain/types.js';
+import { clamp01, normalize } from './normalize.js';
 
 /**
  * The Signal coupling (ADR-0025). Turns a tick's numeric `SignalObservation`s
@@ -28,16 +29,9 @@ export interface SignalContext {
 /** The no-signal context — yields a zero adjustment, leaving base scoring intact. */
 export const EMPTY_SIGNAL_CONTEXT: SignalContext = { salience: new Map() };
 
-const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
-
 /** Stable partition key; `topic === null` is the global (all-topics) bucket. */
 function partitionKey(topic: Topic | null): string {
   return topic ?? '*';
-}
-
-/** Log-normalize a non-negative value against a reference into ~[0, 1]. */
-function normalize(value: number, ref: number): number {
-  return clamp01(Math.log1p(Math.max(0, value)) / Math.log1p(ref));
 }
 
 /**

@@ -1,5 +1,6 @@
 import { TOPICS } from '../domain/types.js';
 import type { TickRecord } from '../db/tick-report-repo.js';
+import { COMPONENT_LABELS } from '../presentation/score-explanation.js';
 
 /** Defaults the viewer seeds its controls from (ADR-0015). */
 export interface UiDefaults {
@@ -99,8 +100,9 @@ const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-// "Why this score?" — render the persisted, inspectable breakdown (ADR-0032/0034).
-const SCORE_LABELS = { impact:'Real-world impact', corroboration:'Corroboration', authority:'Source authority', attention:'Public attention' };
+// "Why this score?" — render the persisted breakdown. Axis labels are injected
+// from the shared interpreter (ADR-0037), so there's one source of truth.
+const SCORE_LABELS = ${JSON.stringify(COMPONENT_LABELS)};
 function pct(v){ return Math.round(Number(v)*100) + '%'; }
 function breakdownHtml(b){
   if(!b) return '';

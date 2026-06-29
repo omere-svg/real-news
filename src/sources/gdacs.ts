@@ -2,26 +2,17 @@ import { XMLParser } from 'fast-xml-parser';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
+import { xmlText, asArray } from './xml.js';
 
 const FEED_URL = 'https://www.gdacs.org/xml/rss.xml';
 
 // Same hardening as the shared RSS parser (ADR-0023): no entity expansion (XXE-safe).
 const parser = new XMLParser({ ignoreAttributes: true, processEntities: false });
 
-/** Coerce an XML node (string/number/{#text}) to a trimmed string, or null. */
+/** GDACS namespaced fields want trimmed, empty-as-null strings. */
 function text(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return value.trim() || null;
-  if (typeof value === 'number') return String(value);
-  if (typeof value === 'object' && '#text' in (value as Record<string, unknown>)) {
-    return String((value as Record<string, unknown>)['#text']).trim() || null;
-  }
-  return null;
-}
-
-function asArray<T>(v: T | T[] | undefined | null): T[] {
-  if (v == null) return [];
-  return Array.isArray(v) ? v : [v];
+  const s = xmlText(value);
+  return s ? s.trim() || null : null;
 }
 
 /** GDACS event-type codes → readable names. Unknown codes pass through. */

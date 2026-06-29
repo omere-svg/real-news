@@ -84,6 +84,13 @@ tone-extremity, source-weight), the `recencyFactor` applied, and the two bounded
 reconciles to the Story's `significance`. Snapshotted at scoring time and surfaced verbatim —
 the proof that Significance is math, not a black-box rating.
 
+**Score Explanation**
+The single interpreter of a Score Breakdown (ADR-0037): the pure `scoreExplanation` turns the
+stored breakdown into render-ready facts — labeled, sorted **drivers** and compact **tags**
+(e.g. "major real-world impact · 3 sources · official source"). Both presentation surfaces (the
+brief/bot text rationale and the web "Why this score?" widget) read meaning from here, so the
+axis labels and the rationale thresholds live in one place.
+
 **Summary**
 The concise factual "what happened" string attached to a Story — the reporter output, distinct
 from the editorial Why-It-Matters. Written by the Reasoner's **deep tier** on the top-N

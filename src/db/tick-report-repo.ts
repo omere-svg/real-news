@@ -53,18 +53,23 @@ export class DrizzleTickReportRepo implements TickReportRepo {
       .from(tickReports)
       .orderBy(desc(tickReports.ranAt))
       .limit(limit);
-    return rows.map((r) => ({
-      ranAt: r.ranAt,
-      durationMs: r.durationMs,
-      ok: r.ok,
-      error: r.error,
-      extracted: r.extracted,
-      storiesUpserted: r.storiesUpserted,
-      signalsObserved: r.signalsObserved,
-      skipped: r.skipped,
-      failed: r.failed,
-      signalsSkipped: r.signalsSkipped,
-      signalsFailed: r.signalsFailed,
-    }));
+    return rows.map(toRecord);
   }
+}
+
+/** Map a tick_reports row to a domain TickRecord (matches the other repos' toDomain pattern). */
+function toRecord(row: typeof tickReports.$inferSelect): TickRecord {
+  return {
+    ranAt: row.ranAt,
+    durationMs: row.durationMs,
+    ok: row.ok,
+    error: row.error,
+    extracted: row.extracted,
+    storiesUpserted: row.storiesUpserted,
+    signalsObserved: row.signalsObserved,
+    skipped: row.skipped,
+    failed: row.failed,
+    signalsSkipped: row.signalsSkipped,
+    signalsFailed: row.signalsFailed,
+  };
 }

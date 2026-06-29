@@ -7,6 +7,7 @@ import {
   type Depth,
 } from './budget.js';
 import type { BriefRequest, QueryEngine } from './query-engine.js';
+import { scoreExplanation } from './score-explanation.js';
 
 /**
  * The Presentation seam implemented (ADR-0011 / ADR-0014). Turns the
@@ -148,23 +149,14 @@ function descriptorLine(story: Story): string {
 }
 
 /**
- * A compact, deterministic "why this score" tail derived purely from the
- * persisted breakdown (ADR-0034) — names the true drivers, e.g.
- * ` · major real-world impact · 3 sources · official source`. Empty for Stories
- * scored before the breakdown existed. No LLM, no I/O.
+ * A compact, deterministic "why this score" tail (ADR-0034) — e.g.
+ * ` · major real-world impact · 3 sources · official source`. The interpretation
+ * (labels + thresholds) lives in the shared `scoreExplanation` (ADR-0037); this is
+ * just formatting. Empty for Stories scored before the breakdown existed.
  */
 function scoreRationale(story: Story): string {
-  const bd = story.scoreBreakdown;
-  if (!bd) return '';
-  const axis = (key: string): number =>
-    bd.components.find((c) => c.key === key)?.value ?? 0;
-  const tags: string[] = [];
-  if (bd.impact >= 0.66) tags.push('major real-world impact');
-  else if (bd.impact >= 0.4) tags.push('notable impact');
-  if (bd.signals.corroboration >= 2) tags.push(`${bd.signals.corroboration} sources`);
-  if (axis('authority') >= 0.65) tags.push('official source');
-  if (axis('attention') >= 0.5) tags.push('high public interest');
-  if (bd.recencyFactor >= 0.9) tags.push('fresh');
+  if (!story.scoreBreakdown) return '';
+  const { tags } = scoreExplanation(story.scoreBreakdown);
   return tags.length ? ` · ${tags.join(' · ')}` : '';
 }
 

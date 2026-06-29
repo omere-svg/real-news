@@ -275,6 +275,38 @@ describe('TickRunner', () => {
     expect(await storyRepo.all()).toHaveLength(1);
   });
 
+  it('keeps each Story aligned with its own cluster through score→analyze→upsert', async () => {
+    // Three distinct, non-clustering stories. The deep tier echoes each item's
+    // title, so a misaligned index (analyzed[i] paired with the wrong id) would
+    // attach the wrong analysis to a Story. Guards the Promise.all order assumption.
+    const { runner, storyRepo } = await build({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [
+            item('hackernews', 'a', 'Alpha event', { topic: 'AI', points: 10 }),
+            item('hackernews', 'b', 'Bravo event', { topic: 'AI', points: 300 }),
+            item('hackernews', 'c', 'Charlie event', { topic: 'AI', points: 80 }),
+          ],
+        }),
+      ],
+      embedder: new FakeEmbedder({
+        'Alpha event': [1, 0, 0],
+        'Bravo event': [0, 1, 0],
+        'Charlie event': [0, 0, 1],
+      }),
+      llm: new FakeLLM({ analyze: (i) => `analysis of ${i.title}` }),
+    });
+
+    await runner.run();
+
+    const stories = await storyRepo.all();
+    expect(stories).toHaveLength(3);
+    // Each Story's analysis must come from its OWN title — not a neighbour's.
+    for (const s of stories) {
+      expect(s.whyItMatters).toBe(`analysis of ${s.title}`);
+    }
+  });
+
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {
     const { runner, storyRepo } = await build({
       sources: [

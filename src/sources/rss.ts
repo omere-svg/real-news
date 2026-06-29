@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { xmlText as text, asArray } from './xml.js';
 
 /**
  * Shared RSS/Atom-RDF parsing for the media + thematic Source adapters
@@ -45,22 +46,6 @@ function safeCodePoint(n: number): string {
   } catch {
     return '';
   }
-}
-
-function asArray<T>(value: T | T[] | undefined | null): T[] {
-  if (value == null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-/** Coerce an XML node (string, number, or `{ '#text': ... }`) to a string. */
-function text(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number') return String(value);
-  if (typeof value === 'object' && '#text' in (value as Record<string, unknown>)) {
-    return String((value as Record<string, unknown>)['#text']);
-  }
-  return null;
 }
 
 const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
