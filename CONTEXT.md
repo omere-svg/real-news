@@ -122,7 +122,8 @@ The background loop wakes every `X` minutes (the **tick**) and runs these stages
    readings from each healthy Signal source (ADR-0025), reduced to this tick's signal context.
 2. **Persist Raw** — idempotently upsert Raw Items by `(source, externalId)`.
 3. **Classify** — assign a Topic (metadata-first, Reasoner fallback).
-4. **Embed** — vectorize titles for similarity (neural OpenAI embeddings, hashing fallback).
+4. **Embed** — vectorize each item's title + body lead for similarity, so same-event
+   articles across outlets converge (neural OpenAI embeddings, hashing fallback; ADR-0035).
 5. **Cluster** — find candidate same-Story pairs by embedding proximity, then the
    Reasoner confirms the merge.
 6. **Resolve** — match each Cluster against recent stored Stories (same Topic) and,

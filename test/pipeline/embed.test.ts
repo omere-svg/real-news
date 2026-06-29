@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { embed } from '../../src/pipeline/embed.js';
+import { embed, dedupText } from '../../src/pipeline/embed.js';
 import { FakeEmbedder } from '../helpers/fake-embedder.js';
 import type { ClassifiedItem } from '../../src/pipeline/types.js';
 import type { RawItem } from '../../src/domain/types.js';
 
-function classified(title: string): ClassifiedItem {
+function classified(title: string, text: string | null = null): ClassifiedItem {
   const item: RawItem = {
     source: 'hackernews',
     externalId: title,
     title,
     url: null,
-    text: null,
+    text,
     publishedAt: null,
     metadata: {},
   };
@@ -30,7 +30,7 @@ describe('embed stage', () => {
     expect(result[0]?.topic).toBe('AI');
   });
 
-  it('embeds the item titles', async () => {
+  it('embeds the title plus the body lead for same-event recall (ADR-0035)', async () => {
     const seen: string[] = [];
     const embedder = new FakeEmbedder();
     const original = embedder.embed.bind(embedder);
@@ -39,7 +39,34 @@ describe('embed stage', () => {
       return original(texts);
     };
 
-    await embed([classified('Hello world')], embedder);
+    await embed(
+      [
+        classified('Hello world'), // no body → title only
+        classified('Quake', 'A 6.0 earthquake struck the coast, killing dozens.'),
+      ],
+      embedder,
+    );
     expect(seen).toContain('Hello world');
+    expect(seen.some((t) => t.startsWith('Quake. ') && t.includes('earthquake struck'))).toBe(true);
+  });
+});
+
+describe('dedupText (ADR-0035)', () => {
+  const of = (title: string, text: string | null) => dedupText({ title, text });
+
+  it('is the title alone when there is no body', () => {
+    expect(of('Headline', null)).toBe('Headline');
+    expect(of('Headline', '   ')).toBe('Headline');
+  });
+
+  it('joins title + body lead, stripping markup and whitespace', () => {
+    expect(of('Quake', '<p>Death  toll\nrises.</p>')).toBe('Quake. Death toll rises.');
+  });
+
+  it('caps the body lead so a long article cannot drown the title', () => {
+    const long = 'x'.repeat(1000);
+    const out = of('T', long);
+    expect(out.startsWith('T. ')).toBe(true);
+    expect(out.length).toBeLessThan(400); // title + ~320-char lead, not 1000
   });
 });
