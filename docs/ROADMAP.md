@@ -12,8 +12,11 @@ per-answer feedback, a cache-grounded chat-about-the-news with an off-by-default
 fallback, and a natural-language + buttons UX over the bot (ADR-0027/0028/0029/0030).
 **Phase 5 (productionize) is now done too** — deployed live on Render + Turso (ADR-0031) and
 fully observable via persisted tick reports + a `/dashboard` (ADR-0033). Every Story also ships
-an inspectable score breakdown (ADR-0032). **All planned phases are complete**; what remains is
-optional deepening (below).
+an inspectable score breakdown (ADR-0032). A scoring/dedup hardening pass followed: **impact-first
+Significance** (ADR-0034), **richer dedup embeddings + entity-aware clustering** (ADR-0035/0036),
+generic-title cleanups (Knesset / GDACS / SEC), and a single **Score-Explanation** seam + small
+shared utilities from an architecture review (ADR-0037). **All planned phases are complete**; what
+remains is optional deepening (below).
 
 ---
 
@@ -56,6 +59,9 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain l
 | **Inspectable score breakdown** ("why this score") | ✅ persisted `scoreBreakdown` per Story, surfaced in the web viewer (expandable) + a compact rationale in the brief/bot (ADR-0032) |
 | Real deployment (Turso + host) | ✅ **live in production** on Render free tier + hosted Turso; push-to-`main` auto-redeploys (ADR-0031, `docs/DEPLOY-RENDER.md`) |
 | Observability (persist `TickReport`, dashboard) | ✅ `tick_reports` table + `TickReportRepo`; `/dashboard` health page + `/api/ticks` JSON; failed ticks recorded too (ADR-0033) |
+| **Impact-first Significance** (real-world impact beats popularity) | ✅ noisy-OR of impact + corroboration + authority, popularity a bounded booster, floored recency (ADR-0034) |
+| **Dedup quality** (same-event articles merge) | ✅ title+body-lead embeddings (ADR-0035) + toggleable entity-aware blocking (ADR-0036) + generic-title fixes (Knesset/GDACS/SEC); dedicated `GdacsSource` |
+| **Score interpretation** single-sourced | ✅ `scoreExplanation` seam feeds both the brief rationale and the web "Why this score?" (ADR-0037) |
 
 ---
 

@@ -164,7 +164,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - Headline: **Quality you can audit.**
 - Bullets:
   - **310 automated tests, all green.** Every component proven in isolation.
-  - **34 Architecture Decision Records** — every major choice documented with trade-offs.
+  - **37 Architecture Decision Records** — every major choice documented with trade-offs.
   - Clean "seam" architecture: any source, AI model, or database can be swapped without rewrites.
   - Stack: TypeScript/Node, SQLite (or hosted Turso), OpenAI tiers, all behind tested interfaces.
 - Takeaway: this is built like a product, not a prototype.
