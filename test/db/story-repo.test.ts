@@ -38,6 +38,33 @@ describe('StoryRepo', () => {
     expect(found?.updatedAt).toBe(1000);
   });
 
+  it('persists and returns the score breakdown; defaults to null when omitted (ADR-0032)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+    expect((await repo.upsert(storyUpsert())).scoreBreakdown).toBeNull();
+
+    const breakdown = {
+      base: 6,
+      recencyFactor: 0.5,
+      contributions: [{ key: 'corroboration' as const, points: 3 }],
+      editorialAdjustment: 1,
+      signalNudge: 0,
+      signals: {
+        points: 100,
+        mentions: 0,
+        tone: 0,
+        sourceWeight: 0.7,
+        ageHours: 24,
+        corroboration: 4,
+      },
+    };
+    await repo.upsert(storyUpsert({ id: 's2', significance: 7, scoreBreakdown: breakdown }));
+
+    const found = await repo.get('s2');
+    expect(found?.scoreBreakdown).toEqual(breakdown);
+  });
+
   it('updates in place on re-upsert: bumps updatedAt, preserves firstSeenAt', async () => {
     const db = await createTestDb();
     const clock = new FakeClock(1000);

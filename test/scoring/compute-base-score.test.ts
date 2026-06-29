@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { computeBaseScore } from '../../src/scoring/compute-base-score.js';
+import {
+  baseScoreBreakdown,
+  computeBaseScore,
+} from '../../src/scoring/compute-base-score.js';
 import type { Signals } from '../../src/domain/types.js';
 
 /** A neutral baseline of Signals; tests override only the fields they exercise. */
@@ -109,5 +112,37 @@ describe('computeBaseScore', () => {
     const score = computeBaseScore(lonely, params);
     expect(score).toBeGreaterThanOrEqual(0.0);
     expect(score).toBeLessThan(3.0); // clearly low-significance
+  });
+});
+
+describe('baseScoreBreakdown (ADR-0032)', () => {
+  it('contributions sum to the same base computeBaseScore returns', () => {
+    const s = signals({ points: 300, mentions: 80, corroboration: 4, tone: 5, ageHours: 6 });
+    const bd = baseScoreBreakdown(s, params);
+    const summed = bd.contributions.reduce((a, c) => a + c.points, 0);
+    expect(summed).toBeCloseTo(bd.base, 10);
+    expect(bd.base).toBeCloseTo(computeBaseScore(s, params), 10);
+  });
+
+  it('reports one contribution per component, all non-negative', () => {
+    const bd = baseScoreBreakdown(signals({ points: 100 }), params);
+    expect(bd.contributions.map((c) => c.key).sort()).toEqual(
+      ['corroboration', 'engagement', 'popularity', 'sourceWeight', 'toneExtremity'],
+    );
+    for (const c of bd.contributions) expect(c.points).toBeGreaterThanOrEqual(0);
+  });
+
+  it('exposes the recency factor that was applied (halves per half-life)', () => {
+    expect(baseScoreBreakdown(signals({ ageHours: 0 }), params).recencyFactor).toBeCloseTo(1, 10);
+    expect(baseScoreBreakdown(signals({ ageHours: 24 }), params).recencyFactor).toBeCloseTo(0.5, 10);
+  });
+
+  it('attributes a corroborated story’s lift to the corroboration component', () => {
+    const lone = baseScoreBreakdown(signals({ points: 50, corroboration: 1 }), params);
+    const many = baseScoreBreakdown(signals({ points: 50, corroboration: 5 }), params);
+    const lift = (bd: ReturnType<typeof baseScoreBreakdown>) =>
+      bd.contributions.find((c) => c.key === 'corroboration')!.points;
+    expect(lift(lone)).toBeCloseTo(0, 10); // lone source earns no corroboration
+    expect(lift(many)).toBeGreaterThan(0);
   });
 });

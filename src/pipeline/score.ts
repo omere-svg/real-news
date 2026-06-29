@@ -1,4 +1,4 @@
-import { computeBaseScore } from '../scoring/compute-base-score.js';
+import { baseScoreBreakdown } from '../scoring/compute-base-score.js';
 import {
   EMPTY_SIGNAL_CONTEXT,
   signalAdjustment,
@@ -82,7 +82,7 @@ export async function score(
   return Promise.all(
     clusters.map(async (cluster) => {
       const signals = assembleSignals(cluster, now, ctx.sourceWeights);
-      const base = computeBaseScore(signals, {
+      const { base, recencyFactor, contributions } = baseScoreBreakdown(signals, {
         recencyHalfLifeHours: ctx.recencyHalfLifeHours,
       });
 
@@ -107,6 +107,15 @@ export async function score(
       return {
         cluster,
         significance: clamp(base + adjustment + signalNudge, 0, 10),
+        // The inspectable "why this score" snapshot (ADR-0032).
+        breakdown: {
+          base,
+          recencyFactor,
+          contributions,
+          editorialAdjustment: adjustment,
+          signalNudge,
+          signals,
+        },
       };
     }),
   );

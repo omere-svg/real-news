@@ -1,4 +1,4 @@
-import type { Cluster, RawItem, Topic } from '../domain/types.js';
+import type { Cluster, RawItem, ScoreBreakdown, Topic } from '../domain/types.js';
 
 /** A RawItem after the classify stage (ADR-0009). */
 export interface ClassifiedItem {
@@ -15,6 +15,8 @@ export interface EmbeddedItem extends ClassifiedItem {
 export interface ScoredCluster {
   readonly cluster: Cluster;
   readonly significance: number;
+  /** The inspectable decomposition of `significance` (ADR-0032). */
+  readonly breakdown: ScoreBreakdown;
 }
 
 /** A ScoredCluster after the analyze stage (ADR-0006). */

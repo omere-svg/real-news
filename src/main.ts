@@ -11,6 +11,7 @@ import { openDb } from './db/client.js';
 import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
+import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
 import { ArxivSource } from './sources/arxiv.js';
 import { GdeltSource } from './sources/gdelt.js';
@@ -196,6 +197,7 @@ async function main(): Promise<void> {
 
   const rawItemRepo = new DrizzleRawItemRepo(db);
   const storyRepo = new DrizzleStoryRepo(db, systemClock);
+  const tickReportRepo = new DrizzleTickReportRepo(db);
 
   const llm = new ResilientLLMClient(
     new Reasoner(
@@ -227,15 +229,36 @@ async function main(): Promise<void> {
     config: toTickConfig(config),
   });
 
+  // Best-effort persist of a tick outcome (ADR-0033); a failed write never breaks the loop.
+  const recordTick = (rec: Parameters<typeof tickReportRepo.record>[0]): void => {
+    void tickReportRepo.record(rec).catch((err) => console.error('[tick] record failed:', err));
+  };
+
   const runTick = async (): Promise<void> => {
+    const ranAt = systemClock.now();
     try {
       const report = await runner.run();
+      recordTick({ ...report, ranAt, durationMs: systemClock.now() - ranAt, ok: true, error: null });
       console.log(
         `[tick] extracted=${report.extracted} stories=${report.storiesUpserted} ` +
           `signals=${report.signalsObserved} ` +
           `skipped=[${report.skipped}] failed=[${report.failed.map((f) => f.source)}]`,
       );
     } catch (err) {
+      // Record the failed tick too (ADR-0033), then keep the loop alive.
+      recordTick({
+        ranAt,
+        durationMs: systemClock.now() - ranAt,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        extracted: 0,
+        storiesUpserted: 0,
+        signalsObserved: 0,
+        skipped: [],
+        failed: [],
+        signalsSkipped: [],
+        signalsFailed: [],
+      });
       console.error('[tick] failed:', err); // never let a bad tick kill the loop
     }
   };
@@ -261,10 +284,16 @@ async function main(): Promise<void> {
   }
 
   const defaults = toPresentationDefaults(config);
-  const app = createApp(storyRepo, queryEngine, defaults, {
-    maxMinutes: config.presentation.maxMinutes,
-    podcastEnabled: config.presentation.webPodcastEnabled,
-  });
+  const app = createApp(
+    storyRepo,
+    queryEngine,
+    defaults,
+    {
+      maxMinutes: config.presentation.maxMinutes,
+      podcastEnabled: config.presentation.webPodcastEnabled,
+    },
+    tickReportRepo,
+  );
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 

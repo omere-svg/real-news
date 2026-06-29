@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/server/app.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
+import { DrizzleTickReportRepo } from '../../src/db/tick-report-repo.js';
 import { HorizonQuery, type QueryParams } from '../../src/presentation/horizon-query.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
@@ -133,5 +134,41 @@ describe('HTTP API', () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('value="10"'); // defaults.minutes
+  });
+
+  it('GET /api/ticks returns recent tick records, newest first (ADR-0033)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const ticks = new DrizzleTickReportRepo(db);
+    const rec = (ranAt: number, extracted: number) => ({
+      ranAt, durationMs: 100, ok: true, error: null, extracted,
+      storiesUpserted: 1, signalsObserved: 0,
+      skipped: [], failed: [], signalsSkipped: [], signalsFailed: [],
+    });
+    await ticks.record(rec(100, 5));
+    await ticks.record(rec(200, 9));
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, podcastEnabled: false }, ticks);
+
+    const res = await app.request('/api/ticks');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ticks: { ranAt: number }[] };
+    expect(body.ticks.map((t) => t.ranAt)).toEqual([200, 100]);
+  });
+
+  it('GET /dashboard renders an HTML health page (ADR-0033)', async () => {
+    const app = await appWithStories(); // no tick repo wired → empty dashboard
+    const res = await app.request('/dashboard');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Horizon — Operations');
+    expect(html).toContain('No ticks recorded yet');
+  });
+
+  it('GET /api/ticks is empty when no tick repo is wired', async () => {
+    const app = await appWithStories();
+    const res = await app.request('/api/ticks');
+    const body = (await res.json()) as { ticks: unknown[] };
+    expect(body.ticks).toEqual([]);
   });
 });

@@ -28,7 +28,17 @@
       "Bash(curl -s --max-time 15 \"https://www.who.int/api/news/diseaseoutbreaknews\" -w \"\\\\nHTTP %{http_code} %{size_download}b\\\\n\" -o /tmp/who.json)",
       "Bash(curl -s --max-time 15 'https://www.who.int/api/news/diseaseoutbreaknews?$top=2' -w '\\\\nHTTP %{http_code}\\\\n')",
       "Read(//Users/omererez/.claude/skills/improve-codebase-architecture/**)",
-      "Read(//Users/omererez/.agents/skills/improve-codebase-architecture/**)"
+      "Read(//Users/omererez/.agents/skills/improve-codebase-architecture/**)",
+      "Bash(git push *)",
+      "Bash(grep -iE '\\(^|/\\)\\\\.env\\($|\\\\.\\)')",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\); console.log\\('type:', p.type, '| engines:', JSON.stringify\\(p.engines\\)\\)\")",
+      "Bash(node -e \"const yaml=require\\('yaml'\\); const fs=require\\('fs'\\); const d=yaml.parse\\(fs.readFileSync\\('render.yaml','utf8'\\)\\); console.log\\('render.yaml OK →', d.services[0].name, '| plan:', d.services[0].plan, '| health:', d.services[0].healthCheckPath, '| envVars:', d.services[0].envVars.map\\(e=>e.key\\).join\\(','\\)\\)\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const t=fs.readFileSync\\('render.yaml','utf8'\\);if\\(!/services:/.test\\(t\\)\\)process.exit\\(1\\);console.log\\('render.yaml present \\(yaml lib not installed — basic check passed\\)'\\)\")",
+      "Bash(turso auth *)",
+      "Bash(render --version)",
+      "Bash(docker info *)",
+      "Bash(npm ci *)",
+      "WebFetch(domain:project-horizon-5yty.onrender.com)"
     ]
   }
 }

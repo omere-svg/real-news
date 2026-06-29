@@ -121,11 +121,12 @@ export class TickRunner {
 
 /** Build a StoryUpsert from an analyzed Cluster under its resolved Story id (ADR-0017). */
 function toStoryUpsert(analyzed: AnalyzedCluster, id: string): StoryUpsert {
-  const { cluster, significance, summary, whyItMatters } = analyzed;
+  const { cluster, significance, summary, whyItMatters, breakdown } = analyzed;
   const rep = representativeOf(cluster);
   return {
     id,
     title: rep.title,
+    scoreBreakdown: breakdown,
     // Always keep a link to a corroborating article: prefer the representative's
     // url, else the first member that carries one (some sources lack urls).
     url: rep.url ?? cluster.items.find((i) => i.url)?.url ?? null,

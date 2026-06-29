@@ -6,7 +6,14 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
-import type { SourceMetadata, StorySourceId, Topic } from '../domain/types.js';
+import type {
+  ScoreBreakdown,
+  SourceId,
+  SourceMetadata,
+  StorySourceId,
+  Topic,
+} from '../domain/types.js';
+import type { SourceFailure } from '../pipeline/extract.js';
 import type { PreviousPreferences } from './chat-preferences-repo.js';
 
 /**
@@ -41,6 +48,8 @@ export const stories = sqliteTable('stories', {
   significance: real('significance').notNull(),
   summary: text('summary'),
   whyItMatters: text('why_it_matters'),
+  // Inspectable "why this score" snapshot (ADR-0032); null for pre-0032 stories.
+  scoreBreakdown: text('score_breakdown', { mode: 'json' }).$type<ScoreBreakdown>(),
   firstSeenAt: integer('first_seen_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
@@ -94,6 +103,31 @@ export const chatPreferences = sqliteTable('chat_preferences', {
   // (podcast narration, chat) on every request (ADR-0028); absent ≡ none.
   memory: text('memory'),
 });
+
+/**
+ * `tick_reports` is the observability log (ADR-0033): one row per tick, recording
+ * its outcome — counts, duration, ok/error, and the skipped/failed source lists.
+ * Failed ticks are recorded too (`ok = false`). Indexed by `ranAt` for the
+ * "most recent N" read the dashboard uses.
+ */
+export const tickReports = sqliteTable(
+  'tick_reports',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    ranAt: integer('ran_at').notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    ok: integer('ok', { mode: 'boolean' }).notNull(),
+    error: text('error'),
+    extracted: integer('extracted').notNull(),
+    storiesUpserted: integer('stories_upserted').notNull(),
+    signalsObserved: integer('signals_observed').notNull(),
+    skipped: text('skipped', { mode: 'json' }).$type<SourceId[]>().notNull(),
+    failed: text('failed', { mode: 'json' }).$type<SourceFailure[]>().notNull(),
+    signalsSkipped: text('signals_skipped', { mode: 'json' }).$type<SourceId[]>().notNull(),
+    signalsFailed: text('signals_failed', { mode: 'json' }).$type<SourceFailure[]>().notNull(),
+  },
+  (t) => [index('tick_reports_ran_at_idx').on(t.ranAt)],
+);
 
 /**
  * `usage` is the durable cost-quota counter (ADR-0022): one row per

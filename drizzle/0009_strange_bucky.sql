@@ -1,0 +1,1 @@
+ALTER TABLE `stories` ADD `score_breakdown` text;

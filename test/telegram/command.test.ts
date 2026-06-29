@@ -47,6 +47,20 @@ describe('parseCommand', () => {
     });
   });
 
+  it('routes unrecognized /prefs args to the plain-language interpreter (ADR-0030)', () => {
+    // "/prefs ai" isn't field-syntax; instead of silently showing status, treat
+    // the rest as a natural-language preference edit so it actually does something.
+    expect(parseCommand('/prefs ai')).toEqual({ kind: 'prefsNL', text: 'ai' });
+    expect(parseCommand('/prefs ai 5 minutes')).toEqual({
+      kind: 'prefsNL',
+      text: 'ai 5 minutes',
+    });
+    expect(parseCommand('/prefs more ai, less sports')).toEqual({
+      kind: 'prefsNL',
+      text: 'more ai, less sports',
+    });
+  });
+
   it('parses /remember, /forget, and /chat (ADR-0028/0029)', () => {
     expect(parseCommand('/remember I run a logistics startup in Haifa')).toEqual({
       kind: 'remember',

@@ -71,6 +71,23 @@ describe('score stage', () => {
     expect(scored?.significance).toBeCloseTo(base, 5);
   });
 
+  it('emits a breakdown that reconciles to the significance (ADR-0032)', async () => {
+    const c = cluster([
+      member('hackernews', '1', { points: 200 }, NOW),
+      member('gdelt', '2', {}, NOW),
+    ]);
+    const [scored] = await score([c], new FakeLLM({ adjust: 1.2 }), ctx);
+
+    const bd = scored!.breakdown;
+    expect(bd.editorialAdjustment).toBeCloseTo(1.2, 5);
+    expect(bd.contributions.reduce((a, x) => a + x.points, 0)).toBeCloseTo(bd.base, 5);
+    expect(bd.base + bd.editorialAdjustment + bd.signalNudge).toBeCloseTo(
+      scored!.significance,
+      5,
+    );
+    expect(bd.signals.corroboration).toBe(2); // two distinct sources recorded
+  });
+
   it('clamps the editorial adjustment to ±maxEditorialAdjustment', async () => {
     const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
     const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {

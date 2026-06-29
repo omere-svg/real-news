@@ -130,6 +130,8 @@ boot). Secrets and deploy knobs come from the environment:
 - `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
 - `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
 - `GET /api/podcast?minutes=3` → `{ script }` — **off by default** (`presentation.webPodcastEnabled`, ADR-0023)
+- `GET /api/ticks?limit=50` → `{ ticks: [...] }` — recent tick outcomes (ADR-0033)
+- `GET /dashboard` → HTML ops dashboard: tick health, throughput, failing sources (ADR-0033)
 - `GET /health` → `{ ok: true }`
 
 ## Deploy (public URL)
@@ -161,11 +163,14 @@ docker run -p 3000:3000 -e OPENAI_API_KEY=sk-... horizon
 
 ## What's left
 
-The MVP vision is complete — all source types and the full reasoning/presentation stack are
-built and tested. Remaining scope (see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+**Everything planned is built, tested, and live in production.** All source types and the full
+reasoning/presentation stack ship, deployed on Render + Turso (ADR-0031); every Story carries an
+inspectable score breakdown ("why this score", ADR-0032); and every tick is persisted and
+surfaced on a `/dashboard` health page (ADR-0033).
 
-- **Productionize** (Phase 5) — deploy (Turso + host), observability (persist `TickReport`,
-  metrics), GDELT rate-limit pacing.
+Optional further deepening (not on the critical path — see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
+GDELT rate-limit pacing + signal enrichment (ADR-0032 note), a retention prune / LLM-reflection
+advisor over `tick_reports` (ADR-0033), and semantic retrieval over `story_vectors` for chat.
 
 Possible deepening (not MVP): entity-link Wikipedia Pageviews to individual clusters (today
 the attention nudge is partition-level, ADR-0025); persist Signal history for trend signals.

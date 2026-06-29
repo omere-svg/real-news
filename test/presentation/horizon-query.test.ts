@@ -68,6 +68,42 @@ describe('HorizonQuery', () => {
     expect(brief.match(/🔗/g)?.length).toBe(1); // the url-less story has no link line
   });
 
+  it('textBrief appends a compact score rationale from the breakdown (ADR-0032)', async () => {
+    const repo = await seed(
+      upsert({
+        id: 'a',
+        title: 'Alpha',
+        significance: 9,
+        scoreBreakdown: {
+          base: 8,
+          recencyFactor: 1, // fresh
+          contributions: [],
+          editorialAdjustment: 0,
+          signalNudge: 0,
+          signals: {
+            points: 500, // trending
+            mentions: 0,
+            tone: 0,
+            sourceWeight: 0.7,
+            ageHours: 0,
+            corroboration: 4, // 4 sources
+          },
+        },
+      }),
+      upsert({ id: 'b', title: 'Bravo', significance: 4 }), // no breakdown → no tail
+    );
+    const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+    const brief = await q.textBrief({ minutes: 3 });
+
+    expect(brief).toContain('4 sources');
+    expect(brief).toContain('trending');
+    expect(brief).toContain('fresh');
+    // Bravo has no breakdown, so its descriptor carries no rationale tail.
+    expect(brief).toContain('significance 4.0');
+    expect(brief).not.toMatch(/significance 4\.0 ·/);
+  });
+
   it('renders each story as a structured block: headline, summary, why-it-matters, descriptor, link', async () => {
     const repo = await seed(
       upsert({

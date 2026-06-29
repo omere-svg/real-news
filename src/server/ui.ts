@@ -1,4 +1,5 @@
 import { TOPICS } from '../domain/types.js';
+import type { TickRecord } from '../db/tick-report-repo.js';
 
 /** Defaults the viewer seeds its controls from (ADR-0015). */
 export interface UiDefaults {
@@ -54,6 +55,14 @@ export function renderUI(defaults: UiDefaults): string {
   .badges { margin:8px 0; display:flex; gap:6px; flex-wrap:wrap; }
   .badge { font-size:12px; color:var(--muted); border:1px solid #2a2f3a; border-radius:999px; padding:2px 9px; }
   .why { color:#c7cede; margin:8px 0 0; }
+  .why-score { margin-top:8px; font-size:13px; color:var(--muted); }
+  .why-score summary { cursor:pointer; color:var(--accent); list-style:none; }
+  .why-score summary::-webkit-details-marker { display:none; }
+  .why-score summary::before { content:'▸ '; }
+  .why-score[open] summary::before { content:'▾ '; }
+  .why-score table { margin:8px 0 4px; border-collapse:collapse; width:100%; max-width:360px; }
+  .why-score td { padding:1px 10px 1px 0; }
+  .why-score td.num { text-align:right; color:var(--fg); font-variant-numeric:tabular-nums; }
   .meta { color:var(--muted); font-size:12px; margin-top:8px; }
   .empty { color:var(--muted); text-align:center; padding:48px 0; }
   pre.doc { white-space:pre-wrap; word-wrap:break-word; font:15px/1.6 ui-sans-serif,system-ui,sans-serif; margin:0; }
@@ -90,6 +99,24 @@ const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// "Why this score?" — render the persisted, inspectable breakdown (ADR-0032).
+const SCORE_LABELS = { popularity:'Popularity', engagement:'Discussion', corroboration:'Corroboration', toneExtremity:'Tone extremity', sourceWeight:'Source trust' };
+function signed(n){ return (n>=0?'+':'') + Number(n).toFixed(1); }
+function breakdownHtml(b){
+  if(!b) return '';
+  const rows = (b.contributions||[]).slice().sort((x,y)=>y.points-x.points)
+    .filter(c => c.points > 0.05)
+    .map(c => '<tr><td>'+esc(SCORE_LABELS[c.key]||c.key)+'</td><td class="num">'+signed(c.points)+'</td></tr>');
+  if(Math.abs(b.editorialAdjustment)>0.05) rows.push('<tr><td>Editor’s nudge</td><td class="num">'+signed(b.editorialAdjustment)+'</td></tr>');
+  if(Math.abs(b.signalNudge)>0.05) rows.push('<tr><td>Attention / macro nudge</td><td class="num">'+signed(b.signalNudge)+'</td></tr>');
+  const s = b.signals||{};
+  const recency = b.recencyFactor!=null ? Number(b.recencyFactor).toFixed(2) : '1.00';
+  const facts = (s.corroboration||1)+' source(s) · '+(s.points||0)+' popularity · recency ×'+recency;
+  return '<details class="why-score"><summary>Why this score?</summary>'+
+    '<table>'+rows.join('')+'</table>'+
+    '<div class="meta">'+esc(facts)+'</div></details>';
+}
+
 async function load() {
   const format = formatSel.value;
   const topics = selectedTopics();
@@ -123,6 +150,7 @@ async function loadStories(topics) {
       '<span class="score">'+s.significance.toFixed(1)+'</span></div>'+
       '<div class="badges"><span class="badge">'+esc(s.topic)+'</span></div>'+
       (s.whyItMatters ? '<p class="why">'+esc(s.whyItMatters)+'</p>' : '')+
+      breakdownHtml(s.scoreBreakdown)+
       '<div class="meta">'+s.memberRefs.length+' source(s): '+esc(sources)+'</div></div>';
   }).join('');
 }
@@ -133,6 +161,111 @@ minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + '
 minutesInput.onchange = load;
 load();
 </script>
+</body>
+</html>`;
+}
+
+// --- Observability dashboard (ADR-0033) ---
+
+function escHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      default: return '&quot;';
+    }
+  });
+}
+
+/** Short "Nm ago" / "Nh ago" age from a past epoch-ms to a reference now. */
+function ago(thenMs: number, nowMs: number): string {
+  const s = Math.max(0, Math.round((nowMs - thenMs) / 1000));
+  if (s < 90) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 90) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
+}
+
+/**
+ * The server-rendered observability dashboard (ADR-0033): a health banner plus a
+ * table of recent tick outcomes. Data is passed in (no client fetch); the page
+ * self-refreshes. `nowMs` is injected for testable "age" rendering.
+ */
+export function renderDashboard(ticks: readonly TickRecord[], nowMs = Date.now()): string {
+  const last = ticks[0];
+  const issues = (t: TickRecord): number =>
+    t.failed.length + t.signalsFailed.length + t.skipped.length + t.signalsSkipped.length;
+  const degraded = !last || !last.ok || issues(last) > 0;
+  const banner = !last
+    ? 'No ticks recorded yet — the worker writes one on each cycle.'
+    : `${last.ok ? (degraded ? 'Degraded' : 'Healthy') : 'Last tick FAILED'} · ` +
+      `last tick ${ago(last.ranAt, nowMs)} · ${last.storiesUpserted} stories · ${last.extracted} items`;
+
+  const rows = ticks
+    .map((t) => {
+      const fails = [...t.failed, ...t.signalsFailed]
+        .map((f) => `${f.source}: ${f.error}`)
+        .join('; ');
+      const skips = [...t.skipped, ...t.signalsSkipped].join(', ');
+      const status = t.ok ? (issues(t) > 0 ? '⚠️' : '✅') : '❌';
+      return (
+        '<tr>' +
+        `<td>${ago(t.ranAt, nowMs)}</td>` +
+        `<td class="c">${status}</td>` +
+        `<td class="num">${t.durationMs}ms</td>` +
+        `<td class="num">${t.extracted}</td>` +
+        `<td class="num">${t.storiesUpserted}</td>` +
+        `<td class="num">${t.signalsObserved}</td>` +
+        `<td class="muted">${escHtml(skips)}</td>` +
+        `<td class="muted">${escHtml(t.error ? t.error : fails)}</td>` +
+        '</tr>'
+      );
+    })
+    .join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="refresh" content="60" />
+<title>Horizon — Dashboard</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --muted:#8b93a7; --fg:#e7ebf3; --accent:#e0a458; --ok:#5fd38d; --bad:#e06c75; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,system-ui,sans-serif; }
+  header { max-width:1000px; margin:0 auto; padding:24px 20px 8px; }
+  h1 { margin:0; font-size:20px; }
+  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+  .banner { max-width:1000px; margin:12px auto; padding:12px 16px; border-radius:10px; font-weight:600;
+            background:var(--card); border:1px solid #2a2f3a; }
+  .banner.ok { color:var(--ok); } .banner.bad { color:var(--bad); }
+  main { max-width:1000px; margin:0 auto; padding:8px 20px 60px; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid #232833; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
+  td.num { text-align:right; } td.c { text-align:center; } td.muted { color:var(--muted); font-size:13px; }
+  .empty { color:var(--muted); text-align:center; padding:40px 0; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌅 Horizon — Operations</h1>
+  <div class="sub">Tick observability (ADR-0033) · auto-refreshes every 60s · <a href="/">viewer</a> · <a href="/api/ticks">JSON</a></div>
+</header>
+<div class="banner ${degraded ? 'bad' : 'ok'}">${escHtml(banner)}</div>
+<main>
+  ${
+    ticks.length === 0
+      ? '<div class="empty">No ticks recorded yet.</div>'
+      : `<table>
+    <thead><tr><th>When</th><th>OK</th><th>Duration</th><th>Items</th><th>Stories</th><th>Signals</th><th>Skipped</th><th>Errors</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`
+  }
+</main>
 </body>
 </html>`;
 }

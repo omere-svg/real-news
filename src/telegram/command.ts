@@ -69,7 +69,10 @@ export function parseCommand(text: string): Command {
       if (PREFS_FIELDS.includes(sub as PrefsField) && args.length > 1) {
         return { kind: 'prefsSet', field: sub as PrefsField, value: args.slice(1).join(' ') };
       }
-      return { kind: 'prefsShow' };
+      // Anything else after /prefs (e.g. "/prefs ai", "/prefs more ai less sports")
+      // is a plain-language edit — hand it to the interpreter instead of silently
+      // showing status, which read as "nothing happened" (ADR-0030).
+      return { kind: 'prefsNL', text: args.join(' ') };
     }
     case 'feedback': {
       // "/feedback undo" reverts the last change; otherwise the rest is free text.

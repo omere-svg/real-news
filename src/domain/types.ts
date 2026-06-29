@@ -140,6 +140,43 @@ export interface Signals {
   readonly corroboration: number;
 }
 
+// --- Score breakdown: the inspectable "why this score" (ADR-0032) ---
+
+/** The component keys of the deterministic base score (ADR-0008). */
+export type ScoreComponentKey =
+  | 'popularity'
+  | 'engagement'
+  | 'corroboration'
+  | 'toneExtremity'
+  | 'sourceWeight';
+
+/** One component's contribution to the base score, in significance points. */
+export interface ScoreComponent {
+  readonly key: ScoreComponentKey;
+  /** Contribution to the base score in [0, 10] points (already weighted + decayed). */
+  readonly points: number;
+}
+
+/**
+ * The persisted, inspectable explanation of a Story's Significance (ADR-0032).
+ * `base + editorialAdjustment + signalNudge`, clamped, reconciles to the stored
+ * `significance`. `contributions` sum to `base`. Snapshotted at scoring time.
+ */
+export interface ScoreBreakdown {
+  /** Deterministic base from verifiable Signals, in [0, 10]. */
+  readonly base: number;
+  /** Recency multiplier in [0, 1] that was applied to the components. */
+  readonly recencyFactor: number;
+  /** Per-component contributions to `base` (sum ≈ base). */
+  readonly contributions: readonly ScoreComponent[];
+  /** Bounded editorial nudge from the Reasoner (signed, ADR-0008). */
+  readonly editorialAdjustment: number;
+  /** Bounded numeric-Signal nudge from the partition context (signed, ADR-0025). */
+  readonly signalNudge: number;
+  /** The raw verifiable Signals the base was computed from. */
+  readonly signals: Signals;
+}
+
 // --- Signal observation: a numeric point from a Signal source (ADR-0025) ---
 
 /**
@@ -178,6 +215,8 @@ export interface Story {
   readonly summary: string | null;
   /** The editorial justification. Null until the deep tier analyzes it. */
   readonly whyItMatters: string | null;
+  /** The inspectable "why this score" (ADR-0032). Null for Stories scored before it. */
+  readonly scoreBreakdown: ScoreBreakdown | null;
   /** externalIds of the Raw Items merged into this Story (provenance). */
   readonly memberRefs: readonly RawItemRef[];
   readonly firstSeenAt: number;

@@ -13,6 +13,7 @@ import { membership, stories, storyVectors } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
 import type {
   RawItemRef,
+  ScoreBreakdown,
   Story,
   Topic,
 } from '../domain/types.js';
@@ -50,6 +51,8 @@ export interface StoryUpsert {
   /** Factual "what happened" summary; omit/null when not analyzed this tick. */
   readonly summary?: string | null;
   readonly whyItMatters: string | null;
+  /** Inspectable "why this score" snapshot (ADR-0032); omit/null when unavailable. */
+  readonly scoreBreakdown?: ScoreBreakdown | null;
   readonly memberRefs: readonly RawItemRef[];
 }
 
@@ -89,6 +92,7 @@ export class DrizzleStoryRepo implements StoryRepo {
         significance: input.significance,
         summary: input.summary ?? null,
         whyItMatters: input.whyItMatters,
+        scoreBreakdown: input.scoreBreakdown ?? null,
         firstSeenAt: now,
         updatedAt: now,
       })
@@ -101,6 +105,7 @@ export class DrizzleStoryRepo implements StoryRepo {
           significance: input.significance,
           summary: input.summary ?? null,
           whyItMatters: input.whyItMatters,
+          scoreBreakdown: input.scoreBreakdown ?? null,
           updatedAt: now,
         },
       });
@@ -252,6 +257,7 @@ function rowToStory(
     significance: row.significance,
     summary: row.summary,
     whyItMatters: row.whyItMatters,
+    scoreBreakdown: row.scoreBreakdown ?? null,
     memberRefs,
     firstSeenAt: row.firstSeenAt,
     updatedAt: row.updatedAt,

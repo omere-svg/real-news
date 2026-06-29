@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
+import type { TickReportRepo } from '../db/tick-report-repo.js';
 import type { Topic } from '../domain/types.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
-import { renderUI } from './ui.js';
+import { renderUI, renderDashboard } from './ui.js';
 
 /**
  * The read-only presentation server (ADR-0011, Principle 4). Serves the
@@ -32,10 +33,22 @@ export function createApp(
   queryEngine: QueryEngine,
   defaults: PresentationDefaults,
   web: WebOptions,
+  /** Observability log (ADR-0033); when omitted the dashboard/feed return empty. */
+  tickReports?: TickReportRepo,
 ): Hono {
   const app = new Hono();
 
   app.get('/health', (c) => c.json({ ok: true }));
+
+  // Observability (ADR-0033): recent tick outcomes as JSON + an HTML dashboard.
+  app.get('/api/ticks', async (c) => {
+    const limit = normalizeLimit(c.req.query('limit'), 50);
+    return c.json({ ticks: tickReports ? await tickReports.recent(limit) : [] });
+  });
+
+  app.get('/dashboard', async (c) =>
+    c.html(renderDashboard(tickReports ? await tickReports.recent(50) : [])),
+  );
 
   app.get('/api/stories', async (c) => {
     const q = c.req.query();
@@ -76,6 +89,13 @@ export function createApp(
   );
 
   return app;
+}
+
+/** A positive limit clamped to [1, 200]; falls back to `fallback` for bad input. */
+function normalizeLimit(raw: string | undefined, fallback: number): number {
+  const n = raw ? Number(raw) : fallback;
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(200, Math.floor(n));
 }
 
 /** Build a BriefRequest from query params, falling back to defaults, clamping minutes. */

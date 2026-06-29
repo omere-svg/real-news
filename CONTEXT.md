@@ -74,6 +74,14 @@ The verifiable inputs to Significance: source popularity/velocity (e.g. HN point
 mention count / tone (GDELT), source weight, recency decay, and corroboration (Cluster
 size). Deterministic and inspectable — never invented by the model.
 
+**Score Breakdown**
+The persisted, inspectable "why this score" attached to a Story (ADR-0032): the deterministic
+`base` decomposed into per-component contributions (popularity, engagement, corroboration,
+tone-extremity, source-weight), the `recencyFactor` applied, and the two bounded nudges
+(`editorialAdjustment`, `signalNudge`). `base + editorialAdjustment + signalNudge`, clamped,
+reconciles to the Story's `significance`. Snapshotted at scoring time and surfaced verbatim —
+the proof that Significance is math, not a black-box rating.
+
 **Summary**
 The concise factual "what happened" string attached to a Story — the reporter output, distinct
 from the editorial Why-It-Matters. Written by the Reasoner's **deep tier** on the top-N
@@ -125,7 +133,9 @@ The background loop wakes every `X` minutes (the **tick**) and runs these stages
 9. **Upsert Stories** — write finalized Stories to the read-model (and persist their embedding).
 
 **Tick** — one full pass of the pipeline. **Tick Report** — its structured outcome
-(counts, skipped Sources, errors), returned by the runner for observability.
+(counts, skipped Sources, errors), returned by the runner and **persisted** to `tick_reports`
+each tick — successes and failures alike — for observability (ADR-0033). Surfaced on the
+read-only `/dashboard` health page and the `/api/ticks` JSON feed.
 
 ---
 

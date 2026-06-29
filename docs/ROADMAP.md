@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-28 (**295 tests green, 32 ADRs**). Phases 1–4 complete
+the plan to finish it. Updated 2026-06-29 (**310 tests green, 33 ADRs**). Phases 1–4 complete
 (all 9 Phase-4 sources built, incl. the 2 numeric Signal sources + the Story/Signal split,
 ADR-0025); security & resource hardening and brief-readability complete. **ADR-0031** adds the
 `Health` + `Climate` Topics and a keyless source wave (TheSportsDB→Sports, WHO→Health, NASA
@@ -10,7 +10,10 @@ each Signal source's saturation scale onto the `SignalSource` seam. **Phase 6
 (presentation deepening) is now done** — brief provenance links, per-chat memory + inline
 per-answer feedback, a cache-grounded chat-about-the-news with an off-by-default web
 fallback, and a natural-language + buttons UX over the bot (ADR-0027/0028/0029/0030).
-Only Phase 5 (productionize) remains.
+**Phase 5 (productionize) is now done too** — deployed live on Render + Turso (ADR-0031) and
+fully observable via persisted tick reports + a `/dashboard` (ADR-0033). Every Story also ships
+an inspectable score breakdown (ADR-0032). **All planned phases are complete**; what remains is
+optional deepening (below).
 
 ---
 
@@ -50,7 +53,9 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain l
 | **Natural-language + buttons UX** | ✅ cheap-tier intent router + tap-to-run menus; slash commands kept as aliases (ADR-0030) |
 | **Structured story cards (what-happened + why-it-matters)** | ✅ deep tier writes a factual `summary` alongside `whyItMatters`; for non-top-N stories a deterministic `summary` falls back to the source text (markup-stripped, ≤2 sentences) so every text-bearing story has a "what happened"; renderer = 📰 headline → what happened → 💡 why it matters → 🏷 tag → 🔗 link; upsert always keeps a member's article URL; cache **self-heals on boot** for stories missing a summary (`reasoner.backfillOnBoot`) + `npm run backfill:summaries` |
 | **Knesset bill provenance** | ✅ bills now carry a real link (`BillID`=site `lawitemid`) + `SummaryLaw` text when present; Hebrew titles get a plain-English "what happened" via the backfill |
-| Real deployment (Turso + host), observability | ⚠️ Docker/README ready, not deployed |
+| **Inspectable score breakdown** ("why this score") | ✅ persisted `scoreBreakdown` per Story, surfaced in the web viewer (expandable) + a compact rationale in the brief/bot (ADR-0032) |
+| Real deployment (Turso + host) | ✅ **live in production** on Render free tier + hosted Turso; push-to-`main` auto-redeploys (ADR-0031, `docs/DEPLOY-RENDER.md`) |
+| Observability (persist `TickReport`, dashboard) | ✅ `tick_reports` table + `TickReportRepo`; `/dashboard` health page + `/api/ticks` JSON; failed ticks recorded too (ADR-0033) |
 
 ---
 
@@ -109,14 +114,29 @@ the rest PARKed in `docs/research/` as reference.*
     quota as typed commands; slash commands stay as power-user aliases. Gated by
     `telegram.naturalLanguage` (default on).
 
-### ▶ Phase 5 — Productionize *(the only remaining phase)*
-11. **Deploy** (Turso + Railway/Render), **observability** (persist `TickReport`, metrics),
-    GDELT rate-limit pacing.
+### ✅ Phase 5 — Productionize *(DONE)*
+11. ✅ **Deploy** (Turso + Render) — live, push-to-`main` auto-redeploys (ADR-0031).
+12. ✅ **Observability** (ADR-0033) — every tick's outcome persisted to `tick_reports`
+    (success *and* failure), surfaced on a self-refreshing `/dashboard` health page +
+    `/api/ticks` JSON feed.
+    **Optional follow-ups:** GDELT rate-limit pacing; GDELT signal enrichment (its artlist
+    endpoint exposes no per-article tone/mentions — ADR-0032 note); a retention prune for
+    `tick_reports`; an LLM "reflection" advisor over the persisted history (ADR-0033).
+
+### ✅ Score transparency *(DONE)*
+16. ✅ **Inspectable score breakdown** (ADR-0032) — `computeBaseScore` now also yields a
+    per-component decomposition; the Score stage snapshots it with the bounded editorial +
+    numeric-Signal nudges as a persisted `scoreBreakdown`. The web viewer shows an expandable
+    "Why this score?"; the brief/bot append a compact rationale (`· 4 sources · trending · fresh`).
 
 ---
 
-**Recommended next:** Phase 5 — deploy (Turso + host) + observability (persist `TickReport`).
-The entire MVP vision plus Phase-6 deepening is built and tested; only productionization
-remains. Optional further deepening: semantic retrieval over `story_vectors` for chat
-grounding, per-member source URLs in the brief, and entity-linking Pageviews to clusters /
-persisting Signal history (noted in ADR-0025).
+**Status:** all planned phases (1–6 + productionize) are built, tested, and **live in
+production**. The full MVP vision plus the Phase-6 deepening, score transparency (ADR-0032),
+and observability (ADR-0033) are done.
+
+**Optional further deepening (no longer on the critical path):** GDELT rate-limit pacing +
+signal enrichment (ADR-0032 note); a retention prune + LLM "reflection" advisor over
+`tick_reports` (ADR-0033); semantic retrieval over `story_vectors` for chat grounding;
+per-member source URLs in the brief; entity-linking Pageviews to clusters / persisting Signal
+history (noted in ADR-0025).

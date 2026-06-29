@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze } from '../../src/pipeline/analyze.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
+import { fakeBreakdown } from '../helpers/score-breakdown.js';
 import type { ScoredCluster } from '../../src/pipeline/types.js';
 import type { RawItem } from '../../src/domain/types.js';
 
@@ -17,6 +18,7 @@ function scored(externalId: string, significance: number): ScoredCluster {
   return {
     cluster: { items: [item], topic: 'AI' },
     significance,
+    breakdown: fakeBreakdown(significance),
   };
 }
 

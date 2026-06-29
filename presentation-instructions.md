@@ -12,7 +12,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - `README.md` — what it is, how to run it, the API
 - `CONTEXT.md` — the domain language (the exact vocabulary to use on slides)
 - `project-idea.txt` — the vision and the 5 engineering principles
-- `docs/ROADMAP.md` — what's built vs. what's left (the "230 tests / 27 ADRs" status)
+- `docs/ROADMAP.md` — what's built vs. what's left (the "310 tests / 33 ADRs" status)
 - `config/horizon.yaml` — the real, configured sources and limits
 - (Optional, for depth) `docs/adr/0008`, `0014`, `0017`, `0022`, `0023`
 
@@ -28,11 +28,11 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 >
 > **Goal:** make this the most impressive, credible, and professional deck possible. It must look like a polished product/investor briefing, not a student project.
 >
-> **Tone:** confident, precise, executive. Short, punchy lines. No filler. Use the project's real vocabulary (Story, Significance, Tick, Region, Topic, Why-It-Matters, corroboration). Lead with outcomes, support with proof.
+> **Tone:** confident, precise, executive. Short, punchy lines. No filler. Use the project's real vocabulary (Story, Significance, Tick, Topic, Why-It-Matters, corroboration). Lead with outcomes, support with proof.
 >
 > **Design:** clean and modern. Dark, premium theme with a single accent color (deep blue or teal). One idea per slide. Big headline + 3–5 tight bullets max. Use simple diagrams/icons over walls of text. Every slide must have a 1-line "takeaway" the audience remembers.
 >
-> **Hard rules:** Use only facts from the loaded sources — never invent numbers, customers, or results. Keep claims honest: it is a complete, fully-tested **MVP**, with deployment as the remaining phase. Use the exact figures: **13 official data sources**, **4 source-trust tiers**, **Significance 0.0–10.0**, **230 passing tests**, **27 architecture decision records (ADRs)**, ticks **every 15 minutes**.
+> **Hard rules:** Use only facts from the loaded sources — never invent numbers, customers, or results. Keep claims honest: it is a complete, fully-tested product, **deployed live** (Render + Turso) and **fully observable** (a `/dashboard` over persisted tick reports). Use the exact figures: **23 sources (18 Story + 5 numeric Signal sources)**, **4 source-trust tiers**, **Significance 0.0–10.0**, **310 passing tests**, **33 architecture decision records (ADRs)**, ticks **every 15 minutes**.
 >
 > Build the slides exactly per the slide-by-slide outline I provide below.
 
@@ -44,7 +44,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 
 - Title: **Project Horizon**
 - Subtitle: _Turns the world's public data into personalized news — sized to the time you have and the topics you care about._
-- Footer line: "Built grill → architecture → TDD · 230 tests · 27 ADRs"
+- Footer line: "Built grill → architecture → TDD · 310 tests · 33 ADRs"
 - Takeaway: one personalized, time-aware news brief from the whole world's public data.
 
 **Slide 2 — The Problem**
@@ -62,7 +62,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - Headline: **One unbiased brief, sized to your time — from the whole world's public data.**
 - Body: Horizon is an autonomous background "editor." Every 15 minutes it pulls from official public APIs, scores how important each story objectively is, merges duplicates across sources and time, and writes a short "why it matters." You get **one place** instead of many; an **objective 0–10 significance score + multi-source corroboration** instead of one outlet's slant; a brief **budgeted to your available minutes**; and a true **sense of scale** that surfaces big-but-under-covered stories — delivered instantly from a pre-digested cache.
 - Map each problem → fix (show as 4 paired rows):
-  - Scattered → **One personalized feed** across 13 sources.
+  - Scattered → **One personalized feed** across 23 sources.
   - Biased → **Objective significance + corroboration** wash out single-outlet slant.
   - Wrong timing → **Time-budgeted** to 3, 10, or 20 minutes — your call.
   - No sense of scale → **A 0–10 score** that ranks true importance, not loudness.
@@ -74,7 +74,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - Show as a horizontal flow diagram with a one-line gloss under each step:
   - **Extract** — pull fresh items from every healthy source.
   - **Persist** — save the raw item once, immutably (provenance).
-  - **Classify** — tag each item with a Region and a Topic.
+  - **Classify** — tag each item with a Topic (Israel is a Topic, not a separate axis).
   - **Embed** — turn the text into a numeric "meaning" vector.
   - **Cluster** — group items that describe the same event.
   - **Resolve** — match against earlier stories so a developing story keeps growing.
@@ -96,7 +96,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 
 **Slide 6 — Where the Data Comes From**
 
-- Headline: **13 official sources. Zero scraping.**
+- Headline: **23 official sources. Zero scraping.**
 - Bullets:
   - **The sources:** Hacker News, arXiv, GDELT, Knesset (bills + votes), SEC EDGAR, Wikipedia, The Guardian, Times of Israel, Hugging Face Papers, NBER, Nature, PsyArXiv.
   - Spanning tech/AI, science, world news, Israeli politics, and finance.
@@ -135,7 +135,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - Headline: **Your intelligence, on your terms.**
 - Three columns:
   - **Text brief** — "Give me 3 minutes." Time-budgeted bullets.
-  - **Topic outline** — deep-dive on AI, Geopolitics, etc., grouped by Region.
+  - **Topic outline** — deep-dive on AI, Geopolitics, etc., ordered by significance.
   - **Audio podcast** — a narrated script, delivered as real audio.
 - Two surfaces: a **web viewer / JSON API** and a **Telegram bot**.
 - Takeaway: same brain, multiple front doors.
@@ -163,8 +163,8 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 
 - Headline: **Quality you can audit.**
 - Bullets:
-  - **230 automated tests, all green.** Every component proven in isolation.
-  - **27 Architecture Decision Records** — every major choice documented with trade-offs.
+  - **310 automated tests, all green.** Every component proven in isolation.
+  - **33 Architecture Decision Records** — every major choice documented with trade-offs.
   - Clean "seam" architecture: any source, AI model, or database can be swapped without rewrites.
   - Stack: TypeScript/Node, SQLite (or hosted Turso), OpenAI tiers, all behind tested interfaces.
 - Takeaway: this is built like a product, not a prototype.
@@ -173,7 +173,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 
 - Headline: **The full MVP is built and tested.**
 - Bullets:
-  - ✅ **13 sources** wired in.
+  - ✅ **23 sources** wired in (18 Story + 5 numeric Signal).
   - ✅ **Full reasoning loop** — extract → classify → embed → cluster → resolve → score → analyze → publish.
   - ✅ **Both delivery surfaces** — web viewer / API and the Telegram bot (text, outline, audio podcast).
   - ✅ **Security & cost hardening** — access control, quotas, resilient fallbacks.
@@ -199,7 +199,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - Every slide ends with its 1-line **Takeaway** in the accent color.
 - Prefer diagrams/icons: a problem→fix pairing (Slide 3), a pipeline flow (Slide 4), a trust pyramid (Slide 7), 3 columns (Slide 10).
 - Consistent dark premium theme, one accent color, generous whitespace, large type.
-- Use the project's real words exactly — Story, Significance, Tick, Region, Topic, Why-It-Matters, corroboration.
+- Use the project's real words exactly — Story, Significance, Tick, Topic, Why-It-Matters, corroboration.
 - No clip-art, no emoji on slides, no jargon the Operations Director won't know without a 1-line gloss.
 
 ## STEP 4 — Speaker notes (ask the generator to add these per slide)
@@ -215,10 +215,10 @@ For each slide, add 2–3 sentences of speaker notes that:
 ## One-paragraph elevator pitch (use as the deck description / intro)
 
 > Project Horizon is an autonomous, server-side "executive editor." Every 15 minutes it pulls
-> from 13 official public data sources, scores each story's real-world significance on a
+> from 23 official public data sources, scores each story's real-world significance on a
 > transparent 0–10 scale, de-duplicates and connects related events over time, and writes a
 > short "why it matters" for the most important ones — all in the background. Users then ask
 > for exactly what they want — a 3-minute text brief, a topic deep-dive, or a narrated audio
 > podcast — and get it instantly from a pre-digested cache, via web or Telegram. It's built to
-> degrade gracefully, run cheaply, and stay objective, backed by 230 passing tests and 27
+> degrade gracefully, run cheaply, and stay objective, backed by 310 passing tests and 33
 > documented architecture decisions.

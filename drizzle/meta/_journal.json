@@ -64,6 +64,20 @@
       "when": 1782397609599,
       "tag": "0008_giant_moira_mactaggert",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1782725665027,
+      "tag": "0009_strange_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1782729707758,
+      "tag": "0010_strange_the_spike",
+      "breakpoints": true
     }
   ]
 }
