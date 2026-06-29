@@ -24,6 +24,8 @@ export interface PresentationDefaults {
 export interface WebOptions {
   /** Hard cap on requested minutes (cost-amplification guard). */
   readonly maxMinutes: number;
+  /** Tighter cap for the podcast (TTS) path. */
+  readonly maxPodcastMinutes: number;
   /** Expose the LLM-backed /api/podcast endpoint. Off by default. */
   readonly podcastEnabled: boolean;
 }
@@ -70,7 +72,9 @@ export function createApp(
   app.get('/api/podcast', async (c) => {
     // LLM-backed cost vector — off by default (ADR-0023). Telegram is the audited surface.
     if (!web.podcastEnabled) return c.json({ error: 'not found' }, 404);
-    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults, web)) });
+    // Podcasts get the tighter audio cap, not the general maxMinutes.
+    const podcastWeb = { ...web, maxMinutes: Math.min(web.maxMinutes, web.maxPodcastMinutes) };
+    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults, podcastWeb)) });
   });
 
   app.get('/api/outline', async (c) => {

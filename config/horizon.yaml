@@ -145,7 +145,7 @@ telegram:
     podcastPerDay: 2      # per-chat daily cap on the expensive podcast path (TTS+LLM)
     commandsPerDay: 25    # per-chat daily cap on all commands (incl. chat questions)
     globalPodcastPerDay: 15    # process-wide podcast ceiling per day (hard bill backstop)
-    globalCommandsPerDay: 150  # process-wide command ceiling per day across ALL users —
+    globalCommandsPerDay: 200  # process-wide command ceiling per day across ALL users —
                                # the total daily spend cap that makes open access safe (ADR-0031)
   tts:
     enabled: true         # podcast as audio; false sends the script as text
@@ -167,6 +167,7 @@ presentation:
   # Default attention budget and preferences, applied when a request omits them.
   defaultMinutes: 3
   maxMinutes: 60            # hard cap on requested minutes (cost guard, ADR-0023)
+  maxPodcastMinutes: 20     # tighter cap for podcasts (TTS cost guard) — clamps the audio path
   webPodcastEnabled: false  # expose the LLM-backed /api/podcast on the web (ADR-0023)
   # Readability floor (ADR-0024): prefer few, fully-explained stories over many headlines.
   minDepth: full           # headline | brief | full — minimum depth every story gets

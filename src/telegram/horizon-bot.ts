@@ -102,6 +102,8 @@ export interface HorizonBotDeps {
   readonly limits: BotLimits;
   /** Hard cap on requested minutes (ADR-0023). */
   readonly maxMinutes: number;
+  /** Tighter cap for the podcast (TTS) path (ADR-0023). */
+  readonly maxPodcastMinutes: number;
   /** Chat ids the bot answers; empty defers to `openAccess` (ADR-0022). */
   readonly allowedChatIds?: readonly number[];
   /** Answer everyone when the allowlist is empty. Default-deny when false. */
@@ -353,8 +355,11 @@ export class HorizonBot {
         return this.sendContent(chatId, await query.topicOutline(topic, req));
       }
 
-      case 'podcast':
-        return this.sendPodcast(chatId, await this.request(chatId, command.minutes));
+      case 'podcast': {
+        // Podcasts (TTS) get a tighter minute cap than text artifacts (ADR-0023).
+        const podcastMax = Math.min(this.deps.maxMinutes, this.deps.maxPodcastMinutes);
+        return this.sendPodcast(chatId, await this.request(chatId, command.minutes, podcastMax));
+      }
 
       case 'prefsShow':
         return transport.sendMessage(
@@ -669,13 +674,20 @@ export class HorizonBot {
     return transport.sendMessage(chatId, `${confirm}\n\n${formatPrefs(saved, this.deps.defaults)}`);
   }
 
-  /** Merge the chat's saved preferences over the config defaults into a BriefRequest. */
-  private async request(chatId: number, minutesOverride?: number): Promise<BriefRequest> {
+  /**
+   * Merge the chat's saved preferences over the config defaults into a BriefRequest.
+   * `maxMinutes` defaults to the global cap; the podcast path passes a tighter one.
+   */
+  private async request(
+    chatId: number,
+    minutesOverride?: number,
+    maxMinutes: number = this.deps.maxMinutes,
+  ): Promise<BriefRequest> {
     const p = await this.deps.prefs.get(chatId);
     const { defaults } = this.deps;
     const minutes = normalizeMinutes(
       minutesOverride ?? p?.defaultMinutes ?? defaults.minutes,
-      this.deps.maxMinutes,
+      maxMinutes,
     );
     const topics = p?.topics ?? defaults.topics;
     return {

@@ -104,7 +104,8 @@ writes the podcast to `/tmp/horizon-podcast.mp3`.
   podcast caps. All counters are persisted, so a restart can't reset a day's budget. The only
   user-driven OpenAI costs are the **podcast** (LLM + TTS) and **chat** (deep tier) paths — text
   briefs/outlines and the whole web viewer are deterministic cache reads that spend **zero** tokens.
-- **`minutes` is clamped** to `presentation.maxMinutes`, and the LLM-backed web
+- **`minutes` is clamped** to `presentation.maxMinutes`, with a **tighter
+  `presentation.maxPodcastMinutes`** cap on the expensive audio path; the LLM-backed web
   `/api/podcast` is **off by default** (`presentation.webPodcastEnabled`). The server binds
   to localhost unless you set `HOST`.
 

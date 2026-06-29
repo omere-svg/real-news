@@ -290,6 +290,7 @@ async function main(): Promise<void> {
     defaults,
     {
       maxMinutes: config.presentation.maxMinutes,
+      maxPodcastMinutes: config.presentation.maxPodcastMinutes,
       podcastEnabled: config.presentation.webPodcastEnabled,
     },
     tickReportRepo,
@@ -362,6 +363,7 @@ function startTelegramBot(
     limiter: new FixedWindowLimiter(tg.limits.perMinute, 60_000),
     limits: tg.limits,
     maxMinutes: config.presentation.maxMinutes,
+    maxPodcastMinutes: config.presentation.maxPodcastMinutes,
     synthesizer,
     defaults,
     allowedChatIds: tg.allowedChatIds,

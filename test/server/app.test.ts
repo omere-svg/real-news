@@ -39,10 +39,10 @@ async function appWithStories() {
     memberRefs: [{ source: 'gdelt', externalId: '2' }],
   });
   const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
-  return createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, podcastEnabled: true });
+  return createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true });
 }
 
-async function appWith(web: { maxMinutes: number; podcastEnabled: boolean }) {
+async function appWith(web: { maxMinutes: number; maxPodcastMinutes?: number; podcastEnabled: boolean }) {
   const db = await createTestDb();
   const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
   await repo.upsert({
@@ -51,7 +51,7 @@ async function appWith(web: { maxMinutes: number; podcastEnabled: boolean }) {
     memberRefs: [{ source: 'hackernews', externalId: '1' }],
   });
   const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
-  return createApp(repo, queryEngine, { minutes: 10 }, web);
+  return createApp(repo, queryEngine, { minutes: 10 }, { maxPodcastMinutes: web.maxMinutes, ...web });
 }
 
 describe('HTTP API', () => {
@@ -148,7 +148,7 @@ describe('HTTP API', () => {
     await ticks.record(rec(100, 5));
     await ticks.record(rec(200, 9));
     const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
-    const app = createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, podcastEnabled: false }, ticks);
+    const app = createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false }, ticks);
 
     const res = await app.request('/api/ticks');
     expect(res.status).toBe(200);

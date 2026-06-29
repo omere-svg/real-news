@@ -147,6 +147,8 @@ export const configSchema = z.object({
     defaultMinutes: z.number().positive().default(3),
     /** Hard cap on requested minutes — clamps cost amplification (ADR-0023). */
     maxMinutes: z.number().positive().default(60),
+    /** Tighter cap for the podcast (TTS) path; clamps the audio length (ADR-0023). */
+    maxPodcastMinutes: z.number().positive().default(20),
     /** Readability floor: minimum depth every shown Story gets (ADR-0024). */
     minDepth: z.enum(['headline', 'brief', 'full']).default('full'),
     /** Always show at least this many Stories, even at a tiny budget (ADR-0024). */

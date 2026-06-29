@@ -107,6 +107,7 @@ async function build(opts: {
   limits?: Partial<BotLimits>;
   limiter?: RateLimiter;
   maxMinutes?: number;
+  maxPodcastMinutes?: number;
   feedback?: FeedbackInterpreter;
   discussant?: Discussant;
   storyRepo?: StoryReader;
@@ -129,6 +130,7 @@ async function build(opts: {
     limiter: opts.limiter ?? new FixedWindowLimiter(1000, 60_000),
     limits: { ...GENEROUS, ...opts.limits },
     maxMinutes: opts.maxMinutes ?? 60,
+    maxPodcastMinutes: opts.maxPodcastMinutes ?? 20,
     openAccess: opts.openAccess ?? true,
     synthesizer: opts.synthesizer === undefined ? audioSynth : opts.synthesizer,
     defaults: { minutes: 3 },
@@ -288,6 +290,16 @@ describe('HorizonBot', () => {
     const { bot, query } = await build({ maxMinutes: 5 });
     await bot.handle(update(5, '/brief 100'));
     expect(query.lastRequest?.minutes).toBe(5);
+  });
+
+  it('clamps a podcast to maxPodcastMinutes, tighter than the brief cap', async () => {
+    const { bot, query } = await build({ maxMinutes: 60, maxPodcastMinutes: 20 });
+
+    await bot.handle(update(5, '/podcast 45')); // over the podcast cap
+    expect(query.lastRequest?.minutes).toBe(20); // clamped to maxPodcastMinutes
+
+    await bot.handle(update(5, '/brief 45')); // a brief still gets the looser cap
+    expect(query.lastRequest?.minutes).toBe(45);
   });
 
   describe('/feedback (ADR-0026)', () => {
