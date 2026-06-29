@@ -74,10 +74,8 @@ export const configSchema = z.object({
   }),
 
   scoring: z.object({
-    /** Hours after which recency decay has roughly halved the score. */
-    recencyHalfLifeHours: z.number().positive().default(24),
-    /** Max absolute editorial adjustment the LLM may apply (ADR-0008). */
-    maxEditorialAdjustment: z.number().min(0).max(10).default(1.5),
+    /** Hours after which the floored recency factor decays one step (ADR-0034). */
+    recencyHalfLifeHours: z.number().positive().default(36),
     /** Max absolute numeric-Signal nudge to significance (ADR-0025). */
     maxSignalAdjustment: z.number().min(0).max(10).default(1.0),
   }),

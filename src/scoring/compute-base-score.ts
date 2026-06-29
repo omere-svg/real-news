@@ -1,12 +1,8 @@
-import type {
-  ScoreComponent,
-  ScoreComponentKey,
-  Signals,
-} from '../domain/types.js';
+import type { ScoreComponent, Signals } from '../domain/types.js';
 
 /** Tunables injected from config (ADR-0003) so the function stays pure. */
 export interface ScoreParams {
-  /** Hours after which recency decay roughly halves the contribution. */
+  /** Hours after which the recency factor decays one step toward its floor. */
   readonly recencyHalfLifeHours: number;
 }
 
@@ -19,16 +15,17 @@ const MENTIONS_REF = 500;
 const CORROBORATION_REF = 5;
 
 /**
- * Relative contribution of each quality component to the base score.
- * MUST sum to 1.0 so quality lands in [0, 1] before scaling to [0, 10].
+ * Max contribution of each importance axis to the noisy-OR (ADR-0034). Impact can
+ * dominate (a mass-casualty event is top news on its own); authority alone is a
+ * partial lift (a routine official item isn't a 10).
  */
-const WEIGHTS = {
-  popularity: 0.3,
-  engagement: 0.15,
-  corroboration: 0.3,
-  toneExtremity: 0.1,
-  sourceWeight: 0.15,
-} as const;
+const IMPACT_CAP = 1.0;
+const CORROBORATION_CAP = 0.9;
+const AUTHORITY_CAP = 0.55;
+/** Attention (social popularity) is a bounded add-on that never penalizes absence. */
+const ATTENTION_BOOST = 0.15;
+/** Recency floor: age de-emphasizes but never erases a major story (ADR-0034). */
+const RECENCY_FLOOR = 0.5;
 
 function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));
@@ -44,61 +41,72 @@ function normalize(value: number, ref: number): number {
   return clamp01(Math.log1p(Math.max(0, value)) / Math.log1p(ref));
 }
 
-/** The deterministic base score plus its component decomposition (ADR-0032). */
+/**
+ * Recency factor in [RECENCY_FLOOR, 1] (ADR-0034). Unlike a raw exponential, it
+ * never drops below the floor — a two-day-old 1,400-death disaster stays major.
+ */
+function recencyFactorOf(ageHours: number, halfLifeHours: number): number {
+  const decay = Math.pow(0.5, Math.max(0, ageHours) / halfLifeHours);
+  return RECENCY_FLOOR + (1 - RECENCY_FLOOR) * decay;
+}
+
+/** The base score plus the normalized strength of each axis (ADR-0032/0034). */
 export interface BaseBreakdown {
-  /** Deterministic base in [0, 10]. */
+  /** Impact-first base in [0, 10]. */
   readonly base: number;
-  /** Recency multiplier in [0, 1] applied to every component. */
+  /** Recency factor in [RECENCY_FLOOR, 1] that was applied. */
   readonly recencyFactor: number;
-  /** Per-component contributions to `base`, in points; they sum to `base`. */
-  readonly contributions: readonly ScoreComponent[];
+  /** Each axis's normalized strength in [0, 1]. */
+  readonly components: readonly ScoreComponent[];
 }
 
 /**
- * The deterministic base Significance (ADR-0008) decomposed into its parts
- * (ADR-0032). Each component is normalized to [0, 1], weighted, scaled to points
- * and decayed by recency, so the contributions sum to the same `base` that
- * `computeBaseScore` returns. Pure: same inputs → same output.
+ * The impact-first base Significance (ADR-0034). A noisy-OR of the importance
+ * axes — real-world `impact`, `corroboration`, source `authority` — so a story
+ * strong on ANY of them approaches the top of the scale; `attention` (social
+ * popularity) is a bounded add-on that never lowers a story for lacking it. Decayed
+ * by a floored recency factor. Pure: same inputs → same output, always in [0, 10].
  */
 export function baseScoreBreakdown(
   signals: Signals,
+  impact: number,
   params: ScoreParams,
 ): BaseBreakdown {
-  const components01: Record<ScoreComponentKey, number> = {
-    popularity: normalize(signals.points, POINTS_REF),
-    engagement: normalize(signals.mentions, MENTIONS_REF),
-    // A lone source (corroboration = 1) earns no corroboration bonus.
-    corroboration: normalize(signals.corroboration - 1, CORROBORATION_REF),
-    // Extremity, not direction: a strongly-toned story (either sign) is weightier.
-    toneExtremity: clamp01(Math.abs(signals.tone) / 10),
-    // Editorial trust in the strongest contributing source.
-    sourceWeight: clamp01(signals.sourceWeight),
-  };
-
-  // Exponential recency decay: halves every `recencyHalfLifeHours`.
-  const recencyFactor = Math.pow(
-    0.5,
-    Math.max(0, signals.ageHours) / params.recencyHalfLifeHours,
+  const impact01 = clamp01(impact);
+  // A lone source (corroboration = 1) earns no corroboration bonus.
+  const corroboration01 = normalize(signals.corroboration - 1, CORROBORATION_REF);
+  const authority01 = clamp01(signals.sourceWeight);
+  // Social popularity: the louder of upvotes / mentions. Booster only.
+  const attention01 = Math.max(
+    normalize(signals.points, POINTS_REF),
+    normalize(signals.mentions, MENTIONS_REF),
   );
 
-  const keys = Object.keys(WEIGHTS) as ScoreComponentKey[];
-  const contributions: ScoreComponent[] = keys.map((key) => ({
-    key,
-    points: MAX_SCORE * WEIGHTS[key] * components01[key] * recencyFactor,
-  }));
+  const recencyFactor = recencyFactorOf(signals.ageHours, params.recencyHalfLifeHours);
 
-  const base = clamp(
-    contributions.reduce((sum, c) => sum + c.points, 0),
-    MIN_SCORE,
-    MAX_SCORE,
-  );
-  return { base, recencyFactor, contributions };
+  // Noisy-OR: strong on any importance axis ⇒ high. Reaches ~1 only for a major,
+  // corroborated, authoritative event — so the full 0–10 range is usable.
+  const importance =
+    1 -
+    (1 - impact01 * IMPACT_CAP) *
+      (1 - corroboration01 * CORROBORATION_CAP) *
+      (1 - authority01 * AUTHORITY_CAP);
+  const quality = clamp01(importance + ATTENTION_BOOST * attention01);
+  const base = clamp(MAX_SCORE * quality * recencyFactor, MIN_SCORE, MAX_SCORE);
+
+  const components: ScoreComponent[] = [
+    { key: 'impact', value: impact01 },
+    { key: 'corroboration', value: corroboration01 },
+    { key: 'authority', value: authority01 },
+    { key: 'attention', value: attention01 },
+  ];
+  return { base, recencyFactor, components };
 }
 
 /**
- * The deterministic base Significance (ADR-0008) from verifiable Signals.
- * Pure: same inputs → same output. Result is always within [0.0, 10.0].
+ * The deterministic base with no model-estimated impact (impact = 0). Useful where
+ * only the verifiable Signals are known; the Score stage adds the impact axis.
  */
 export function computeBaseScore(signals: Signals, params: ScoreParams): number {
-  return baseScoreBreakdown(signals, params).base;
+  return baseScoreBreakdown(signals, 0, params).base;
 }

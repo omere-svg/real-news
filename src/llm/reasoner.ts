@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ChatTransport } from './chat-transport.js';
 import type {
-  AdjustInput,
+  ImpactInput,
   AnalyzeInput,
   Classification,
   ClassifyInput,
@@ -35,7 +35,7 @@ const classificationSchema = z.object({
   topic: z.enum(TOPICS as [string, ...string[]]),
 });
 const sameStorySchema = z.object({ same: z.boolean() });
-const adjustmentSchema = z.object({ adjustment: z.number() });
+const impactSchema = z.object({ impact: z.number() });
 const analysisSchema = z.object({
   summary: z.string().default(''),
   whyItMatters: z.string().default(''),
@@ -152,15 +152,19 @@ export class Reasoner implements LLMClient {
     return sameStorySchema.parse(json).same;
   }
 
-  async adjustSignificance(input: AdjustInput): Promise<number> {
+  async assessImpact(input: ImpactInput): Promise<number> {
     const json = await this.transport.completeJson(
-      `A news story scored ${input.baseScore.toFixed(1)}/10 from verifiable signals. ` +
-        `Suggest a small editorial adjustment in [-2, 2] for intrinsic importance the ` +
-        `signals may miss. Respond with a JSON object {"adjustment": number}.\n\n` +
+      `Estimate this news story's REAL-WORLD IMPACT on a 0.0–1.0 scale — how many ` +
+        `people are affected and how severely. High (0.8–1.0): mass casualties, major ` +
+        `disasters, wars, large-scale economic or geopolitical consequences. Medium ` +
+        `(0.4–0.7): significant but bounded events. Low (0.0–0.3): routine announcements, ` +
+        `incremental tech/research, niche or hobby items. Judge the event itself, not how ` +
+        `popular the story is. Respond with a JSON object {"impact": number}.\n\n` +
         `Title: ${input.title}\n${input.text ? `Text: ${input.text}\n` : ''}`,
       { tier: 'cheap', maxTokens: 64 },
     );
-    return adjustmentSchema.parse(json).adjustment;
+    const impact = impactSchema.parse(json).impact;
+    return Math.min(1, Math.max(0, impact));
   }
 
   async analyze(input: AnalyzeInput): Promise<StoryAnalysis> {

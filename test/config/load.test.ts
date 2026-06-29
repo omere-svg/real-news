@@ -46,8 +46,7 @@ describe('toTickConfig', () => {
   it('flattens the validated config into the pipeline config', () => {
     const tick = toTickConfig(parseConfig(valid));
     expect(tick.candidateThreshold).toBeCloseTo(0.78, 5);
-    expect(tick.recencyHalfLifeHours).toBe(24); // schema default
-    expect(tick.maxEditorialAdjustment).toBeCloseTo(1.5, 5);
+    expect(tick.recencyHalfLifeHours).toBe(36); // schema default (ADR-0034)
     expect(tick.deepAnalysisTopN).toBe(10); // schema default
     expect(tick.sourceWeights.hackernews).toBeCloseTo(0.6, 5);
   });

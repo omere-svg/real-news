@@ -22,7 +22,6 @@ export interface TickConfig {
   readonly candidateThreshold: number;
   readonly recentWindowHours: number;
   readonly recencyHalfLifeHours: number;
-  readonly maxEditorialAdjustment: number;
   readonly deepAnalysisTopN: number;
   readonly sourceWeights: Partial<Record<SourceId, number>>;
   /** Max absolute numeric-Signal nudge to significance (ADR-0025); 0/absent disables it. */
@@ -93,7 +92,6 @@ export class TickRunner {
     const scored = await score(identified.map((i) => i.cluster), llm, {
       clock,
       recencyHalfLifeHours: config.recencyHalfLifeHours,
-      maxEditorialAdjustment: config.maxEditorialAdjustment,
       sourceWeights: config.sourceWeights,
       signalContext,
       maxSignalAdjustment: config.maxSignalAdjustment ?? 0,

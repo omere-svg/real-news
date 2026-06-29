@@ -12,7 +12,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - `README.md` — what it is, how to run it, the API
 - `CONTEXT.md` — the domain language (the exact vocabulary to use on slides)
 - `project-idea.txt` — the vision and the 5 engineering principles
-- `docs/ROADMAP.md` — what's built vs. what's left (the "310 tests / 33 ADRs" status)
+- `docs/ROADMAP.md` — what's built vs. what's left (the "310 tests / 34 ADRs" status)
 - `config/horizon.yaml` — the real, configured sources and limits
 - (Optional, for depth) `docs/adr/0008`, `0014`, `0017`, `0022`, `0023`
 
@@ -32,7 +32,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 >
 > **Design:** clean and modern. Dark, premium theme with a single accent color (deep blue or teal). One idea per slide. Big headline + 3–5 tight bullets max. Use simple diagrams/icons over walls of text. Every slide must have a 1-line "takeaway" the audience remembers.
 >
-> **Hard rules:** Use only facts from the loaded sources — never invent numbers, customers, or results. Keep claims honest: it is a complete, fully-tested product, **deployed live** (Render + Turso) and **fully observable** (a `/dashboard` over persisted tick reports). Use the exact figures: **23 sources (18 Story + 5 numeric Signal sources)**, **4 source-trust tiers**, **Significance 0.0–10.0**, **310 passing tests**, **33 architecture decision records (ADRs)**, ticks **every 15 minutes**.
+> **Hard rules:** Use only facts from the loaded sources — never invent numbers, customers, or results. Keep claims honest: it is a complete, fully-tested product, **deployed live** (Render + Turso) and **fully observable** (a `/dashboard` over persisted tick reports). Use the exact figures: **23 sources (18 Story + 5 numeric Signal sources)**, **4 source-trust tiers**, **Significance 0.0–10.0**, **310 passing tests**, **34 architecture decision records (ADRs)**, ticks **every 15 minutes**.
 >
 > Build the slides exactly per the slide-by-slide outline I provide below.
 
@@ -44,7 +44,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 
 - Title: **Project Horizon**
 - Subtitle: _Turns the world's public data into personalized news — sized to the time you have and the topics you care about._
-- Footer line: "Built grill → architecture → TDD · 310 tests · 33 ADRs"
+- Footer line: "Built grill → architecture → TDD · 310 tests · 34 ADRs"
 - Takeaway: one personalized, time-aware news brief from the whole world's public data.
 
 **Slide 2 — The Problem**
@@ -116,12 +116,12 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 
 **Slide 8 — How "Significance" Is Decided**
 
-- Headline: **A 0–10 score you can actually trust.**
+- Headline: **A 0–10 score you can actually trust — impact first.**
 - Bullets:
-  - Starts from **verifiable signals**: popularity, mention count/tone, source weight, recency, and how many independent sources corroborate it.
-  - The AI may _nudge_ the score — but only within strict bounds. It can never dominate.
-  - Result: scores are **explainable, reproducible, and stable** — not a black box.
-- Takeaway: editorial judgment, kept honest by math.
+  - Driven by **real-world impact** (how many people are affected, how severely), **multi-source corroboration**, and **source authority** — a strong story on any of these rises to the top.
+  - **Popularity is only a small booster**, never the driver — a 1,400-death earthquake outranks a viral tech post, not the other way around.
+  - Every score is **broken down and shown** ("Why this score?") — explainable and reproducible, not a black box.
+- Takeaway: importance, not loudness — and you can see the math.
 
 **Slide 9 — It Connects the Dots Over Time**
 
@@ -164,7 +164,7 @@ Before generating, add these repo files as NotebookLM sources so the AI has grou
 - Headline: **Quality you can audit.**
 - Bullets:
   - **310 automated tests, all green.** Every component proven in isolation.
-  - **33 Architecture Decision Records** — every major choice documented with trade-offs.
+  - **34 Architecture Decision Records** — every major choice documented with trade-offs.
   - Clean "seam" architecture: any source, AI model, or database can be swapped without rewrites.
   - Stack: TypeScript/Node, SQLite (or hosted Turso), OpenAI tiers, all behind tested interfaces.
 - Takeaway: this is built like a product, not a prototype.
@@ -220,5 +220,5 @@ For each slide, add 2–3 sentences of speaker notes that:
 > short "why it matters" for the most important ones — all in the background. Users then ask
 > for exactly what they want — a 3-minute text brief, a topic deep-dive, or a narrated audio
 > podcast — and get it instantly from a pre-digested cache, via web or Telegram. It's built to
-> degrade gracefully, run cheaply, and stay objective, backed by 310 passing tests and 33
+> degrade gracefully, run cheaply, and stay objective, backed by 310 passing tests and 34
 > documented architecture decisions.

@@ -68,20 +68,25 @@ describe('HorizonQuery', () => {
     expect(brief.match(/🔗/g)?.length).toBe(1); // the url-less story has no link line
   });
 
-  it('textBrief appends a compact score rationale from the breakdown (ADR-0032)', async () => {
+  it('textBrief appends a compact score rationale from the breakdown (ADR-0034)', async () => {
     const repo = await seed(
       upsert({
         id: 'a',
         title: 'Alpha',
         significance: 9,
         scoreBreakdown: {
-          base: 8,
+          base: 9,
           recencyFactor: 1, // fresh
-          contributions: [],
-          editorialAdjustment: 0,
+          impact: 0.9, // major real-world impact
+          components: [
+            { key: 'impact', value: 0.9 },
+            { key: 'corroboration', value: 0.7 },
+            { key: 'authority', value: 0.7 }, // official source
+            { key: 'attention', value: 0.2 },
+          ],
           signalNudge: 0,
           signals: {
-            points: 500, // trending
+            points: 0,
             mentions: 0,
             tone: 0,
             sourceWeight: 0.7,
@@ -96,8 +101,9 @@ describe('HorizonQuery', () => {
 
     const brief = await q.textBrief({ minutes: 3 });
 
+    expect(brief).toContain('major real-world impact');
     expect(brief).toContain('4 sources');
-    expect(brief).toContain('trending');
+    expect(brief).toContain('official source');
     expect(brief).toContain('fresh');
     // Bravo has no breakdown, so its descriptor carries no rationale tail.
     expect(brief).toContain('significance 4.0');

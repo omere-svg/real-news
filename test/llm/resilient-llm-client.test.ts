@@ -11,7 +11,7 @@ const brokenLLM: LLMClient = {
   confirmSameStory: async () => {
     throw new Error('api down');
   },
-  adjustSignificance: async () => {
+  assessImpact: async () => {
     throw new Error('api down');
   },
   analyze: async () => {
@@ -54,7 +54,7 @@ describe('ResilientLLMClient', () => {
       topic: 'Other',
     });
     expect(await llm.confirmSameStory(stub, stub)).toBe(false); // don't merge on uncertainty
-    expect(await llm.adjustSignificance({ ...stub, baseScore: 5 })).toBe(0); // no nudge
+    expect(await llm.assessImpact(stub)).toBe(0); // no impact signal on outage
     expect(
       await llm.analyze({
         ...stub,

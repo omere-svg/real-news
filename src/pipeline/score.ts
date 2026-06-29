@@ -16,7 +16,6 @@ const DEFAULT_SOURCE_WEIGHT = 0.5;
 export interface ScoreContext {
   readonly clock: Clock;
   readonly recencyHalfLifeHours: number;
-  readonly maxEditorialAdjustment: number;
   readonly sourceWeights: Partial<Record<SourceId, number>>;
   /** Partition-scoped numeric Signal context for this tick (ADR-0025). */
   readonly signalContext?: SignalContext;
@@ -68,10 +67,11 @@ export function assembleSignals(
 }
 
 /**
- * Score stage (ADR-0008). The deterministic base from verifiable Signals, a
- * bounded editorial adjustment from the Reasoner, and a bounded numeric-Signal
- * nudge from the partition's attention/macro context (ADR-0025) — neither the
- * LLM nor the signals can dominate. Final score is clamped to [0, 10].
+ * Score stage (ADR-0034). An impact-first base — real-world impact (read by the
+ * Reasoner's cheap tier), corroboration and source authority combined so any
+ * strong axis lifts the score, with social attention as a bounded add-on — plus a
+ * bounded numeric-Signal nudge from the partition context (ADR-0025). Clamped to
+ * [0, 10].
  */
 export async function score(
   clusters: readonly Cluster[],
@@ -82,21 +82,13 @@ export async function score(
   return Promise.all(
     clusters.map(async (cluster) => {
       const signals = assembleSignals(cluster, now, ctx.sourceWeights);
-      const { base, recencyFactor, contributions } = baseScoreBreakdown(signals, {
-        recencyHalfLifeHours: ctx.recencyHalfLifeHours,
-      });
 
       const lead = representativeOf(cluster);
-      const rawAdjustment = await llm.adjustSignificance({
-        title: lead.title,
-        text: lead.text,
-        baseScore: base,
+      const impact = await llm.assessImpact({ title: lead.title, text: lead.text });
+
+      const { base, recencyFactor, components } = baseScoreBreakdown(signals, impact, {
+        recencyHalfLifeHours: ctx.recencyHalfLifeHours,
       });
-      const adjustment = clamp(
-        rawAdjustment,
-        -ctx.maxEditorialAdjustment,
-        ctx.maxEditorialAdjustment,
-      );
 
       const signalNudge = signalAdjustment(
         cluster.topic,
@@ -106,16 +98,9 @@ export async function score(
 
       return {
         cluster,
-        significance: clamp(base + adjustment + signalNudge, 0, 10),
-        // The inspectable "why this score" snapshot (ADR-0032).
-        breakdown: {
-          base,
-          recencyFactor,
-          contributions,
-          editorialAdjustment: adjustment,
-          signalNudge,
-          signals,
-        },
+        significance: clamp(base + signalNudge, 0, 10),
+        // The inspectable "why this score" snapshot (ADR-0032/0034).
+        breakdown: { base, recencyFactor, components, impact, signalNudge, signals },
       };
     }),
   );

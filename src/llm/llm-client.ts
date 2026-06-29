@@ -20,10 +20,11 @@ export interface LLMClient {
   confirmSameStory(a: StoryStub, b: StoryStub): Promise<boolean>;
 
   /**
-   * Cheap tier (Haiku): a bounded editorial adjustment to the deterministic
-   * base score (ADR-0008). Returns a delta the caller clamps.
+   * Cheap tier: estimate a story's real-world impact in [0, 1] — casualties,
+   * disaster scale, major economic/geopolitical stakes (ADR-0034). An inspectable
+   * extracted input to the deterministic score, not a final rating.
    */
-  adjustSignificance(input: AdjustInput): Promise<number>;
+  assessImpact(input: ImpactInput): Promise<number>;
 
   /**
    * Expensive tier (Opus): in one call, write both a factual "what happened"
@@ -102,10 +103,9 @@ export interface StoryStub {
   readonly text: string | null;
 }
 
-export interface AdjustInput {
+export interface ImpactInput {
   readonly title: string;
   readonly text: string | null;
-  readonly baseScore: number;
 }
 
 export interface AnalyzeInput {

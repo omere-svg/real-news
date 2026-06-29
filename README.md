@@ -20,8 +20,8 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
    classified) + `membership` (corroboration), in SQLite; plus `story_vectors` (cross-tick
    dedup) and `chat_preferences` / `usage` (the bot).
 3. **Reasoning loop** — classify (Topic) → embed → cluster → **resolve** (cross-tick
-   merge) → score (0–10 from verifiable signals + bounded LLM nudge + bounded numeric-Signal
-   nudge from attention/macro context) → factual **summary** + **"why it matters"** → upsert.
+   merge) → score (0–10, **impact-first**: real-world impact + corroboration + source authority,
+   with social popularity only a bounded booster + a bounded numeric-Signal nudge — ADR-0034) → factual **summary** + **"why it matters"** → upsert.
    Runs every tick.
 4. **Presentation** — a read-only web viewer/JSON API **and** a Telegram bot deliver
    time-budgeted briefs, topic outlines, podcast audio, and chat about the news from the

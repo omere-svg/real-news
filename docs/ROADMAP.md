@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-29 (**310 tests green, 33 ADRs**). Phases 1–4 complete
+the plan to finish it. Updated 2026-06-29 (**310 tests green, 34 ADRs**). Phases 1–4 complete
 (all 9 Phase-4 sources built, incl. the 2 numeric Signal sources + the Story/Signal split,
 ADR-0025); security & resource hardening and brief-readability complete. **ADR-0031** adds the
 `Health` + `Climate` Topics and a keyless source wave (TheSportsDB→Sports, WHO→Health, NASA
@@ -23,7 +23,7 @@ optional deepening (below).
 |---|---|---|
 | **Extraction worker** (Feature 1) | `pipeline/extract` + **18 Story adapters** behind the `SourceAdapter` seam (ADR-0004): Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, **Guardian, Times of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv** (ADR-0021), **TheSportsDB (Sports), WHO Outbreaks (Health), NASA EONET / USGS / GDACS (Climate)** (ADR-0031); plus **5 Signal adapters** behind the sibling `SignalSource` seam (`pipeline/observe-signals`): **Wikipedia Pageviews, World Bank** (ADR-0025), **CoinGecko, Frankfurter FX, OpenAlex** (ADR-0031). Shared `rss.ts` parser for RSS/RDF feeds. Health-checked, per-source failure isolation. | ✅ |
 | **Relational cache** (Feature 2) | SQLite + Drizzle (ADR-0002/0005): `raw_items` → `stories` → `membership`, plus `story_vectors` (ADR-0017), `chat_preferences` + `usage` (ADR-0019/0022). Idempotent upsert (reassigns a member across Stories without a `(source, externalId)` PK collision); filtered `topStories`. | ✅ |
-| **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze → upsert`, sequenced by `TickRunner`. `computeBaseScore` (verifiable signals) + bounded LLM nudge. `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Neural `OpenAIEmbedder` + hashing fallback (ADR-0018). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
+| **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze → upsert`, sequenced by `TickRunner`. Impact-first `computeBaseScore` — real-world impact (Reasoner `assessImpact`) + corroboration + authority, popularity a bounded booster (ADR-0034). `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Neural `OpenAIEmbedder` + hashing fallback (ADR-0018). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
 | **Scheduler / daemon** | In-process tick loop every X min (`main.ts`, ADR-0001). | ✅ |
 | **Config** | YAML + Zod (`config/horizon.yaml`, ADR-0003). | ✅ |
 | **Presentation** (Phase 2) | Read-only **query layer**: `budgetStories` attention kernel with a **readability floor** (ADR-0013/0024) + `HorizonQuery` (text brief, topic outline, podcast script, ADR-0014) over `GET /api/stories\|brief\|outline\|podcast`, plus a single-page viewer. Config-driven preferences (ADR-0015). | ✅ |

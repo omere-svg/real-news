@@ -1,5 +1,5 @@
 import type {
-  AdjustInput,
+  ImpactInput,
   AnalyzeInput,
   Classification,
   ClassifyInput,
@@ -20,7 +20,8 @@ import type {
 export interface FakeLLMOptions {
   classify?: Classification | ((input: ClassifyInput) => Classification);
   confirm?: boolean | ((a: StoryStub, b: StoryStub) => boolean);
-  adjust?: number;
+  /** Real-world impact in [0, 1] returned by assessImpact (ADR-0034). */
+  impact?: number | ((input: ImpactInput) => number);
   /** A StoryAnalysis, or a string shorthand used as both summary and whyItMatters. */
   analyze?: StoryAnalysis | string | ((input: AnalyzeInput) => StoryAnalysis | string);
   narrate?: string | ((input: NarrateInput) => string);
@@ -34,7 +35,7 @@ export interface FakeLLMOptions {
 export class FakeLLM implements LLMClient {
   classifyCalls = 0;
   confirmCalls = 0;
-  adjustCalls = 0;
+  impactCalls = 0;
   analyzeCalls = 0;
   narrateCalls = 0;
   feedbackCalls = 0;
@@ -61,9 +62,11 @@ export class FakeLLM implements LLMClient {
     return c ?? true;
   }
 
-  async adjustSignificance(_input: AdjustInput): Promise<number> {
-    this.adjustCalls += 1;
-    return this.options.adjust ?? 0;
+  async assessImpact(input: ImpactInput): Promise<number> {
+    this.impactCalls += 1;
+    const i = this.options.impact;
+    if (typeof i === 'function') return i(input);
+    return i ?? 0;
   }
 
   async analyze(input: AnalyzeInput): Promise<StoryAnalysis> {

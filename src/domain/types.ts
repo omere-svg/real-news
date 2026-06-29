@@ -142,35 +142,35 @@ export interface Signals {
 
 // --- Score breakdown: the inspectable "why this score" (ADR-0032) ---
 
-/** The component keys of the deterministic base score (ADR-0008). */
+/** The axes of the impact-first base score (ADR-0034). */
 export type ScoreComponentKey =
-  | 'popularity'
-  | 'engagement'
+  | 'impact'
   | 'corroboration'
-  | 'toneExtremity'
-  | 'sourceWeight';
+  | 'authority'
+  | 'attention';
 
-/** One component's contribution to the base score, in significance points. */
+/** One axis's normalized strength in [0, 1] (how much it drove the score). */
 export interface ScoreComponent {
   readonly key: ScoreComponentKey;
-  /** Contribution to the base score in [0, 10] points (already weighted + decayed). */
-  readonly points: number;
+  /** Normalized strength of this axis, in [0, 1]. */
+  readonly value: number;
 }
 
 /**
- * The persisted, inspectable explanation of a Story's Significance (ADR-0032).
- * `base + editorialAdjustment + signalNudge`, clamped, reconciles to the stored
- * `significance`. `contributions` sum to `base`. Snapshotted at scoring time.
+ * The persisted, inspectable explanation of a Story's Significance (ADR-0032/0034).
+ * `base` is the impact-first combination of the components, decayed by
+ * `recencyFactor`; `base + signalNudge`, clamped, reconciles to the stored
+ * `significance`. Snapshotted at scoring time.
  */
 export interface ScoreBreakdown {
-  /** Deterministic base from verifiable Signals, in [0, 10]. */
+  /** Impact-first base in [0, 10] (noisy-OR of the importance axes + attention). */
   readonly base: number;
-  /** Recency multiplier in [0, 1] that was applied to the components. */
+  /** Recency factor in [0, 1] that was applied (floored, never erases — ADR-0034). */
   readonly recencyFactor: number;
-  /** Per-component contributions to `base` (sum ≈ base). */
-  readonly contributions: readonly ScoreComponent[];
-  /** Bounded editorial nudge from the Reasoner (signed, ADR-0008). */
-  readonly editorialAdjustment: number;
+  /** The normalized strength of each scoring axis. */
+  readonly components: readonly ScoreComponent[];
+  /** The model-estimated real-world impact in [0, 1] (ADR-0034). */
+  readonly impact: number;
   /** Bounded numeric-Signal nudge from the partition context (signed, ADR-0025). */
   readonly signalNudge: number;
   /** The raw verifiable Signals the base was computed from. */

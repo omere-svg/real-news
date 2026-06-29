@@ -149,18 +149,22 @@ function descriptorLine(story: Story): string {
 
 /**
  * A compact, deterministic "why this score" tail derived purely from the
- * persisted breakdown (ADR-0032) — e.g. ` · 4 sources · trending · fresh`. Empty
- * for Stories scored before the breakdown existed. No LLM, no I/O.
+ * persisted breakdown (ADR-0034) — names the true drivers, e.g.
+ * ` · major real-world impact · 3 sources · official source`. Empty for Stories
+ * scored before the breakdown existed. No LLM, no I/O.
  */
 function scoreRationale(story: Story): string {
   const bd = story.scoreBreakdown;
   if (!bd) return '';
+  const axis = (key: string): number =>
+    bd.components.find((c) => c.key === key)?.value ?? 0;
   const tags: string[] = [];
+  if (bd.impact >= 0.66) tags.push('major real-world impact');
+  else if (bd.impact >= 0.4) tags.push('notable impact');
   if (bd.signals.corroboration >= 2) tags.push(`${bd.signals.corroboration} sources`);
-  if (bd.signals.points >= 100) tags.push('trending');
-  if (bd.signals.mentions >= 100) tags.push('busy discussion');
-  if (bd.recencyFactor >= 0.6) tags.push('fresh');
-  if (bd.signalNudge > 0.1) tags.push('high attention');
+  if (axis('authority') >= 0.65) tags.push('official source');
+  if (axis('attention') >= 0.5) tags.push('high public interest');
+  if (bd.recencyFactor >= 0.9) tags.push('fresh');
   return tags.length ? ` · ${tags.join(' · ')}` : '';
 }
 

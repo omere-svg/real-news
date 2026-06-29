@@ -65,9 +65,11 @@ a story primarily about Israel is classified `Israel` (place wins over subject).
 
 **Significance**
 A floating-point score `0.0–10.0` expressing macro-importance. Computed from *verifiable
-signals* (a deterministic base) plus a *bounded* editorial adjustment from the Reasoner and a
-*bounded* numeric-Signal nudge from the Topic's attention/macro context (ADR-0025). The
-number the presentation layer sorts and budgets attention by.
+signals*, **impact-first** (ADR-0034): real-world impact (a Reasoner-estimated [0,1] read on
+casualties / disaster scale / major stakes), corroboration and source authority are combined so
+a story strong on any axis approaches the top; social popularity is only a *bounded* booster
+(never penalizing its absence), plus a *bounded* numeric-Signal nudge from the Topic's
+attention/macro context (ADR-0025). The number the presentation layer sorts and budgets by.
 
 **Signals**
 The verifiable inputs to Significance: source popularity/velocity (e.g. HN points),
@@ -126,7 +128,8 @@ The background loop wakes every `X` minutes (the **tick**) and runs these stages
 6. **Resolve** — match each Cluster against recent stored Stories (same Topic) and,
    on a Reasoner-confirmed embedding match, merge into that Story so it accretes
    corroboration across ticks (cross-tick dedup); otherwise assign a fresh stable id.
-7. **Score** — compute Significance from Signals + bounded editorial adjustment + bounded
+7. **Score** — compute Significance impact-first (ADR-0034): real-world impact + corroboration +
+   authority, social popularity a bounded booster, + a bounded
    numeric-Signal nudge from the Topic's attention/macro context.
 8. **Analyze** — escalate the top-N most significant Clusters to the deep tier for the factual
    Summary and the editorial Why-It-Matters (one call, both fields).

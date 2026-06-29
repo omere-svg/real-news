@@ -35,12 +35,12 @@ function cluster(items: RawItem[]): Cluster {
 
 const ctx = {
   clock: new FakeClock(NOW),
-  recencyHalfLifeHours: 24,
-  maxEditorialAdjustment: 1.5,
-  sourceWeights: { hackernews: 0.6, gdelt: 0.7 } as Partial<
+  recencyHalfLifeHours: 36,
+  sourceWeights: { hackernews: 0.35, gdelt: 0.7 } as Partial<
     Record<SourceId, number>
   >,
 };
+const baseParams = { recencyHalfLifeHours: 36 };
 
 describe('assembleSignals', () => {
   it('derives corroboration, peak points, and age from cluster members', () => {
@@ -59,56 +59,40 @@ describe('assembleSignals', () => {
 });
 
 describe('score stage', () => {
-  it('returns the base score unchanged when the LLM adjustment is zero', async () => {
+  it('equals the deterministic base when impact and signals are zero', async () => {
     const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
-    const llm = new FakeLLM({ adjust: 0 });
+    const llm = new FakeLLM({ impact: 0 });
 
     const [scored] = await score([c], llm, ctx);
 
-    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {
-      recencyHalfLifeHours: 24,
-    });
+    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), baseParams);
     expect(scored?.significance).toBeCloseTo(base, 5);
   });
 
-  it('emits a breakdown that reconciles to the significance (ADR-0032)', async () => {
+  it('a high-impact story scores well above a low-impact one (ADR-0034)', async () => {
+    const c = cluster([member('guardian', '1', {}, NOW)]); // no social signal
+    const low = await score([c], new FakeLLM({ impact: 0.1 }), ctx);
+    const high = await score([c], new FakeLLM({ impact: 0.9 }), ctx);
+    expect(high[0]!.significance).toBeGreaterThan(low[0]!.significance + 3);
+  });
+
+  it('emits a breakdown that reconciles to the significance (ADR-0032/0034)', async () => {
     const c = cluster([
       member('hackernews', '1', { points: 200 }, NOW),
       member('gdelt', '2', {}, NOW),
     ]);
-    const [scored] = await score([c], new FakeLLM({ adjust: 1.2 }), ctx);
+    const [scored] = await score([c], new FakeLLM({ impact: 0.7 }), ctx);
 
     const bd = scored!.breakdown;
-    expect(bd.editorialAdjustment).toBeCloseTo(1.2, 5);
-    expect(bd.contributions.reduce((a, x) => a + x.points, 0)).toBeCloseTo(bd.base, 5);
-    expect(bd.base + bd.editorialAdjustment + bd.signalNudge).toBeCloseTo(
-      scored!.significance,
-      5,
-    );
+    expect(bd.impact).toBeCloseTo(0.7, 5);
+    expect(bd.components.find((x) => x.key === 'impact')?.value).toBeCloseTo(0.7, 5);
+    expect(bd.base + bd.signalNudge).toBeCloseTo(scored!.significance, 5);
     expect(bd.signals.corroboration).toBe(2); // two distinct sources recorded
-  });
-
-  it('clamps the editorial adjustment to ±maxEditorialAdjustment', async () => {
-    const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
-    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {
-      recencyHalfLifeHours: 24,
-    });
-
-    const boosted = await score([c], new FakeLLM({ adjust: 99 }), ctx);
-    expect(boosted[0]?.significance).toBeCloseTo(
-      Math.min(10, base + 1.5),
-      5,
-    );
-
-    const slammed = await score([c], new FakeLLM({ adjust: -99 }), ctx);
-    expect(slammed[0]?.significance).toBeCloseTo(Math.max(0, base - 1.5), 5);
   });
 
   it('adds a bounded numeric-Signal nudge for the cluster partition (ADR-0025)', async () => {
     const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]); // World / AI
-    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {
-      recencyHalfLifeHours: 24,
-    });
+    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), baseParams);
 
     // A global attention surge should lift all stories via the (*) bucket.
     const signalContext = assembleSignalContext(
@@ -126,7 +110,7 @@ describe('score stage', () => {
     const maxSignalAdjustment = 1.0;
     const expectedNudge = signalAdjustment('AI', signalContext, maxSignalAdjustment);
 
-    const [scored] = await score([c], new FakeLLM({ adjust: 0 }), {
+    const [scored] = await score([c], new FakeLLM({ impact: 0 }), {
       ...ctx,
       signalContext,
       maxSignalAdjustment,
@@ -138,11 +122,9 @@ describe('score stage', () => {
 
   it('leaves scoring untouched when no Signal context is supplied', async () => {
     const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
-    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), {
-      recencyHalfLifeHours: 24,
-    });
+    const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), baseParams);
 
-    const [scored] = await score([c], new FakeLLM({ adjust: 0 }), ctx);
+    const [scored] = await score([c], new FakeLLM({ impact: 0 }), ctx);
     expect(scored?.significance).toBeCloseTo(base, 5);
   });
 });

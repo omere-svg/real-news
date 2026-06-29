@@ -46,9 +46,14 @@ describe('StoryRepo', () => {
 
     const breakdown = {
       base: 6,
-      recencyFactor: 0.5,
-      contributions: [{ key: 'corroboration' as const, points: 3 }],
-      editorialAdjustment: 1,
+      recencyFactor: 0.7,
+      components: [
+        { key: 'impact' as const, value: 0.8 },
+        { key: 'corroboration' as const, value: 0.6 },
+        { key: 'authority' as const, value: 0.7 },
+        { key: 'attention' as const, value: 0.2 },
+      ],
+      impact: 0.8,
       signalNudge: 0,
       signals: {
         points: 100,

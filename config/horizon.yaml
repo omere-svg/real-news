@@ -7,9 +7,9 @@ tickIntervalMinutes: 15
 # Sources to extract from each tick (ADR-0004). Strictly official public APIs.
 # maxItems kept modest so per-tick LLM cost stays low; raise per source as needed.
 sources:
-  - id: hackernews      # global tech / AI
+  - id: hackernews      # global tech / AI — Tier C (popularity, not authority; ADR-0034)
     enabled: true
-    weight: 0.6
+    weight: 0.35
     maxItems: 30
   - id: arxiv           # AI / research
     enabled: true
@@ -48,9 +48,9 @@ sources:
     enabled: true
     weight: 0.7
     maxItems: 20
-  - id: hf-papers       # Hugging Face Daily Papers — trending AI (upvotes/comments)
+  - id: hf-papers       # Hugging Face Daily Papers — trending AI (upvotes/comments); Tier C
     enabled: true
-    weight: 0.6
+    weight: 0.45
     maxItems: 20
   - id: nber            # NBER working papers — academic economics
     enabled: true
@@ -126,11 +126,10 @@ dedup:
   candidateThreshold: 0.78
   recentWindowHours: 72   # how far back a developing story can accrete corroboration
 
-# Significance scoring (ADR-0008).
+# Significance scoring (ADR-0008/0034 — impact-first).
 scoring:
-  recencyHalfLifeHours: 24
-  maxEditorialAdjustment: 1.5
-  maxSignalAdjustment: 1.0   # max numeric-Signal nudge to significance (ADR-0025)
+  recencyHalfLifeHours: 36    # floored recency factor decays one step per this (ADR-0034)
+  maxSignalAdjustment: 1.0    # max numeric-Signal nudge to significance (ADR-0025)
 
 # Telegram bot interface (ADR-0019/0020). Token in .env (TELEGRAM_BOT_TOKEN), never here.
 # Off by default; set enabled: true to run the bot alongside the tick loop + viewer.

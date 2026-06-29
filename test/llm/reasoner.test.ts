@@ -57,14 +57,13 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.opts.tier).toBe('cheap');
   });
 
-  it('adjustSignificance: returns the parsed adjustment', async () => {
-    const t = new FakeTransport({ adjustment: 1.25 });
-    const adj = await new Reasoner(t).adjustSignificance({
-      title: 'x',
-      text: null,
-      baseScore: 5,
-    });
-    expect(adj).toBeCloseTo(1.25, 5);
+  it('assessImpact: returns the parsed impact, clamped to [0,1]', async () => {
+    const t = new FakeTransport({ impact: 0.85 });
+    expect(await new Reasoner(t).assessImpact({ title: 'x', text: null })).toBeCloseTo(0.85, 5);
+    expect(t.calls[0]?.opts.tier).toBe('cheap');
+
+    const over = new FakeTransport({ impact: 5 });
+    expect(await new Reasoner(over).assessImpact({ title: 'x', text: null })).toBe(1);
   });
 
   it('analyze: parses summary + why-it-matters JSON on the deep tier', async () => {

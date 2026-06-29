@@ -1,6 +1,6 @@
 import type {
-  AdjustInput,
   AnalyzeInput,
+  ImpactInput,
   Classification,
   ClassifyInput,
   DiscussInput,
@@ -48,12 +48,12 @@ export class ResilientLLMClient implements LLMClient {
     }
   }
 
-  async adjustSignificance(input: AdjustInput): Promise<number> {
+  async assessImpact(input: ImpactInput): Promise<number> {
     try {
-      return await this.delegate.adjustSignificance(input);
+      return await this.delegate.assessImpact(input);
     } catch (err) {
-      this.onError('adjustSignificance', err);
-      return 0; // fall back to the deterministic base score
+      this.onError('assessImpact', err);
+      return 0; // no impact signal → rely on the other deterministic axes
     }
   }
 

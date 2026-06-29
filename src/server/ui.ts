@@ -99,19 +99,17 @@ const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-// "Why this score?" — render the persisted, inspectable breakdown (ADR-0032).
-const SCORE_LABELS = { popularity:'Popularity', engagement:'Discussion', corroboration:'Corroboration', toneExtremity:'Tone extremity', sourceWeight:'Source trust' };
-function signed(n){ return (n>=0?'+':'') + Number(n).toFixed(1); }
+// "Why this score?" — render the persisted, inspectable breakdown (ADR-0032/0034).
+const SCORE_LABELS = { impact:'Real-world impact', corroboration:'Corroboration', authority:'Source authority', attention:'Public attention' };
+function pct(v){ return Math.round(Number(v)*100) + '%'; }
 function breakdownHtml(b){
   if(!b) return '';
-  const rows = (b.contributions||[]).slice().sort((x,y)=>y.points-x.points)
-    .filter(c => c.points > 0.05)
-    .map(c => '<tr><td>'+esc(SCORE_LABELS[c.key]||c.key)+'</td><td class="num">'+signed(c.points)+'</td></tr>');
-  if(Math.abs(b.editorialAdjustment)>0.05) rows.push('<tr><td>Editor’s nudge</td><td class="num">'+signed(b.editorialAdjustment)+'</td></tr>');
-  if(Math.abs(b.signalNudge)>0.05) rows.push('<tr><td>Attention / macro nudge</td><td class="num">'+signed(b.signalNudge)+'</td></tr>');
+  const rows = (b.components||[])
+    .map(c => '<tr><td>'+esc(SCORE_LABELS[c.key]||c.key)+'</td><td class="num">'+pct(c.value)+'</td></tr>');
   const s = b.signals||{};
-  const recency = b.recencyFactor!=null ? Number(b.recencyFactor).toFixed(2) : '1.00';
-  const facts = (s.corroboration||1)+' source(s) · '+(s.points||0)+' popularity · recency ×'+recency;
+  const recency = b.recencyFactor!=null ? pct(b.recencyFactor) : '100%';
+  const nudge = Math.abs(b.signalNudge) > 0.05 ? ' · attention/macro nudge '+(b.signalNudge>=0?'+':'')+Number(b.signalNudge).toFixed(1) : '';
+  const facts = (s.corroboration||1)+' source(s) · recency '+recency+nudge;
   return '<details class="why-score"><summary>Why this score?</summary>'+
     '<table>'+rows.join('')+'</table>'+
     '<div class="meta">'+esc(facts)+'</div></details>';
