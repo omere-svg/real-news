@@ -124,8 +124,9 @@ The background loop wakes every `X` minutes (the **tick**) and runs these stages
 3. **Classify** — assign a Topic (metadata-first, Reasoner fallback).
 4. **Embed** — vectorize each item's title + body lead for similarity, so same-event
    articles across outlets converge (neural OpenAI embeddings, hashing fallback; ADR-0035).
-5. **Cluster** — find candidate same-Story pairs by embedding proximity, then the
-   Reasoner confirms the merge.
+5. **Cluster** — find candidate same-Story pairs by embedding proximity (with an optional,
+   toggleable entity-aware relaxation — pairs sharing named entities clear a lower bar, ADR-0036),
+   then the Reasoner confirms the merge.
 6. **Resolve** — match each Cluster against recent stored Stories (same Topic) and,
    on a Reasoner-confirmed embedding match, merge into that Story so it accretes
    corroboration across ticks (cross-tick dedup); otherwise assign a fresh stable id.

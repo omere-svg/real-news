@@ -1,29 +1,57 @@
 import type { LLMClient } from '../llm/llm-client.js';
 import type { Cluster } from '../domain/types.js';
 import { cosine } from '../embedding/cosine.js';
+import { dedupText } from './embed.js';
+import { extractEntities, sharedEntityCount } from './entities.js';
 import type { EmbeddedItem } from './types.js';
+
+/** Entity-aware blocking (ADR-0036). Optional layer; absent ⇒ pure cosine. */
+export interface EntityBlocking {
+  /** Lower cosine bar a pair may clear if it shares >= minSharedEntities. */
+  readonly relaxedThreshold: number;
+  /** Shared-entity count that unlocks the relaxed threshold for a pair. */
+  readonly minSharedEntities: number;
+}
 
 export interface ClusterOptions {
   /** Cosine similarity above which two items become a candidate pair (ADR-0007). */
   readonly candidateThreshold: number;
+  /** Optional entity-aware threshold relaxation (ADR-0036); omit to disable. */
+  readonly entityBlocking?: EntityBlocking;
 }
 
 /**
  * The blocking step (ADR-0007): cheaply find candidate same-Story pairs by
  * embedding proximity. Returns `[i, j]` index pairs (i < j) whose cosine clears
  * the threshold — the cheap filter that decides which pairs are worth a Reasoner
- * call. Pure and separately testable from the merge/connectivity step.
+ * call. When `entityBlocking` is supplied (ADR-0036), a pair that shares enough
+ * named entities only needs to clear the lower `relaxedThreshold`. Pure and
+ * separately testable from the merge/connectivity step.
  */
 export function candidatePairs(
   items: readonly EmbeddedItem[],
   threshold: number,
+  entityBlocking?: EntityBlocking,
 ): Array<[number, number]> {
+  // Extract entities once per item only when the layer is on (ADR-0036).
+  const entitySets = entityBlocking
+    ? items.map((it) => extractEntities(dedupText(it.item)))
+    : null;
+
   const pairs: Array<[number, number]> = [];
   for (let i = 0; i < items.length; i += 1) {
     for (let j = i + 1; j < items.length; j += 1) {
       const a = items[i] as EmbeddedItem;
       const b = items[j] as EmbeddedItem;
-      if (cosine(a.vector, b.vector) >= threshold) pairs.push([i, j]);
+      let bar = threshold;
+      if (entitySets && entityBlocking) {
+        const shared = sharedEntityCount(
+          entitySets[i] as Set<string>,
+          entitySets[j] as Set<string>,
+        );
+        if (shared >= entityBlocking.minSharedEntities) bar = entityBlocking.relaxedThreshold;
+      }
+      if (cosine(a.vector, b.vector) >= bar) pairs.push([i, j]);
     }
   }
   return pairs;
@@ -57,7 +85,7 @@ export async function cluster(
     parent[find(a)] = find(b);
   };
 
-  for (const [i, j] of candidatePairs(items, opts.candidateThreshold)) {
+  for (const [i, j] of candidatePairs(items, opts.candidateThreshold, opts.entityBlocking)) {
     const a = items[i] as EmbeddedItem;
     const b = items[j] as EmbeddedItem;
     const same = await llm.confirmSameStory(

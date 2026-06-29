@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-29 (**313 tests green, 35 ADRs**). Phases 1–4 complete
+the plan to finish it. Updated 2026-06-29 (**320 tests green, 36 ADRs**). Phases 1–4 complete
 (all 9 Phase-4 sources built, incl. the 2 numeric Signal sources + the Story/Signal split,
 ADR-0025); security & resource hardening and brief-readability complete. **ADR-0031** adds the
 `Health` + `Climate` Topics and a keyless source wave (TheSportsDB→Sports, WHO→Health, NASA

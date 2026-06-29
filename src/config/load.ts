@@ -32,8 +32,13 @@ export function sourceWeightsOf(
  * tested place this mapping lives (the composition root just wires it).
  */
 export function toTickConfig(config: Config): TickConfig {
+  const eb = config.dedup.entityBlocking;
   return {
     candidateThreshold: config.dedup.candidateThreshold,
+    // Only wire the entity-blocking layer when enabled; disabled ⇒ pure cosine (ADR-0036).
+    ...(eb.enabled
+      ? { entityBlocking: { relaxedThreshold: eb.relaxedThreshold, minSharedEntities: eb.minSharedEntities } }
+      : {}),
     recentWindowHours: config.dedup.recentWindowHours,
     recencyHalfLifeHours: config.scoring.recencyHalfLifeHours,
     maxSignalAdjustment: config.scoring.maxSignalAdjustment,

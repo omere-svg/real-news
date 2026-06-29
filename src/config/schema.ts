@@ -71,6 +71,16 @@ export const configSchema = z.object({
     candidateThreshold: z.number().min(0).max(1).default(0.78),
     /** How far back cross-tick dedup looks for a matching Story (ADR-0017). */
     recentWindowHours: z.number().positive().default(72),
+    /** Entity-aware blocking layer (ADR-0036) — toggle + tune; disable to revert. */
+    entityBlocking: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Lower cosine bar a pair may clear if it shares >= minSharedEntities. */
+        relaxedThreshold: z.number().min(0).max(1).default(0.66),
+        /** Shared-entity count that unlocks the relaxed threshold. */
+        minSharedEntities: z.number().int().positive().default(1),
+      })
+      .default({}),
   }),
 
   scoring: z.object({

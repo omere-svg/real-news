@@ -20,6 +20,8 @@ import type { AnalyzedCluster } from './types.js';
 
 export interface TickConfig {
   readonly candidateThreshold: number;
+  /** Optional entity-aware blocking layer (ADR-0036); absent ⇒ pure cosine. */
+  readonly entityBlocking?: { readonly relaxedThreshold: number; readonly minSharedEntities: number };
   readonly recentWindowHours: number;
   readonly recencyHalfLifeHours: number;
   readonly deepAnalysisTopN: number;
@@ -82,6 +84,7 @@ export class TickRunner {
     const embedded = await embed(classified, embedder);
     const clusters = await cluster(embedded, llm, {
       candidateThreshold: config.candidateThreshold,
+      ...(config.entityBlocking ? { entityBlocking: config.entityBlocking } : {}),
     });
     // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017).
     const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock }, {

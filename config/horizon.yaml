@@ -125,6 +125,13 @@ embedder:
 dedup:
   candidateThreshold: 0.78
   recentWindowHours: 72   # how far back a developing story can accrete corroboration
+  # Entity-aware blocking (ADR-0036): pairs sharing >= minSharedEntities named
+  # entities only need to clear relaxedThreshold. Set enabled:false to revert to
+  # pure cosine; tune the knobs if it over-merges or adds too many confirm calls.
+  entityBlocking:
+    enabled: true
+    relaxedThreshold: 0.66
+    minSharedEntities: 1
 
 # Significance scoring (ADR-0008/0034 — impact-first).
 scoring:

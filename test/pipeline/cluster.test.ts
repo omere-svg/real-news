@@ -6,11 +6,11 @@ import type { RawItem } from '../../src/domain/types.js';
 
 const opts = { candidateThreshold: 0.78 };
 
-function embedded(externalId: string, vector: number[]): EmbeddedItem {
+function embedded(externalId: string, vector: number[], title?: string): EmbeddedItem {
   const item: RawItem = {
     source: 'hackernews',
     externalId,
-    title: `story ${externalId}`,
+    title: title ?? `story ${externalId}`,
     url: null,
     text: null,
     publishedAt: null,
@@ -27,6 +27,23 @@ describe('candidatePairs (embedding blocking)', () => {
       embedded('3', [0, 1, 0]), // orthogonal to both
     ];
     expect(candidatePairs(items, 0.78)).toEqual([[0, 1]]);
+  });
+
+  it('entity blocking relaxes the bar for pairs sharing a named entity (ADR-0036)', () => {
+    // cosine ≈ 0.70 — below base 0.78, above relaxed 0.65.
+    const a = embedded('1', [1, 0, 0], 'Venezuela earthquake death toll rises to 1,400');
+    const b = embedded('2', [0.7, 0.7141, 0], "Venezuela races to find earthquake survivors");
+    const entity = { relaxedThreshold: 0.65, minSharedEntities: 1 };
+
+    expect(candidatePairs([a, b], 0.78)).toEqual([]); // off → pure cosine, no pair
+    expect(candidatePairs([a, b], 0.78, entity)).toEqual([[0, 1]]); // shared "Venezuela" → relaxed
+  });
+
+  it('entity blocking does NOT pair entity-sharing items that lack real similarity', () => {
+    const a = embedded('1', [1, 0, 0], 'Venezuela earthquake kills hundreds');
+    const b = embedded('2', [0, 1, 0], 'Venezuela signs new trade deal'); // orthogonal
+    const entity = { relaxedThreshold: 0.65, minSharedEntities: 1 };
+    expect(candidatePairs([a, b], 0.78, entity)).toEqual([]); // cosine 0 < relaxed bar
   });
 });
 
