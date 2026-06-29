@@ -15,6 +15,8 @@ const FEED = {
       total_abstain: 0,
     },
     { vote_id: 9, total_for: 1, total_against: 1, total_abstain: 0 }, // no descr → skipped
+    // Bare action label, no bill name → unpresentable + cross-bill merge risk → skipped.
+    { vote_id: 77, vote_item_dscr: 'הסתייגות', total_for: 5, total_against: 4, total_abstain: 0 },
   ],
 };
 
@@ -31,15 +33,19 @@ describe('KnessetVotesSource', () => {
       url: null,
       metadata: { topic: 'Israel', points: 52, mentions: 55 },
     });
+    expect(item?.title).toContain('נושא הישיבה'); // bill description leads the title
     expect(item?.title).toContain('הצעת סיכום');
+    expect(item?.text).toContain('בעד 52'); // tally recap (dedup body lead + summary)
     expect(item?.publishedAt).toBe(Date.parse('2021-07-13T00:00:00'));
     // tone = margin (for-against)/(for+against) * 10 = (52-3)/55*10 ≈ 8.9
     expect(item?.metadata.tone).toBeCloseTo(8.9, 1);
   });
 
-  it('skips votes with no description', async () => {
+  it('skips votes lacking a bill description (no context / generic-title noise)', async () => {
     const source = new KnessetVotesSource({ fetchJson: fetcher, maxItems: 10 });
-    expect(await source.extract()).toHaveLength(1);
+    const items = await source.extract();
+    expect(items).toHaveLength(1); // vote 9 (no descr) and vote 77 (bare action) both dropped
+    expect(items[0]?.externalId).toBe('34515');
   });
 
   it('healthCheck never throws on failure', async () => {

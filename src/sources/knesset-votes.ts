@@ -67,14 +67,21 @@ export class KnessetVotesSource implements SourceAdapter {
   }
 
   private toRawItem(v: Vote): RawItem | null {
-    const title = [v.sess_item_dscr, v.vote_item_dscr]
-      .filter((s): s is string => Boolean(s && s.trim()))
-      .join(' — ');
-    if (!title) return null;
+    const billDesc = (v.sess_item_dscr ?? '').trim();
+    const voteDesc = (v.vote_item_dscr ?? '').trim();
+    // Require the bill / session-item description (the unique identifier). A vote
+    // with only a generic action label (e.g. bare "הסתייגות") is unpresentable AND
+    // dedup-merges across unrelated bills, since every reservation shares the same
+    // title. Carrying the bill name in the title + text disambiguates them so
+    // votes on the same bill cluster while different bills stay apart (ADR-0036).
+    if (!billDesc) return null;
+    const title = voteDesc ? `${billDesc} — ${voteDesc}` : billDesc;
 
     const forV = v.total_for ?? 0;
     const against = v.total_against ?? 0;
     const abstain = v.total_abstain ?? 0;
+    // A factual recap doubles as the dedup body lead and the summary fallback.
+    const text = `${title}. בעד ${forV}, נגד ${against}, נמנעו ${abstain}.`;
     const metadata: SourceMetadata = {
       topic: 'Israel',
       points: forV,
@@ -86,7 +93,7 @@ export class KnessetVotesSource implements SourceAdapter {
       externalId: String(v.vote_id),
       title,
       url: null,
-      text: null,
+      text,
       publishedAt: v.vote_date ? Date.parse(v.vote_date) : null,
       metadata,
     };
