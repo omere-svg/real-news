@@ -128,6 +128,8 @@ export interface NarrateInput {
   readonly minutes: number;
   /** The deterministic text brief to render as spoken narration. */
   readonly brief: string;
+  /** Target spoken length in words (minutes × speaking rate) so the audio fills the budget. */
+  readonly targetWords?: number;
   /** The user's free-text personal context to weave in, if any (ADR-0028). */
   readonly memory?: string;
 }

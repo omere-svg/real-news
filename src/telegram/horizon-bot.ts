@@ -593,7 +593,6 @@ export class HorizonBot {
     await this.deps.transport.sendAudio(chatId, audio, {
       title: 'Horizon podcast',
       filename: 'horizon.mp3',
-      caption: `~${req.minutes} min`,
     });
     // Audio can't carry buttons; follow with the chat/feedback/menu affordance when any is wired.
     if (this.chatEnabled()) this.session(chatId).mode = 'chat';

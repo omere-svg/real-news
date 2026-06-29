@@ -182,17 +182,24 @@ export class Reasoner implements LLMClient {
   }
 
   async narrate(input: NarrateInput): Promise<string> {
+    const lengthRule = input.targetWords
+      ? `Write approximately ${input.targetWords} words — this matters: the script is read ` +
+        `aloud at a steady pace and must fill the full ${input.minutes} minute(s). Give each ` +
+        `story enough depth (two to four sentences) plus natural transitions to reach that ` +
+        `length; do not be overly brief or end early. `
+      : `of about ${input.minutes} minute(s) of spoken narration. `;
+    // Scale the output ceiling to the target so long podcasts aren't truncated (~2 tokens/word).
+    const maxTokens = Math.min(4096, Math.round((input.targetWords ?? input.minutes * 150) * 2) + 256);
     return this.transport.complete(
-      `Turn the following news brief into a single-host podcast script of about ` +
-        `${input.minutes} minute(s) of spoken narration. Open with a one-line intro. ` +
-        `Then cover each story in the same structure: state the headline, give one or ` +
-        `two sentences on what happened, then one sentence on why it matters — joined ` +
-        `by smooth spoken transitions. Close with a brief sign-off. Do not read out ` +
-        `URLs, emoji, bullet characters, headings, or stage directions. Output only ` +
+      `Turn the following news brief into a single-host podcast script. ${lengthRule}` +
+        `Open with a one-line intro. Then cover each story in the same structure: state the ` +
+        `headline, give one or two sentences on what happened, then one sentence on why it ` +
+        `matters — joined by smooth spoken transitions. Close with a brief sign-off. Do not ` +
+        `read out URLs, emoji, bullet characters, headings, or stage directions. Output only ` +
         `the script text.\n\n` +
         memoryBlock(input.memory) +
         input.brief,
-      { tier: 'deep', maxTokens: 1024 },
+      { tier: 'deep', maxTokens },
     );
   }
 

@@ -71,6 +71,8 @@ export class HorizonQuery implements QueryEngine {
 
     const script = await this.deps.llm.narrate({
       minutes: request.minutes,
+      // Aim the spoken length at the budget so the audio actually fills the minutes.
+      targetWords: Math.round(request.minutes * this.deps.params.audioWordsPerMinute),
       brief,
       ...(request.memory ? { memory: request.memory } : {}),
     });

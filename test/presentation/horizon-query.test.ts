@@ -218,10 +218,10 @@ describe('HorizonQuery', () => {
 
   it('podcastScript narrates the budgeted brief via the deep tier', async () => {
     const repo = await seed(upsert({ id: 'a', title: 'Alpha', significance: 9 }));
-    let seenBrief = '';
+    let seen: { brief: string; targetWords?: number } = { brief: '' };
     const llm = new FakeLLM({
-      narrate: ({ brief }) => {
-        seenBrief = brief;
+      narrate: (input) => {
+        seen = input;
         return 'SPOKEN SCRIPT';
       },
     });
@@ -231,7 +231,9 @@ describe('HorizonQuery', () => {
 
     expect(script).toBe('SPOKEN SCRIPT');
     expect(llm.narrateCalls).toBe(1);
-    expect(seenBrief).toContain('Alpha'); // narration is built from the brief
+    expect(seen.brief).toContain('Alpha'); // narration is built from the brief
+    // The narration is aimed at minutes × speaking rate so the audio fills the budget (ADR-0032).
+    expect(seen.targetWords).toBe(5 * PARAMS.audioWordsPerMinute);
   });
 
   it('readability floor: a tiny budget yields a few full, explained stories', async () => {
