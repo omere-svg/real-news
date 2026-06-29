@@ -77,12 +77,18 @@ export class SecEdgarSource implements SourceAdapter {
     return parsed.hits.hits.slice(0, this.deps.maxItems).map((hit) => {
       const s = hit._source;
       const form = s.form ?? s.root_form ?? 'filing';
+      const company = cleanName(s.display_names?.[0]);
+      const date = s.file_date ?? '';
+      const accession = hit._id.split(':')[0] ?? hit._id;
+      // Distinct filings from one company shared the title "COMPANY: 8-K filing"
+      // and dedup-merged. Carry the filing DATE in the title and the ACCESSION in
+      // the text so separate filings stay separate (ADR-0036 follow-up).
       return {
         source: 'secedgar' as const,
         externalId: hit._id,
-        title: `${cleanName(s.display_names?.[0])}: ${form} filing`,
+        title: `${company}: ${form} filing${date ? ` (${date})` : ''}`,
         url: edgarUrl(hit._id, s.ciks?.[0]),
-        text: null,
+        text: `${company} filed a ${form} with the SEC${date ? ` on ${date}` : ''} (accession ${accession}).`,
         publishedAt: s.file_date ? Date.parse(s.file_date) : null,
         metadata: { topic: 'Business' as const },
       };

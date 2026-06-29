@@ -26,6 +26,7 @@ import { TheSportsDbSource } from './sources/thesportsdb.js';
 import { WhoOutbreaksSource } from './sources/who-outbreaks.js';
 import { NasaEonetSource } from './sources/nasa-eonet.js';
 import { UsgsQuakesSource } from './sources/usgs-quakes.js';
+import { GdacsSource } from './sources/gdacs.js';
 import { WikipediaPageviewsSource } from './sources/wikipedia-pageviews.js';
 import { WorldBankSource } from './sources/worldbank.js';
 import { CoinGeckoSource } from './sources/coingecko.js';
@@ -122,7 +123,7 @@ function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | n
     case 'usgs-quakes':
       return new UsgsQuakesSource(base);
     case 'gdacs':
-      return new RssSource({ ...base, id: 'gdacs', feedUrl: 'https://www.gdacs.org/xml/rss.xml', topic: 'Climate' });
+      return new GdacsSource(base);
     default:
       console.warn(`[horizon] source "${s.id}" has no adapter yet — skipping.`);
       return null;

@@ -33,6 +33,8 @@ describe('SecEdgarSource', () => {
     expect(raw?.externalId).toBe('0001185185-13-002042:ex2-1.htm');
     expect(raw?.title).toContain('Globex Corp.');
     expect(raw?.title).toContain('8-K');
+    expect(raw?.title).toContain('2026-06-11'); // date disambiguates distinct filings
+    expect(raw?.text).toContain('accession 0001185185-13-002042'); // accession in text
     expect(raw?.url).toContain('/Archives/edgar/data/');
     expect(raw?.publishedAt).toBe(Date.parse('2026-06-11'));
     expect(raw?.metadata.topic).toBe('Business');
