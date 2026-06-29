@@ -143,7 +143,7 @@ telegram:
   limits:                 # rate limits + cost quotas (ADR-0022/0031)
     perMinute: 6          # burst: max commands per chat per minute
     podcastPerDay: 2      # per-chat daily cap on the expensive podcast path (TTS+LLM)
-    commandsPerDay: 25    # per-chat daily cap on all commands (incl. chat questions)
+    commandsPerDay: 100   # per-chat daily cap on all commands (incl. chat questions)
     globalPodcastPerDay: 15    # process-wide podcast ceiling per day (hard bill backstop)
     globalCommandsPerDay: 200  # process-wide command ceiling per day across ALL users —
                                # the total daily spend cap that makes open access safe (ADR-0031)
