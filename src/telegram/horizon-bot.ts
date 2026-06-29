@@ -128,7 +128,8 @@ const HELP = [
   '🎛 Set your preferences — favorite topics & default brief length',
   '🧠 Remember you — keep personal context in mind',
   '',
-  'Just ask in plain English (e.g. “remember I like AI and want 5-minute briefs”) — or tap a button below 👇',
+  'Just ask in plain English — e.g. “give me a 5-minute brief on AI”, or “remember I like AI and want 5-minute briefs”.',
+  '…or tap a button below 👇',
   '',
   `Subjects I follow: ${FOLLOWABLE_TOPICS}`,
 ].join('\n');
