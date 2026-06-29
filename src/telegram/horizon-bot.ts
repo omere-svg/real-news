@@ -115,18 +115,22 @@ const LIMIT_MSG = {
   globalCommands: 'Daily service limit reached across all users. Please try again tomorrow (UTC).',
 } as const;
 
+/** Followable topics, newest-vocabulary order, minus the `Other` catch-all. */
+const FOLLOWABLE_TOPICS = TOPICS.filter((t) => t !== 'Other').join(' · ');
+
 const HELP = [
   '🌅 Horizon — your background news editor.',
   '',
-  'Just tell me what you want, or tap a button below:',
-  '• "give me a 5-minute brief"',
-  '• "what\'s happening with AI?"',
-  '• "make me a podcast"',
-  '• "more AI, less sports, shorter" — to tune your feed',
-  '• "remember I trade commodities" — personal context I keep in mind',
+  'Just talk to me in plain English:',
+  '📰 “give me a 5-minute brief”',
+  '🎧 “make me a podcast”',
+  '🔎 “what’s happening with AI?”',
+  '🎛 “more AI, less sports, shorter” — tune your feed',
+  '🧠 “remember I trade commodities” — I’ll keep it in mind',
   '',
-  'Prefer typing commands? Shortcuts still work:',
-  '/brief · /outline · /podcast · /prefs · /feedback · /remember · /forget · /chat',
+  `I follow: ${FOLLOWABLE_TOPICS}`,
+  '',
+  '…or just tap a button below 👇',
 ].join('\n');
 
 export class HorizonBot {
@@ -352,7 +356,10 @@ export class HorizonBot {
         return this.sendPodcast(chatId, await this.request(chatId, command.minutes));
 
       case 'prefsShow':
-        return transport.sendMessage(chatId, formatPrefs(await this.deps.prefs.get(chatId)));
+        return transport.sendMessage(
+          chatId,
+          formatPrefs(await this.deps.prefs.get(chatId), this.deps.defaults),
+        );
 
       case 'prefsClear':
         await this.deps.prefs.clear(chatId);
@@ -658,7 +665,7 @@ export class HorizonBot {
 
     const saved = await prefs.set(chatId, update);
     const confirm = patch.summary.trim() || 'Updated your preferences.';
-    return transport.sendMessage(chatId, `${confirm}\n\n${formatPrefs(saved)}`);
+    return transport.sendMessage(chatId, `${confirm}\n\n${formatPrefs(saved, this.deps.defaults)}`);
   }
 
   /** Merge the chat's saved preferences over the config defaults into a BriefRequest. */
@@ -756,14 +763,26 @@ function applyListChange<T extends string>(
   }
 }
 
-function formatPrefs(p: ChatPreferences | null): string {
-  if (!p) return 'No preferences set — using defaults. See /prefs to set them.';
-  const lines = ['Your preferences:'];
-  lines.push(`• topics: ${p.topics?.join(', ') ?? '(default)'}`);
-  lines.push(`• default budget: ${p.defaultMinutes ?? '(default)'} min`);
-  const weights = formatWeights(p.topicWeights);
-  if (weights) lines.push(`• tuning: ${weights}`);
-  if (p.memory) lines.push(`• remembered: ${p.memory.replace(/\n/g, '; ')}`);
+/**
+ * Render a chat's effective preferences. Always shows a concrete value: a field
+ * the chat hasn't set falls back to the config default and is marked `(default)`,
+ * so there is never a blank like "budget: (default) min".
+ */
+function formatPrefs(p: ChatPreferences | null, defaults: PresentationDefaults): string {
+  const topics = p?.topics?.length
+    ? p.topics.join(', ')
+    : `${defaults.topics?.length ? defaults.topics.join(', ') : 'all topics'} (default)`;
+  const minutes = p?.defaultMinutes ?? defaults.minutes;
+  const minutesIsDefault = p?.defaultMinutes === undefined;
+
+  const lines = ['⚙️ Your preferences:'];
+  lines.push(`• Topics: ${topics}`);
+  lines.push(`• Brief length: ${minutes} min${minutesIsDefault ? ' (default)' : ''}`);
+  const weights = formatWeights(p?.topicWeights);
+  if (weights) lines.push(`• Tuning: ${weights}`);
+  if (p?.memory) lines.push(`• Remembered: ${p.memory.replace(/\n/g, '; ')}`);
+  lines.push('');
+  lines.push('Tell me e.g. “only AI and Israel” or “default to 5 minutes” to change these.');
   return lines.join('\n');
 }
 

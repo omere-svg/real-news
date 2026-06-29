@@ -210,6 +210,14 @@ describe('HorizonBot', () => {
     expect(query.lastRequest?.topics).toEqual(['AI', 'Politics']);
   });
 
+  it('/prefs always shows a concrete brief length, never a blank default', async () => {
+    const { bot, transport } = await build(); // defaults.minutes = 3, no prefs set
+    await bot.handle(update(5, '/prefs'));
+    const text = transport.messages.at(-1)?.text ?? '';
+    expect(text).toMatch(/Brief length: 3 min \(default\)/);
+    expect(text).not.toMatch(/\(default\) min/); // the bug: no number before "min"
+  });
+
   it('ignores chats outside the allowlist', async () => {
     const { bot, transport } = await build({ allowedChatIds: [99] });
     await bot.handle(update(5, '/brief'));
@@ -363,7 +371,7 @@ describe('HorizonBot', () => {
       expect((await prefs.get(5))?.memory).toBe('I trade commodities\nand follow shipping');
 
       await bot.handle(update(5, '/prefs'));
-      expect(transport.messages.at(-1)?.text).toMatch(/remembered: I trade commodities; and follow shipping/);
+      expect(transport.messages.at(-1)?.text).toMatch(/Remembered: I trade commodities; and follow shipping/);
 
       await bot.handle(update(5, '/forget'));
       expect((await prefs.get(5))?.memory).toBeUndefined();
