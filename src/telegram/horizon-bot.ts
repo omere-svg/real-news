@@ -121,16 +121,16 @@ const FOLLOWABLE_TOPICS = TOPICS.filter((t) => t !== 'Other').join(' · ');
 const HELP = [
   '🌅 Horizon — your background news editor.',
   '',
-  'Just talk to me in plain English:',
-  '📰 “give me a 5-minute brief”',
-  '🎧 “make me a podcast”',
-  '🔎 “what’s happening with AI?”',
-  '🎛 “more AI, less sports, shorter” — tune your feed',
-  '🧠 “remember I trade commodities” — I’ll keep it in mind',
+  'What I can do:',
+  '📰 Brief — a quick rundown, sized to your time',
+  '🎧 Podcast — a narrated audio episode',
+  '🔎 Topic deep-dive — zoom in on one subject',
+  '🎛 Tune your feed — more/less of a topic, shorter/longer',
+  '🧠 Remember you — keep personal context in mind',
   '',
-  `I follow: ${FOLLOWABLE_TOPICS}`,
+  'Just ask in plain English (e.g. “a 5-minute brief on AI”) — or tap a button below 👇',
   '',
-  '…or just tap a button below 👇',
+  `Subjects I follow: ${FOLLOWABLE_TOPICS}`,
 ].join('\n');
 
 export class HorizonBot {
