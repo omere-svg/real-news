@@ -50,15 +50,16 @@ export class GdeltSource implements SourceAdapter {
     return `${BASE}?query=${query}&mode=artlist&format=json&sort=DateDesc&maxrecords=${maxRecords}`;
   }
 
+  /**
+   * No pre-flight probe (ADR-0039). GDELT enforces ~1 request / 5 seconds, so a
+   * healthCheck fetch here followed immediately by the extract fetch is two calls
+   * back-to-back — which trips the limit and is exactly why GDELT skipped every
+   * tick. Return true so extract() makes the single request the API allows; the
+   * pipeline's try/catch still isolates a genuinely-down GDELT as a `failed`
+   * source (with its error), rather than a silent skip.
+   */
   async healthCheck(): Promise<boolean> {
-    try {
-      const parsed = responseSchema.safeParse(
-        await this.deps.fetchJson(this.url(1)),
-      );
-      return parsed.success;
-    } catch {
-      return false;
-    }
+    return true;
   }
 
   async extract(): Promise<RawItem[]> {

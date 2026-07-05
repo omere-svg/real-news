@@ -2,6 +2,7 @@ import type { StoryRepo } from '../db/story-repo.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { LLMClient } from '../llm/llm-client.js';
 import type { RawItemRef, Story } from '../domain/types.js';
+import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 
 /**
  * Backfill a Story's factual `summary` + concise `whyItMatters` via the deep tier
@@ -23,6 +24,12 @@ export interface BackfillOptions {
   readonly all?: boolean;
   /** Cap how many Stories to process; 0/undefined means no cap. */
   readonly max?: number;
+  /**
+   * Max concurrent deep-tier analyze calls (ADR-0039). Each target is one gpt-4o
+   * round-trip; running them serially makes a 500-Story boot heal take many
+   * minutes. Bounded concurrency keeps the heal fast without a request flood.
+   */
+  readonly concurrency?: number;
   /** Per-Story progress hook (1-based `done` of `total`). */
   readonly onProgress?: (done: number, total: number, story: Story) => void;
 }
@@ -64,35 +71,41 @@ export async function backfillSummaries(
   const all = await deps.storyRepo.all();
   let targets = opts.all ? all : all.filter(needsAnalysis);
   // Most significant first: the stories most likely to be displayed heal first.
+  // With bounded concurrency the top `concurrency` targets are the ones dispatched
+  // first, so the significance ordering still governs which heal soonest (ADR-0039).
   targets = [...targets].sort((a, b) => b.significance - a.significance);
   if (opts.max && opts.max > 0) targets = targets.slice(0, opts.max);
 
   let done = 0;
-  for (const story of targets) {
-    const ref = representativeRef(story);
-    const lead = ref ? await deps.rawItemRepo.get(ref) : null;
+  await mapWithConcurrency(
+    targets,
+    opts.concurrency ?? DEFAULT_CONFIRM_CONCURRENCY,
+    async (story) => {
+      const ref = representativeRef(story);
+      const lead = ref ? await deps.rawItemRepo.get(ref) : null;
 
-    const { summary, whyItMatters } = await deps.llm.analyze({
-      title: lead?.title ?? story.title,
-      text: lead?.text ?? null,
-      topic: story.topic,
-      significance: story.significance,
-    });
+      const { summary, whyItMatters } = await deps.llm.analyze({
+        title: lead?.title ?? story.title,
+        text: lead?.text ?? null,
+        topic: story.topic,
+        significance: story.significance,
+      });
 
-    await deps.storyRepo.upsert({
-      id: story.id,
-      title: story.title,
-      url: story.url,
-      topic: story.topic,
-      significance: story.significance,
-      summary,
-      whyItMatters,
-      memberRefs: story.memberRefs,
-    });
+      await deps.storyRepo.upsert({
+        id: story.id,
+        title: story.title,
+        url: story.url,
+        topic: story.topic,
+        significance: story.significance,
+        summary,
+        whyItMatters,
+        memberRefs: story.memberRefs,
+      });
 
-    done += 1;
-    opts.onProgress?.(done, targets.length, story);
-  }
+      done += 1;
+      opts.onProgress?.(done, targets.length, story);
+    },
+  );
 
   return { processed: done, total: targets.length };
 }

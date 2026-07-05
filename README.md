@@ -173,11 +173,13 @@ surfaced on a `/dashboard` health page (ADR-0033).
 integrity pass, tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md) §4: bounded-concurrency
 ticks (~17 min → ~1.5 min) with a re-entrancy guard, orphan-Story pruning, cross-topic
 cross-tick dedup, a sharper classifier (`Other` 22% → 6%, disasters ⇒ `Climate`), and
-steady-state summary/why backfill. All verified end-to-end; deploys to prod on the next
-push to `main`.
+steady-state summary/why backfill. A follow-up pass (**ADR-0039**) then fixed GDELT
+skipping every tick (a health-check + extract double-call tripped its 1-req/5s limit,
+starving `Geopolitics`) and parallelised the enrichment backfill so the cache heals fast.
+All verified end-to-end; deploys to prod on the next push to `main`.
 
 Optional further deepening (not on the critical path — see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
-GDELT rate-limit pacing + signal enrichment (ADR-0032 note), a retention prune / LLM-reflection
+GDELT signal enrichment (ADR-0032 note), a retention prune / LLM-reflection
 advisor over `tick_reports` (ADR-0033), and semantic retrieval over `story_vectors` for chat.
 
 Possible deepening (not MVP): entity-link Wikipedia Pageviews to individual clusters (today

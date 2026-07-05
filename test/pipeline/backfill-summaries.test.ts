@@ -98,6 +98,24 @@ describe('backfillSummaries', () => {
     expect(a?.whyItMatters).toBe('NEW WHY');
   });
 
+  it('heals all targets under bounded concurrency (ADR-0039)', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      await storyRepo.upsert({
+        id, title: id, url: null, topic: 'AI',
+        significance: 5, whyItMatters: null, memberRefs: [],
+      });
+    }
+
+    const llm = new FakeLLM({ analyze: { summary: 'S', whyItMatters: 'W' } });
+    const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, { concurrency: 3 });
+
+    expect(res).toEqual({ processed: 5, total: 5 });
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      expect((await storyRepo.get(id))?.whyItMatters).toBe('W');
+    }
+  });
+
   it('caps the number processed and takes the most significant first', async () => {
     const { storyRepo, rawItemRepo } = await setup();
     for (const [id, sig] of [['low', 2], ['high', 9], ['mid', 5]] as const) {

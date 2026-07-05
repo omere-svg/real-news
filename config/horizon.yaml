@@ -115,8 +115,8 @@ reasoner:
   cheapModel: gpt-4o-mini
   deepModel: gpt-4o
   deepAnalysisTopN: 10
-  backfillMaxOnBoot: 500   # heal more of the cache on boot (ADR-0038)
-  backfillPerTick: 8       # steady-state: heal a few summary/why-null stories each tick (ADR-0038)
+  backfillMaxOnBoot: 500   # heal more of the cache on boot (ADR-0038); now parallel (ADR-0039)
+  backfillPerTick: 12      # steady-state: heal summary/why-null stories each tick, parallel (ADR-0038/0039)
 
 # Dedup embeddings (ADR-0018). `openai` is neural with a hashing fallback;
 # `hashing` is fully offline / zero-cost. dimensions also sets the fallback width.

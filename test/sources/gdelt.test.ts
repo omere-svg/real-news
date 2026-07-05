@@ -37,13 +37,17 @@ describe('GdeltSource', () => {
     expect(await source.extract()).toEqual([]);
   });
 
-  it('healthCheck returns false (never throws) on failure', async () => {
+  it('healthCheck returns true without a pre-flight fetch (respects 1-req/5s, ADR-0039)', async () => {
+    let calls = 0;
     const source = new GdeltSource({
       fetchJson: async () => {
-        throw new Error('429');
+        calls += 1;
+        return {};
       },
       maxItems: 10,
     });
-    await expect(source.healthCheck()).resolves.toBe(false);
+    // No probe request — so extract() is the only GDELT call per tick.
+    await expect(source.healthCheck()).resolves.toBe(true);
+    expect(calls).toBe(0);
   });
 });

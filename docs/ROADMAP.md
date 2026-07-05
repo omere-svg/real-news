@@ -145,8 +145,8 @@ the rest PARKed in `docs/research/` as reference.*
 production**. The full MVP vision plus the Phase-6 deepening, score transparency (ADR-0032),
 and observability (ADR-0033) are done.
 
-**Optional further deepening (no longer on the critical path):** GDELT rate-limit pacing +
-signal enrichment (ADR-0032 note); a retention prune + LLM "reflection" advisor over
+**Optional further deepening (no longer on the critical path):** GDELT signal enrichment
+(ADR-0032 note; rate-limit pacing resolved in ADR-0039); a retention prune + LLM "reflection" advisor over
 `tick_reports` (ADR-0033); semantic retrieval over `story_vectors` for chat grounding;
 per-member source URLs in the brief; entity-linking Pageviews to clusters / persisting Signal
 history (noted in ADR-0025).
@@ -171,6 +171,18 @@ Every change is behind a config flag with a safe default and needs no migration
 (`crossTopic: false` reverts to same-Topic resolve). See ADR-0038 for the full rationale.
 
 **Residual (not blocking):** classification still has rare edge cases (a sports
-retrospective that mentioned an earthquake landed in `Climate`); `whyItMatters` coverage
-converges only as fast as `backfillPerTick`. **Deploy note:** the live prod DB keeps the
-old behaviour until Render redeploys the new code (push to `main`).
+retrospective that mentioned an earthquake landed in `Climate`). **Deploy note:** the live
+prod DB keeps the old behaviour until Render redeploys the new code (push to `main`).
+
+## 5. Follow-up hardening — ADR-0039 (resolved 2026-07-05)
+
+A second review — of a **freshly wiped prod DB refilled by the ADR-0038 code** — confirmed
+those fixes landed (`Other` 22% → 7.5%, 0 orphans, 0 duplicate titles, Venezuela quakes as
+one `Climate` story) and surfaced two residuals, now fixed:
+
+| Was (ADR-0038 refill) | Now (ADR-0039, verified) |
+|---|---|
+| **GDELT skipped every tick** (health-check + extract = 2 calls back-to-back trip its 1-req/5s limit) → **`Geopolitics` 0.8%** | `GdeltSource.healthCheck()` makes no probe → one request/tick; GDELT contributes every tick |
+| **`whyItMatters` ~92% null** after 2 ticks; `backfillSummaries` analyzed **serially** so the 500-Story boot heal took many minutes | Backfill runs with **bounded concurrency** (reuses the ADR-0038 `mapWithConcurrency`); boot/per-tick heal finish fast; `backfillPerTick` 8 → 12 |
+
+Cost stays bounded — concurrency changes *throughput*, not the per-call count. See ADR-0039.

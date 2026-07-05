@@ -271,7 +271,10 @@ async function main(): Promise<void> {
       if (config.reasoner.backfillPerTick > 0) {
         await backfillSummaries(
           { storyRepo, rawItemRepo, llm },
-          { max: config.reasoner.backfillPerTick },
+          {
+            max: config.reasoner.backfillPerTick,
+            concurrency: config.dedup.confirmConcurrency,
+          },
         ).catch((err) => console.error('[backfill] per-tick failed:', err));
       }
     } catch (err) {
@@ -307,6 +310,7 @@ async function main(): Promise<void> {
       { storyRepo, rawItemRepo, llm },
       {
         max: config.reasoner.backfillMaxOnBoot,
+        concurrency: config.dedup.confirmConcurrency,
         onProgress: (done, total) => {
           if (done === 1) console.log(`[backfill] healing ${total} stories missing a summary…`);
           if (done === total) console.log(`[backfill] done: ${total} stories updated.`);
