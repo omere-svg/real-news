@@ -10,6 +10,12 @@ export interface FetchOptions {
   readonly headers?: Record<string, string>;
   /** Parse the response as text instead of JSON (e.g. arXiv's Atom XML). */
   readonly as?: 'json' | 'text';
+  /**
+   * Override the default per-request timeout for this one call (ADR-0039). A few
+   * official APIs are legitimately slow — GDELT's doc API routinely takes ~13s —
+   * and would otherwise trip the global timeout every tick. Absent ⇒ global limit.
+   */
+  readonly timeoutMs?: number;
 }
 
 export type JsonFetcher = (
@@ -47,7 +53,7 @@ export function makeFetchJson(
     const defaultAccept = options?.as === 'text' ? '*/*' : 'application/json';
     const res = await fetchImpl(url, {
       headers: { accept: defaultAccept, ...options?.headers },
-      signal: AbortSignal.timeout(limits.timeoutMs),
+      signal: AbortSignal.timeout(options?.timeoutMs ?? limits.timeoutMs),
     });
     if (!res.ok) {
       throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}`);

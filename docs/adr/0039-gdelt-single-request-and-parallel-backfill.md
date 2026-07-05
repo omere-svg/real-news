@@ -30,12 +30,15 @@ ADR-0038 code** (2 ticks, 252 Stories) — confirmed the ADR-0038 fixes landed (
 
 ## Decision
 
-1. **GDELT issues one request per tick.** `GdeltSource.healthCheck()` returns `true`
-   with no pre-flight fetch, so `extract()` is the single GDELT call per tick (ticks are
-   20 min apart, far above the 5s limit). The pipeline's per-source try/catch still
-   isolates a genuinely-down GDELT — it now surfaces as a `failed` source **with its
-   error**, which is better observability than a silent skip. This is GDELT-specific:
-   every other source has generous limits where the probe is cheap insurance.
+1. **GDELT issues one request per tick, with a generous timeout.** `GdeltSource.healthCheck()`
+   returns `true` with no pre-flight fetch, so `extract()` is the single GDELT call per tick
+   (ticks are 20 min apart, far above the 5s limit). Removing the probe uncovered a second
+   cause: GDELT's doc API is legitimately **slow** — an artlist call measured ~13s, over the
+   10s global fetch timeout, so `extract()` timed out every tick. `FetchOptions` gains a
+   per-request `timeoutMs` override and GDELT uses a generous 25s. The pipeline's per-source
+   try/catch still isolates a genuinely-down GDELT — it now surfaces as a `failed` source
+   **with its error**, better observability than a silent skip. This is GDELT-specific: other
+   sources have generous limits and respond fast, so the probe + 10s timeout stay.
 
 2. **Backfill runs with bounded concurrency, not serially.** `backfillSummaries` takes a
    `concurrency` option (default 8, the ADR-0038 `mapWithConcurrency` utility). The boot

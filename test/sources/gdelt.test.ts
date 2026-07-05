@@ -29,6 +29,19 @@ describe('GdeltSource', () => {
     expect(raw?.metadata.topic).toBeUndefined();
   });
 
+  it('extract requests with a generous timeout override (GDELT is slow, ADR-0039)', async () => {
+    let seenTimeout: number | undefined;
+    const source = new GdeltSource({
+      fetchJson: async (_url, options) => {
+        seenTimeout = options?.timeoutMs;
+        return { articles: [] };
+      },
+      maxItems: 10,
+    });
+    await source.extract();
+    expect(seenTimeout).toBeGreaterThanOrEqual(20_000);
+  });
+
   it('tolerates an empty/articles-less response', async () => {
     const source = new GdeltSource({
       fetchJson: async () => ({}),

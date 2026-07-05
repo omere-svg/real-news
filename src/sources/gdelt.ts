@@ -27,11 +27,21 @@ function parseSeenDate(s: string | undefined): number | null {
   return Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
 }
 
+/**
+ * GDELT's doc API is legitimately slow — an artlist call routinely takes ~13s,
+ * over the 10s global fetch timeout (ADR-0039). Give it a generous per-request
+ * timeout so the world-news feed doesn't time out every tick. Ticks are minutes
+ * apart, so this never bumps GDELT's ~1-req/5s limit.
+ */
+const GDELT_TIMEOUT_MS = 25_000;
+
 export interface GdeltDeps {
   readonly fetchJson: JsonFetcher;
   readonly maxItems: number;
   /** GDELT query string (defaults to a broad geopolitics/world query). */
   readonly query?: string;
+  /** Per-request timeout override; GDELT is slow, so default to a generous value. */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -64,7 +74,9 @@ export class GdeltSource implements SourceAdapter {
 
   async extract(): Promise<RawItem[]> {
     const parsed = responseSchema.parse(
-      await this.deps.fetchJson(this.url(this.deps.maxItems)),
+      await this.deps.fetchJson(this.url(this.deps.maxItems), {
+        timeoutMs: this.deps.timeoutMs ?? GDELT_TIMEOUT_MS,
+      }),
     );
     return (parsed.articles ?? [])
       .filter((a) => a.title)
