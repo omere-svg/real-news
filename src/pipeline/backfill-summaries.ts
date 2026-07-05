@@ -99,6 +99,10 @@ export async function backfillSummaries(
         significance: story.significance,
         summary,
         whyItMatters,
+        // Backfill only rewrites summary/whyItMatters; it does NOT re-score, so it
+        // must carry the existing score breakdown through — otherwise upsert nulls
+        // the ADR-0032 "why this score" snapshot for every healed Story (ADR-0039).
+        scoreBreakdown: story.scoreBreakdown,
         memberRefs: story.memberRefs,
       });
 

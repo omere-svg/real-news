@@ -5,7 +5,7 @@ import { FakeLLM } from '../helpers/fake-llm.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
 import { DrizzleRawItemRepo } from '../../src/db/raw-item-repo.js';
 import { backfillSummaries } from '../../src/pipeline/backfill-summaries.js';
-import type { RawItem } from '../../src/domain/types.js';
+import type { RawItem, ScoreBreakdown } from '../../src/domain/types.js';
 
 function rawItem(externalId: string, over: Partial<RawItem> = {}): RawItem {
   return {
@@ -68,6 +68,25 @@ describe('backfillSummaries', () => {
     expect(res).toEqual({ processed: 1, total: 1 }); // needsAnalysis picked it up
     const healed = await storyRepo.get('partial');
     expect(healed?.whyItMatters).toBe('This is the stake.');
+  });
+
+  it('preserves the score breakdown when healing summary/why (ADR-0039)', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    const breakdown = {
+      base: 5, recencyFactor: 1, components: [], impact: 0.5, signalNudge: 0, signals: {},
+    } as unknown as ScoreBreakdown;
+    await storyRepo.upsert({
+      id: 's', title: 'S', url: null, topic: 'AI',
+      significance: 6, whyItMatters: null, scoreBreakdown: breakdown,
+      memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+
+    const llm = new FakeLLM({ analyze: { summary: 'Healed.', whyItMatters: 'Stake.' } });
+    await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
+
+    const healed = await storyRepo.get('s');
+    expect(healed?.whyItMatters).toBe('Stake.');
+    expect(healed?.scoreBreakdown).toEqual(breakdown); // not clobbered to null
   });
 
   it('leaves fully-analyzed stories untouched', async () => {

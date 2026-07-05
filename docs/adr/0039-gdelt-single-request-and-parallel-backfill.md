@@ -48,7 +48,10 @@ ADR-0038 code** (2 ticks, 252 Stories) — confirmed the ADR-0038 fixes landed (
    the first `concurrency` in flight are always the highest-significance (the ones most
    likely to be displayed). `reasoner.backfillPerTick` is nudged 8 → 12 (a small,
    cost-bounded bump, not a brute-force increase); concurrency comes from the existing
-   `dedup.confirmConcurrency` knob.
+   `dedup.confirmConcurrency` knob. Parallelising also exposed a latent correctness bug:
+   backfill's upsert omitted `scoreBreakdown`, so every healed Story had its ADR-0032
+   "why this score" snapshot nulled. Backfill now carries the existing breakdown through
+   (it only rewrites summary/whyItMatters, never re-scores).
 
 ## Consequences
 
