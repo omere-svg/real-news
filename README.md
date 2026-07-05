@@ -137,9 +137,17 @@ boot). Secrets and deploy knobs come from the environment:
 
 ## Deploy (public URL)
 
-**Status: live in production** on **Render** (free tier) with a hosted **Turso** (libsql)
-database — push-to-`main` auto-redeploys via [`render.yaml`](render.yaml). Full walkthrough:
-[`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md).
+Two supported paths, both with a hosted **Turso** (libsql) database (so the service disk can be
+ephemeral):
+
+- **Always-free VM — recommended for 24/7 (no sleep, no bandwidth cap):**
+  [`docs/DEPLOY-ORACLE-CLOUD.md`](docs/DEPLOY-ORACLE-CLOUD.md). Runs the `Dockerfile` via
+  [`docker-compose.yml`](docker-compose.yml). Preferred because a long-lived worker on a free PaaS
+  hits sleep + egress caps — Render's free *Hobby* workspace caps outbound bandwidth at 5 GB/month
+  and suspends the workspace when exceeded.
+- **Render (free tier), push-to-deploy:** [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md) via
+  [`render.yaml`](render.yaml). Simplest to set up, but needs a `/health` keep-alive pinger and can
+  suspend on the 5 GB bandwidth cap.
 
 **Share the Telegram bot:** the bot is open to everyone (see cost controls above), so just send
 people its link — `https://t.me/<your-bot-username>` (the `@username` you set in @BotFather).

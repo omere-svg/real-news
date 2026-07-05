@@ -1,8 +1,14 @@
 # Deploy to Render (free, push-to-deploy)
 
-> **Status: LIVE in production.** Running on Render free tier + hosted Turso, push-to-`main`
-> auto-redeploys. The Telegram bot is **open to everyone** (`telegram.openAccess: true`); spend
-> is bounded by the per-user and total daily quotas in `config/horizon.yaml` (`telegram.limits`).
+> **⚠️ Bandwidth cap.** Render's free *Hobby* workspace includes only **5 GB/month of outbound
+> bandwidth** and **suspends the whole workspace** when exceeded — a 24/7 worker (per-tick Turso
+> vector sync + Telegram long-poll) burns that over a month. For an always-on deploy with no sleep
+> and no bandwidth cap, prefer the **[Oracle Cloud always-free VM path](DEPLOY-ORACLE-CLOUD.md)**.
+> To stay on Render, either add a card (overage $0.15/GB) or reduce egress (e.g. `embedder.dimensions`
+> 1536 → 512 to shrink the vector sync).
+
+> The Telegram bot is **open to everyone** (`telegram.openAccess: true`); spend is bounded by the
+> per-user and total daily quotas in `config/horizon.yaml` (`telegram.limits`).
 
 The free, git-push path for Project Horizon (ADR-0031). Every push to `main`
 auto-redeploys. Zero app code change — it uses the existing `Dockerfile`,
