@@ -2,7 +2,9 @@
 # at boot. Secrets (OPENAI_API_KEY, TELEGRAM_BOT_TOKEN) live in .env, never here.
 
 # The background loop wakes this often. "Every X minutes" (ADR-0001).
-tickIntervalMinutes: 15
+# Kept comfortably above a tick's wall-time; a re-entrancy guard also prevents
+# overlapping ticks if one ever runs long (ADR-0038).
+tickIntervalMinutes: 20
 
 # Sources to extract from each tick (ADR-0004). Strictly official public APIs.
 # maxItems kept modest so per-tick LLM cost stays low; raise per source as needed.
@@ -113,6 +115,8 @@ reasoner:
   cheapModel: gpt-4o-mini
   deepModel: gpt-4o
   deepAnalysisTopN: 10
+  backfillMaxOnBoot: 500   # heal more of the cache on boot (ADR-0038)
+  backfillPerTick: 8       # steady-state: heal a few summary/why-null stories each tick (ADR-0038)
 
 # Dedup embeddings (ADR-0018). `openai` is neural with a hashing fallback;
 # `hashing` is fully offline / zero-cost. dimensions also sets the fallback width.
@@ -125,6 +129,8 @@ embedder:
 dedup:
   candidateThreshold: 0.78
   recentWindowHours: 72   # how far back a developing story can accrete corroboration
+  crossTopic: true        # resolve same-event stories even when classified into different Topics (ADR-0038)
+  confirmConcurrency: 8   # in-flight LLM confirm calls in cluster/resolve — keeps a tick fast (ADR-0038)
   # Entity-aware blocking (ADR-0036): pairs sharing >= minSharedEntities named
   # entities only need to clear relaxedThreshold. Set enabled:false to revert to
   # pure cosine; tune the knobs if it over-merges or adds too many confirm calls.

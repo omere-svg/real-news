@@ -52,6 +52,35 @@ describe('backfillSummaries', () => {
     expect(fresh?.summary).toBe('Keep me.'); // untouched
   });
 
+  it('heals a story that has a summary but a null whyItMatters (ADR-0038)', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    await rawItemRepo.upsert([rawItem('1', { title: 'Fallback lead', text: 'Something happened.' })]);
+    // Only ever got a deterministic fallback summary — never top-N, so no whyItMatters.
+    await storyRepo.upsert({
+      id: 'partial', title: 'Fallback lead', url: null, topic: 'Climate',
+      significance: 7, summary: 'Something happened.', whyItMatters: null,
+      memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+
+    const llm = new FakeLLM({ analyze: { summary: 'Full summary.', whyItMatters: 'This is the stake.' } });
+    const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
+
+    expect(res).toEqual({ processed: 1, total: 1 }); // needsAnalysis picked it up
+    const healed = await storyRepo.get('partial');
+    expect(healed?.whyItMatters).toBe('This is the stake.');
+  });
+
+  it('leaves fully-analyzed stories untouched', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    await storyRepo.upsert({
+      id: 'done', title: 'Done', url: null, topic: 'AI',
+      significance: 5, summary: 'Has summary.', whyItMatters: 'Has why.',
+      memberRefs: [{ source: 'hackernews', externalId: '9' }],
+    });
+    const res = await backfillSummaries({ storyRepo, rawItemRepo, llm: new FakeLLM() }, {});
+    expect(res).toEqual({ processed: 0, total: 0 });
+  });
+
   it('all: redoes every story regardless of existing summary', async () => {
     const { storyRepo, rawItemRepo } = await setup();
     await storyRepo.upsert({

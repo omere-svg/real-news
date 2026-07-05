@@ -1,5 +1,6 @@
 import { representativeOf, storyIdOf } from '../domain/cluster.js';
 import { cosine } from '../embedding/cosine.js';
+import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import type { Cluster, RawItem, RawItemRef } from '../domain/types.js';
 import type { StoredVector, StoryRepo } from '../db/story-repo.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
@@ -37,6 +38,16 @@ export interface ResolveOptions {
   readonly candidateThreshold: number;
   /** How far back to consider stored Stories for a match. */
   readonly recentWindowHours: number;
+  /**
+   * Match across ALL Topics rather than only the Cluster's own Topic (ADR-0038).
+   * The same event is often classified inconsistently across sources (an
+   * earthquake as Climate vs Geopolitics), so a same-Topic gate blocks the merge.
+   * The LLM confirm + high threshold still guard against false merges. Off ⇒
+   * legacy same-Topic behaviour.
+   */
+  readonly crossTopic?: boolean;
+  /** Max concurrent confirm calls; defaults to DEFAULT_CONFIRM_CONCURRENCY. */
+  readonly confirmConcurrency?: number;
 }
 
 /**
@@ -71,39 +82,69 @@ export async function resolve(
   const vectorByItem = new Map(embedded.map((e) => [refKey(e.item), e.vector]));
   const sinceMs = deps.clock.now() - opts.recentWindowHours * HOUR_MS;
 
-  const out: IdentifiedCluster[] = [];
-  for (const cluster of clusters) {
-    const rep = representativeOf(cluster);
-    const vector = vectorByItem.get(refKey(rep)) ?? [];
+  // Resolve each Cluster independently and concurrently — this pass only READS
+  // the store (writes happen later in the upsert loop), so bounded-parallel
+  // matching is safe and keeps a tick's wall-time under the interval (ADR-0038).
+  const resolved = await mapWithConcurrency(
+    clusters,
+    opts.confirmConcurrency ?? DEFAULT_CONFIRM_CONCURRENCY,
+    async (cluster): Promise<IdentifiedCluster> => {
+      const rep = representativeOf(cluster);
+      const vector = vectorByItem.get(refKey(rep)) ?? [];
 
-    const candidates = await deps.storyRepo.recentVectors({
-      topic: cluster.topic,
-      sinceMs,
-    });
-    const matchId = bestMatch(vector, candidates, opts.candidateThreshold);
+      const candidates = await deps.storyRepo.recentVectors({
+        ...(opts.crossTopic ? {} : { topic: cluster.topic }),
+        sinceMs,
+      });
+      const matchId = bestMatch(vector, candidates, opts.candidateThreshold);
 
-    if (matchId) {
-      const existing = await deps.storyRepo.get(matchId);
-      const confirmed =
-        existing !== null &&
-        (await deps.llm.confirmSameStory(
-          { title: rep.title, text: rep.text },
-          { title: existing.title, text: null },
-        ));
-      if (existing && confirmed) {
-        const priorItems = await loadItems(existing.memberRefs, deps.rawItemRepo);
-        out.push({
-          id: matchId,
-          cluster: { ...cluster, items: mergeItems(cluster.items, priorItems) },
-          vector,
-        });
-        continue;
+      if (matchId) {
+        const existing = await deps.storyRepo.get(matchId);
+        const confirmed =
+          existing !== null &&
+          (await deps.llm.confirmSameStory(
+            { title: rep.title, text: rep.text },
+            { title: existing.title, text: null },
+          ));
+        if (existing && confirmed) {
+          const priorItems = await loadItems(existing.memberRefs, deps.rawItemRepo);
+          // Keep the accreting Story's own Topic so it doesn't flap tick-to-tick
+          // when a later member was classified differently (ADR-0038).
+          return {
+            id: matchId,
+            cluster: { topic: existing.topic, items: mergeItems(cluster.items, priorItems) },
+            vector,
+          };
+        }
       }
-    }
 
-    out.push({ id: storyIdOf(cluster), cluster, vector });
+      return { id: storyIdOf(cluster), cluster, vector };
+    },
+  );
+
+  // Two distinct Clusters can resolve to the SAME Story id (both matched one
+  // prior Story, or two fresh clusters share a representative). The upsert loop
+  // writes by id, so without this the second write would clobber the first and
+  // orphan the first's members. Fold same-id results into one (ADR-0038).
+  return dedupeById(resolved);
+}
+
+/** Merge IdentifiedClusters that share a Story id: union their items, keep the first vector/topic. */
+function dedupeById(resolved: readonly IdentifiedCluster[]): IdentifiedCluster[] {
+  const byId = new Map<string, IdentifiedCluster>();
+  for (const r of resolved) {
+    const existing = byId.get(r.id);
+    if (!existing) {
+      byId.set(r.id, r);
+      continue;
+    }
+    byId.set(r.id, {
+      id: r.id,
+      cluster: { topic: existing.cluster.topic, items: mergeItems(existing.cluster.items, r.cluster.items) },
+      vector: existing.vector,
+    });
   }
-  return out;
+  return [...byId.values()];
 }
 
 /** Load the persisted Raw Items behind a Story's member refs (skips any missing). */

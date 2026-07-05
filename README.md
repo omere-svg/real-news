@@ -169,6 +169,13 @@ reasoning/presentation stack ship, deployed on Render + Turso (ADR-0031); every 
 inspectable score breakdown ("why this score", ADR-0032); and every tick is persisted and
 surfaced on a `/dashboard` health page (ADR-0033).
 
+**Production hardening (ADR-0038)** — a review of the live DB drove a throughput/dedup/
+integrity pass, tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md) §4: bounded-concurrency
+ticks (~17 min → ~1.5 min) with a re-entrancy guard, orphan-Story pruning, cross-topic
+cross-tick dedup, a sharper classifier (`Other` 22% → 6%, disasters ⇒ `Climate`), and
+steady-state summary/why backfill. All verified end-to-end; deploys to prod on the next
+push to `main`.
+
 Optional further deepening (not on the critical path — see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
 GDELT rate-limit pacing + signal enrichment (ADR-0032 note), a retention prune / LLM-reflection
 advisor over `tick_reports` (ADR-0033), and semantic retrieval over `story_vectors` for chat.

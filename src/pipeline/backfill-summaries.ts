@@ -6,11 +6,11 @@ import type { RawItemRef, Story } from '../domain/types.js';
 /**
  * Backfill a Story's factual `summary` + concise `whyItMatters` via the deep tier
  * for Stories already in the cache. The Tick only analyzes the top-N clusters it
- * re-fetches each cycle, so Stories from earlier ticks (or created before the
- * `summary` field existed) can sit with a null summary forever; this closes that
- * gap. Idempotent: it upserts in place, preserving id, url, membership and
- * first-seen time. Processes the most significant Stories first so the displayed
- * brief heals first.
+ * re-fetches each cycle, so Stories from earlier ticks (or that only ever got a
+ * deterministic fallback summary) can sit with a null summary and/or a null
+ * `whyItMatters` forever; `needsAnalysis` targets both. Idempotent: it upserts in
+ * place, preserving id, url, membership and first-seen time. Processes the most
+ * significant Stories first so the displayed brief heals first.
  */
 export interface BackfillDeps {
   readonly storyRepo: StoryRepo;
@@ -47,12 +47,22 @@ export function needsSummary(story: Story): boolean {
   return !story.summary || story.summary.trim().length === 0;
 }
 
+/**
+ * True when a Story still needs deep-tier enrichment: either no factual summary,
+ * or no "why it matters". Stories that got only a deterministic fallback summary
+ * (source lead) never entered the top-N, so they have a summary but a null
+ * whyItMatters — `needsSummary` alone would skip them forever (ADR-0038).
+ */
+export function needsAnalysis(story: Story): boolean {
+  return needsSummary(story) || !story.whyItMatters || story.whyItMatters.trim().length === 0;
+}
+
 export async function backfillSummaries(
   deps: BackfillDeps,
   opts: BackfillOptions = {},
 ): Promise<BackfillResult> {
   const all = await deps.storyRepo.all();
-  let targets = opts.all ? all : all.filter(needsSummary);
+  let targets = opts.all ? all : all.filter(needsAnalysis);
   // Most significant first: the stories most likely to be displayed heal first.
   targets = [...targets].sort((a, b) => b.significance - a.significance);
   if (opts.max && opts.max > 0) targets = targets.slice(0, opts.max);

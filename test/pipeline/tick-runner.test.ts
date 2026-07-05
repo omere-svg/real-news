@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TickRunner } from '../../src/pipeline/tick-runner.js';
 import { DrizzleRawItemRepo } from '../../src/db/raw-item-repo.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
@@ -305,6 +305,24 @@ describe('TickRunner', () => {
     for (const s of stories) {
       expect(s.whyItMatters).toBe(`analysis of ${s.title}`);
     }
+  });
+
+  it('sweeps orphaned stories at the end of every tick (ADR-0038)', async () => {
+    const { runner, storyRepo } = await build({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Live story', { topic: 'AI' })],
+        }),
+      ],
+      embedder: new FakeEmbedder({ 'Live story': [1, 0, 0] }),
+    });
+    const pruneSpy = vi.spyOn(storyRepo, 'pruneOrphans');
+
+    await runner.run();
+
+    expect(pruneSpy).toHaveBeenCalledTimes(1); // orphan sweep runs each tick
+    // And a normal tick never leaves a member-less story behind.
+    for (const s of await storyRepo.all()) expect(s.memberRefs.length).toBeGreaterThan(0);
   });
 
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {

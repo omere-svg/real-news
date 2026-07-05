@@ -132,11 +132,24 @@ export class Reasoner implements LLMClient {
 
   async classify(input: ClassifyInput): Promise<Classification> {
     const json = await this.transport.completeJson(
-      `Classify this news item. Respond with a JSON object ` +
+      `Classify this news item into exactly one Topic. Respond with a JSON object ` +
         `{"topic": one of ${JSON.stringify(TOPICS)}}.\n\n` +
-        `Use "Israel" when the story is primarily about Israel (its politics, society, ` +
-        `economy, or security), even if it also touches another subject — place wins. ` +
-        `Otherwise pick the best subject; use "Other" only when nothing fits.\n\n` +
+        `Topic definitions (pick the single best fit):\n` +
+        `- "Israel": primarily about Israel — its politics, society, economy, or security. ` +
+        `Place wins: use this even if the story also touches another subject.\n` +
+        `- "AI": artificial intelligence, machine learning, LLMs, AI products/research.\n` +
+        `- "Climate": natural disasters and extreme events (earthquakes, storms, hurricanes, ` +
+        `floods, wildfires, volcanoes, droughts) AND climate/environment science or policy.\n` +
+        `- "Health": disease, outbreaks, medicine, drugs/vaccines, public health, healthcare.\n` +
+        `- "Science": research and discovery not covered by AI/Health/Climate (physics, space, ` +
+        `biology, math, etc.).\n` +
+        `- "Business": companies, markets, finance, the economy, trade, jobs.\n` +
+        `- "Sports": games, matches, athletes, sporting competitions.\n` +
+        `- "Geopolitics": international relations, war, armed conflict, diplomacy, cross-border ` +
+        `crises (that are not primarily about Israel).\n` +
+        `- "Politics": domestic government, elections, legislation, and policy (not Israel).\n` +
+        `- "Other": ONLY as a genuine last resort when nothing above fits. Avoid it — a major ` +
+        `real-world event almost always fits a specific Topic (e.g. an earthquake is Climate).\n\n` +
         `Title: ${input.title}\n${input.text ? `Text: ${input.text}\n` : ''}`,
       { tier: 'cheap', maxTokens: 256 },
     );

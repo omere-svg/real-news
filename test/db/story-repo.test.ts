@@ -252,5 +252,53 @@ describe('StoryRepo', () => {
       });
       expect(tooOld).toEqual([]);
     });
+
+    it('recentVectors with no topic returns all topics in the window (cross-topic, ADR-0038)', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(5000));
+      await repo.upsert(
+        storyUpsert({ id: 'ai', topic: 'AI', memberRefs: [{ source: 'hackernews', externalId: 'ai1' }] }),
+      );
+      await repo.upsert(
+        storyUpsert({ id: 'clm', topic: 'Climate', memberRefs: [{ source: 'gdelt', externalId: 'c1' }] }),
+      );
+      await repo.putVector('ai', [1, 0, 0]);
+      await repo.putVector('clm', [0, 1, 0]);
+
+      const all = await repo.recentVectors({ sinceMs: 0 });
+      expect(new Set(all.map((v) => v.storyId))).toEqual(new Set(['ai', 'clm']));
+    });
+  });
+
+  describe('pruneOrphans (ADR-0038)', () => {
+    it('deletes stories with no members (and their vectors), keeps the rest', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+      // Two stories; move the shared member from A to B so A is left member-less.
+      await repo.upsert(storyUpsert({ id: 'a', memberRefs: [{ source: 'hackernews', externalId: '42' }] }));
+      await repo.putVector('a', [1, 0, 0]);
+      await repo.upsert(storyUpsert({ id: 'b', memberRefs: [{ source: 'hackernews', externalId: '42' }] }));
+      await repo.putVector('b', [0, 1, 0]);
+
+      expect((await repo.get('a'))?.memberRefs).toHaveLength(0); // orphaned
+
+      const pruned = await repo.pruneOrphans();
+
+      expect(pruned).toBe(1);
+      expect(await repo.get('a')).toBeNull(); // gone
+      expect(await repo.get('b')).not.toBeNull(); // kept
+      // A's vector is gone; B's vector survives.
+      const vectors = await repo.recentVectors({ sinceMs: 0 });
+      expect(vectors.map((v) => v.storyId)).toEqual(['b']);
+    });
+
+    it('is a no-op when every story has members', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+      await repo.upsert(storyUpsert({ id: 'a', memberRefs: [{ source: 'hackernews', externalId: '1' }] }));
+      expect(await repo.pruneOrphans()).toBe(0);
+      expect(await repo.get('a')).not.toBeNull();
+    });
   });
 });

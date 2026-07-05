@@ -4,6 +4,7 @@ import {
   eq,
   gte,
   inArray,
+  isNull,
   or,
   type AnyColumn,
   type SQL,
@@ -34,9 +35,10 @@ export interface StoredVector {
   readonly vector: number[];
 }
 
-/** Blocking filter for cross-tick dedup: same topic, recent window (ADR-0017). */
+/** Blocking filter for cross-tick dedup: recent window, optionally one topic (ADR-0017/0038). */
 export interface RecentVectorsQuery {
-  readonly topic: Topic;
+  /** Restrict to this Topic; omit to match across all Topics (cross-topic resolve, ADR-0038). */
+  readonly topic?: Topic;
   /** Lower bound on `updatedAt` — the recency window. */
   readonly sinceMs: number;
 }
@@ -71,6 +73,13 @@ export interface StoryRepo {
   putVector(storyId: string, vector: number[]): Promise<void>;
   /** Stored vectors for recent Stories in one partition — the cross-tick blocking set. */
   recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]>;
+  /**
+   * Delete Stories that have no membership rows (and their vectors). Members can
+   * be reassigned to another Story across ticks, which can leave the prior owner
+   * empty; a per-tick sweep keeps the read-model clean (ADR-0038). Returns the
+   * number of Stories pruned.
+   */
+  pruneOrphans(): Promise<number>;
 }
 
 export class DrizzleStoryRepo implements StoryRepo {
@@ -189,17 +198,30 @@ export class DrizzleStoryRepo implements StoryRepo {
   }
 
   async recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]> {
+    const filters: SQL[] = [gte(stories.updatedAt, query.sinceMs)];
+    if (query.topic !== undefined) filters.push(eq(stories.topic, query.topic));
     const rows = await this.db
       .select({ storyId: storyVectors.storyId, vector: storyVectors.vector })
       .from(storyVectors)
       .innerJoin(stories, eq(storyVectors.storyId, stories.id))
-      .where(
-        and(
-          eq(stories.topic, query.topic),
-          gte(stories.updatedAt, query.sinceMs),
-        ),
-      );
+      .where(and(...filters));
     return rows.map((r) => ({ storyId: r.storyId, vector: r.vector }));
+  }
+
+  async pruneOrphans(): Promise<number> {
+    // Stories with zero membership rows (left-join → null member side).
+    const orphans = await this.db
+      .select({ id: stories.id })
+      .from(stories)
+      .leftJoin(membership, eq(stories.id, membership.storyId))
+      .where(isNull(membership.storyId));
+    const ids = orphans.map((r) => r.id);
+    if (ids.length === 0) return 0;
+
+    // Vectors first: story_vectors.story_id references stories.id.
+    await this.db.delete(storyVectors).where(inArray(storyVectors.storyId, ids));
+    await this.db.delete(stories).where(inArray(stories.id, ids));
+    return ids.length;
   }
 
   /** Attach memberRefs to a page of story rows in ONE membership query (no N+1). */

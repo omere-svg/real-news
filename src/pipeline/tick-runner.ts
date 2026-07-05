@@ -28,6 +28,10 @@ export interface TickConfig {
   readonly sourceWeights: Partial<Record<SourceId, number>>;
   /** Max absolute numeric-Signal nudge to significance (ADR-0025); 0/absent disables it. */
   readonly maxSignalAdjustment?: number;
+  /** Resolve across all Topics, not just the Cluster's own (ADR-0038); absent ⇒ same-Topic. */
+  readonly crossTopic?: boolean;
+  /** Max concurrent LLM confirm calls in cluster/resolve (ADR-0038); absent ⇒ default. */
+  readonly confirmConcurrency?: number;
 }
 
 export interface TickRunnerDeps {
@@ -85,11 +89,14 @@ export class TickRunner {
     const clusters = await cluster(embedded, llm, {
       candidateThreshold: config.candidateThreshold,
       ...(config.entityBlocking ? { entityBlocking: config.entityBlocking } : {}),
+      ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
     });
-    // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017).
+    // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017/0038).
     const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock }, {
       candidateThreshold: config.candidateThreshold,
       recentWindowHours: config.recentWindowHours,
+      ...(config.crossTopic ? { crossTopic: config.crossTopic } : {}),
+      ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
     });
 
     const scored = await score(identified.map((i) => i.cluster), llm, {
@@ -107,6 +114,10 @@ export class TickRunner {
       await storyRepo.upsert(toStoryUpsert(analyzed[i] as AnalyzedCluster, id));
       await storyRepo.putVector(id, vector);
     }
+
+    // Reassigning members across ticks can leave a prior Story empty; sweep the
+    // orphans (and their vectors) so the read-model stays clean (ADR-0038).
+    await storyRepo.pruneOrphans();
 
     return {
       extracted: extraction.items.length,

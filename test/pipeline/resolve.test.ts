@@ -127,6 +127,81 @@ describe('resolve', () => {
     expect(out[0]?.cluster.items).toHaveLength(1);
   });
 
+  it('does NOT merge across topics by default (same-topic gate)', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('guardian', 'g1', 'Venezuela earthquake death toll rises');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'guardian:g1', title: prior.title, url: null, topic: 'Geopolitics',
+      significance: 8, whyItMatters: null, memberRefs: [{ source: 'guardian', externalId: 'g1' }],
+    });
+    await storyRepo.putVector('guardian:g1', [1, 0, 0]);
+
+    // Same event, but classified Climate this tick.
+    const fresh = rawItem('wikipedia', 'w1', 'Two earthquakes strike Venezuela');
+    const cluster: Cluster = { items: [fresh], topic: 'Climate' };
+    const out = await resolve(
+      [cluster],
+      [{ item: fresh, topic: 'Climate', vector: [0.99, 0.02, 0] }],
+      { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: true }), clock },
+      opts, // crossTopic not set
+    );
+    expect(out[0]?.id).toBe('wikipedia:w1'); // no cross-topic match → fresh id
+  });
+
+  it('merges across topics when crossTopic is on, keeping the existing story topic (ADR-0038)', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('guardian', 'g1', 'Venezuela earthquake death toll rises');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'guardian:g1', title: prior.title, url: null, topic: 'Geopolitics',
+      significance: 8, whyItMatters: null, memberRefs: [{ source: 'guardian', externalId: 'g1' }],
+    });
+    await storyRepo.putVector('guardian:g1', [1, 0, 0]);
+
+    const fresh = rawItem('wikipedia', 'w1', 'Two earthquakes strike Venezuela');
+    const cluster: Cluster = { items: [fresh], topic: 'Climate' };
+    const out = await resolve(
+      [cluster],
+      [{ item: fresh, topic: 'Climate', vector: [0.99, 0.02, 0] }],
+      { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: true }), clock },
+      { ...opts, crossTopic: true },
+    );
+    expect(out[0]?.id).toBe('guardian:g1'); // adopted the prior story's id across topics
+    expect(out[0]?.cluster.topic).toBe('Geopolitics'); // existing topic preserved, no flap
+    const sources = new Set(out[0]?.cluster.items.map((i) => i.source));
+    expect(sources).toEqual(new Set(['guardian', 'wikipedia']));
+  });
+
+  it('folds two clusters that resolve to the same story id into one (ADR-0038)', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('hackernews', '1', 'Quake hits region');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'hackernews:1', title: prior.title, url: null, topic: 'AI',
+      significance: 5, whyItMatters: null, memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    await storyRepo.putVector('hackernews:1', [1, 0, 0]);
+
+    // Two distinct fresh clusters both match the prior story.
+    const a = rawItem('gdelt', '2', 'Earthquake strikes area');
+    const b = rawItem('guardian', 'g3', 'Quake devastates region');
+    const out = await resolve(
+      [{ items: [a], topic: 'AI' }, { items: [b], topic: 'AI' }],
+      [
+        { item: a, topic: 'AI', vector: [0.99, 0.02, 0] },
+        { item: b, topic: 'AI', vector: [0.98, 0.03, 0] },
+      ],
+      { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: true }), clock },
+      opts,
+    );
+
+    expect(out).toHaveLength(1); // folded, not two writes to the same id
+    expect(out[0]?.id).toBe('hackernews:1');
+    const sources = new Set(out[0]?.cluster.items.map((i) => i.source));
+    expect(sources).toEqual(new Set(['hackernews', 'gdelt', 'guardian']));
+  });
+
   it('ignores stored stories outside the recency window', async () => {
     const { storyRepo, rawItemRepo, clock } = await fixtures();
     // Story stored "now"; then advance the clock far past the window.

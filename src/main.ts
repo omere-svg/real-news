@@ -100,7 +100,10 @@ function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | n
       return new WikipediaSource({ ...base, clock: systemClock });
     // Phase 4 — media + thematic anchors (ADR-0021).
     case 'guardian':
-      return new RssSource({ ...base, id: 'guardian', feedUrl: 'https://www.theguardian.com/world/rss', topic: 'Geopolitics' });
+      // The Guardian "world" feed spans many Topics (disasters, health, politics),
+      // so we DON'T hard-code a Topic — let the classifier decide per item, which
+      // also lets same-event articles converge on one Topic for dedup (ADR-0038).
+      return new RssSource({ ...base, id: 'guardian', feedUrl: 'https://www.theguardian.com/world/rss' });
     case 'timesofisrael':
       return new RssSource({ ...base, id: 'timesofisrael', feedUrl: 'https://www.timesofisrael.com/feed/', topic: 'Israel' });
     case 'nber':
@@ -184,7 +187,16 @@ async function main(): Promise<void> {
   const config = loadConfig(CONFIG_PATH);
 
   if (DB_URL.startsWith('file:')) mkdirSync('./data', { recursive: true });
-  const db = openDb(DB_URL, process.env.DB_AUTH_TOKEN);
+  // Fail fast on a common misconfig: a remote libsql:// URL with no auth token
+  // silently 401s deep in the driver. Refuse to connect unauthenticated instead.
+  const dbAuthToken = process.env.DB_AUTH_TOKEN;
+  if (DB_URL.startsWith('libsql://') && !dbAuthToken) {
+    throw new Error(
+      'DB_URL is a remote libsql:// URL but DB_AUTH_TOKEN is not set — refusing to ' +
+        'connect unauthenticated. Set DB_AUTH_TOKEN (see .env.example / render.yaml).',
+    );
+  }
+  const db = openDb(DB_URL, dbAuthToken);
   await migrate(db, { migrationsFolder: './drizzle' });
 
   // Restrict the local DB (cache + chat preferences) to the owner (ADR-0023).
@@ -235,7 +247,15 @@ async function main(): Promise<void> {
     void tickReportRepo.record(rec).catch((err) => console.error('[tick] record failed:', err));
   };
 
+  // A tick can take longer than the interval; without this guard setInterval
+  // would start a second tick over the first and race the same DB (ADR-0038).
+  let ticking = false;
   const runTick = async (): Promise<void> => {
+    if (ticking) {
+      console.warn('[tick] previous tick still running — skipping this interval');
+      return;
+    }
+    ticking = true;
     const ranAt = systemClock.now();
     try {
       const report = await runner.run();
@@ -245,6 +265,15 @@ async function main(): Promise<void> {
           `signals=${report.signalsObserved} ` +
           `skipped=[${report.skipped}] failed=[${report.failed.map((f) => f.source)}]`,
       );
+      // Steady-state healing (ADR-0038): deep-analyze a few cached Stories still
+      // missing a summary / whyItMatters, so the whole cache converges over time.
+      // In-loop (within the tick guard) so it never races the pipeline's writes.
+      if (config.reasoner.backfillPerTick > 0) {
+        await backfillSummaries(
+          { storyRepo, rawItemRepo, llm },
+          { max: config.reasoner.backfillPerTick },
+        ).catch((err) => console.error('[backfill] per-tick failed:', err));
+      }
     } catch (err) {
       // Record the failed tick too (ADR-0033), then keep the loop alive.
       recordTick({
@@ -261,6 +290,8 @@ async function main(): Promise<void> {
         signalsFailed: [],
       });
       console.error('[tick] failed:', err); // never let a bad tick kill the loop
+    } finally {
+      ticking = false;
     }
   };
 

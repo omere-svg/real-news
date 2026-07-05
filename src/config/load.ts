@@ -44,6 +44,8 @@ export function toTickConfig(config: Config): TickConfig {
     maxSignalAdjustment: config.scoring.maxSignalAdjustment,
     deepAnalysisTopN: config.reasoner.deepAnalysisTopN,
     sourceWeights: sourceWeightsOf(config),
+    crossTopic: config.dedup.crossTopic,
+    confirmConcurrency: config.dedup.confirmConcurrency,
   };
 }
 

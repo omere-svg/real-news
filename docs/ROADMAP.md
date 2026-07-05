@@ -1,7 +1,11 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-06-29 (**328 tests green, 37 ADRs**). Phases 1–4 complete
+the plan to finish it. Updated 2026-07-05 (**341 tests green, 38 ADRs**; live on Render +
+Turso). A production-DB review drove a throughput/dedup/integrity hardening pass
+(**ADR-0038**): bounded-concurrency ticks (~17 min → ~1.5 min), a re-entrancy guard,
+orphan-Story pruning, cross-topic cross-tick dedup, a sharper classifier (`Other` 22% → 6%),
+and steady-state summary/why backfill. Phases 1–4 complete
 (all 9 Phase-4 sources built, incl. the 2 numeric Signal sources + the Story/Signal split,
 ADR-0025); security & resource hardening and brief-readability complete. **ADR-0031** adds the
 `Health` + `Climate` Topics and a keyless source wave (TheSportsDB→Sports, WHO→Health, NASA
@@ -146,3 +150,27 @@ signal enrichment (ADR-0032 note); a retention prune + LLM "reflection" advisor 
 `tick_reports` (ADR-0033); semantic retrieval over `story_vectors` for chat grounding;
 per-member source URLs in the brief; entity-linking Pageviews to clusters / persisting Signal
 history (noted in ADR-0025).
+
+---
+
+## 4. Production hardening pass — ADR-0038 (resolved 2026-07-05)
+
+A deep review of the live Turso DB (478 ticks) surfaced four real gaps invisible to the
+unit tests. All four are now **fixed and verified** on a fresh end-to-end run (3 ticks,
+real sources + OpenAI):
+
+| Was (prod, old code) | Now (ADR-0038, verified) |
+|---|---|
+| Tick wall-time **~17–21 min** > 15-min interval; `setInterval` with no guard → overlapping ticks | Bounded-concurrency confirm calls (`dedup.confirmConcurrency`) → **~1.5 min/tick**; re-entrancy guard in `main.ts`; interval raised to 20 |
+| **~40 member-less stories** left by cross-tick reassignment | `StoryRepo.pruneOrphans()` each tick → **0** member-less stories, 0 orphans, 0 missing vectors |
+| Same event fragmented into **13+ stories** (resolve's same-Topic gate + inconsistent classification) | `dedup.crossTopic` resolve (LLM-confirmed) + stable-topic-on-merge + same-id folding; Venezuela quakes now **one `Climate` story** |
+| **`Other` ~22%**; disasters mis-tagged; Guardian world hard-coded to `Geopolitics` | Topic-defining classify prompt + Guardian world un-hardcoded → **`Other` ~6%**, disasters ⇒ `Climate` |
+| `why_it_matters` null ~91%, `summary` ~31%; backfill only on boot | `needsAnalysis` backfill (summary **or** why) + steady-state `reasoner.backfillPerTick`; converges over time |
+
+Every change is behind a config flag with a safe default and needs no migration
+(`crossTopic: false` reverts to same-Topic resolve). See ADR-0038 for the full rationale.
+
+**Residual (not blocking):** classification still has rare edge cases (a sports
+retrospective that mentioned an earthquake landed in `Climate`); `whyItMatters` coverage
+converges only as fast as `backfillPerTick`. **Deploy note:** the live prod DB keeps the
+old behaviour until Render redeploys the new code (push to `main`).

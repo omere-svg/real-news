@@ -44,6 +44,13 @@ export const configSchema = z.object({
     backfillOnBoot: z.boolean().default(true),
     /** Max Stories the boot backfill will (re)analyze — bounds one-time cost. */
     backfillMaxOnBoot: z.number().int().nonnegative().default(200),
+    /**
+     * Steady-state healing: after each tick, deep-analyze up to this many cached
+     * Stories that still lack a summary or whyItMatters, most-significant first.
+     * Lets the whole cache converge over time instead of only on boot (ADR-0038).
+     * 0 disables.
+     */
+    backfillPerTick: z.number().int().nonnegative().default(0),
   }),
 
   http: z
@@ -71,6 +78,15 @@ export const configSchema = z.object({
     candidateThreshold: z.number().min(0).max(1).default(0.78),
     /** How far back cross-tick dedup looks for a matching Story (ADR-0017). */
     recentWindowHours: z.number().positive().default(72),
+    /**
+     * Resolve a Cluster against recent Stories of ANY Topic, not just its own
+     * (ADR-0038). The same event is often classified inconsistently across
+     * sources, and a same-Topic gate blocks the merge; the LLM confirm + high
+     * threshold still guard against false merges. Set false for legacy behaviour.
+     */
+    crossTopic: z.boolean().default(true),
+    /** Max concurrent LLM confirm calls in cluster/resolve — tick throughput (ADR-0038). */
+    confirmConcurrency: z.number().int().positive().default(8),
     /** Entity-aware blocking layer (ADR-0036) — toggle + tune; disable to revert. */
     entityBlocking: z
       .object({

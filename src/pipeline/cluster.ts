@@ -3,6 +3,7 @@ import type { Cluster } from '../domain/types.js';
 import { cosine } from '../embedding/cosine.js';
 import { dedupText } from './embed.js';
 import { extractEntities, sharedEntityCount } from './entities.js';
+import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import type { EmbeddedItem } from './types.js';
 
 /** Entity-aware blocking (ADR-0036). Optional layer; absent ⇒ pure cosine. */
@@ -18,6 +19,8 @@ export interface ClusterOptions {
   readonly candidateThreshold: number;
   /** Optional entity-aware threshold relaxation (ADR-0036); omit to disable. */
   readonly entityBlocking?: EntityBlocking;
+  /** Max concurrent confirm calls; defaults to DEFAULT_CONFIRM_CONCURRENCY. */
+  readonly confirmConcurrency?: number;
 }
 
 /**
@@ -85,15 +88,25 @@ export async function cluster(
     parent[find(a)] = find(b);
   };
 
-  for (const [i, j] of candidatePairs(items, opts.candidateThreshold, opts.entityBlocking)) {
-    const a = items[i] as EmbeddedItem;
-    const b = items[j] as EmbeddedItem;
-    const same = await llm.confirmSameStory(
-      { title: a.item.title, text: a.item.text },
-      { title: b.item.title, text: b.item.text },
-    );
-    if (same) union(i, j);
-  }
+  // Confirm the candidate pairs concurrently (each is an independent LLM call),
+  // then apply the confirmed merges deterministically in pair order so the
+  // union-find result is identical to the old serial loop (ADR — tick throughput).
+  const pairs = candidatePairs(items, opts.candidateThreshold, opts.entityBlocking);
+  const confirmed = await mapWithConcurrency(
+    pairs,
+    opts.confirmConcurrency ?? DEFAULT_CONFIRM_CONCURRENCY,
+    ([i, j]) => {
+      const a = items[i] as EmbeddedItem;
+      const b = items[j] as EmbeddedItem;
+      return llm.confirmSameStory(
+        { title: a.item.title, text: a.item.text },
+        { title: b.item.title, text: b.item.text },
+      );
+    },
+  );
+  pairs.forEach(([i, j], k) => {
+    if (confirmed[k]) union(i, j);
+  });
 
   // Group by root, preserving first-occurrence order.
   const groups = new Map<number, EmbeddedItem[]>();
