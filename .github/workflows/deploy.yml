@@ -41,6 +41,11 @@ jobs:
           else
             echo "no lockfile change; skipping npm ci"
           fi
+          # Compile TypeScript -> dist/ so the service runs plain node (not tsx) — far
+          # lighter on RAM for this small VM. Build failure aborts the deploy (set -e),
+          # leaving the currently-running process untouched.
+          echo "building app"
+          npm run build
           # Restart applies any pending DB migrations on boot (main.ts calls migrate()).
           sudo systemctl restart horizon
           # Wait for boot + migrations + server to come up (slow 1-core box); fail the
