@@ -1,7 +1,9 @@
 name: Deploy to VM
 
-# Deploy-on-push: whenever main changes, SSH into the always-on VM
-# (docs/DEPLOY-ORACLE-CLOUD.md) and update the running systemd service.
+# Deploy-on-push: whenever main changes, build in CI (plenty of RAM) and ship the
+# compiled dist/ to the always-on VM (docs/DEPLOY-ORACLE-CLOUD.md), then restart the
+# systemd service. The VM is tiny (~500MB RAM), so we deliberately NEVER compile there
+# — building tsc on the box thrashes swap and can freeze it.
 # Secrets: DEPLOY_SSH_KEY (private key), DEPLOY_HOST (VM public IP).
 on:
   push:
@@ -17,6 +19,18 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps + compile (in CI, not on the tiny VM)
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -24,7 +38,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Pull latest + restart service
+      - name: Sync source on the VM (config, migrations, package.json)
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
           set -euo pipefail
@@ -33,19 +47,26 @@ jobs:
           git fetch --quiet origin main
           git reset --hard origin/main
           AFTER=$(git rev-parse HEAD)
-          echo "deployed: $BEFORE -> $AFTER"
-          # Only reinstall deps when the lockfile actually changed (npm ci is heavy on this small VM).
+          echo "source: $BEFORE -> $AFTER"
+          # Runtime deps only (no tsx/tsc needed on the box anymore). Reinstall only on
+          # a lockfile change — npm ci is heavy on this small VM.
           if [ "$BEFORE" = "$AFTER" ] || git diff --name-only "$BEFORE" "$AFTER" | grep -qx 'package-lock.json'; then
-            echo "running npm ci"
-            npm ci --no-audit --no-fund
+            echo "running npm ci (prod deps only)"
+            npm ci --omit=dev --no-audit --no-fund
           else
             echo "no lockfile change; skipping npm ci"
           fi
-          # Compile TypeScript -> dist/ so the service runs plain node (not tsx) — far
-          # lighter on RAM for this small VM. Build failure aborts the deploy (set -e),
-          # leaving the currently-running process untouched.
-          echo "building app"
-          npm run build
+          EOF
+
+      - name: Ship compiled dist/ to the VM
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'rm -rf ~/real-news/dist'
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r dist "opc@${{ secrets.DEPLOY_HOST }}:~/real-news/"
+
+      - name: Restart service + health check
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
+          set -euo pipefail
           # Restart applies any pending DB migrations on boot (main.ts calls migrate()).
           sudo systemctl restart horizon
           # Wait for boot + migrations + server to come up (slow 1-core box); fail the
