@@ -76,6 +76,13 @@ describe('parseCommand', () => {
     expect(parseCommand('/chat')).toEqual({ kind: 'chat', text: '' });
   });
 
+  it('captures a /start deep-link payload and parses /link (ADR-0040)', () => {
+    expect(parseCommand('/start')).toEqual({ kind: 'start' });
+    expect(parseCommand('/start link_ABC123')).toEqual({ kind: 'start', payload: 'link_ABC123' });
+    expect(parseCommand('/link ABC123')).toEqual({ kind: 'link', code: 'ABC123' });
+    expect(parseCommand('/link')).toEqual({ kind: 'link', code: '' });
+  });
+
   it('treats an unknown or empty input as unknown', () => {
     expect(parseCommand('hello there')).toEqual({ kind: 'unknown', text: 'hello there' });
     expect(parseCommand('/wat')).toEqual({ kind: 'unknown', text: '/wat' });

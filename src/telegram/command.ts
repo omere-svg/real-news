@@ -6,7 +6,10 @@
 export type PrefsField = 'topics' | 'minutes';
 
 export type Command =
-  | { kind: 'start' }
+  /** `/start`, optionally with a deep-link payload (e.g. `link_<code>`, ADR-0040). */
+  | { kind: 'start'; payload?: string }
+  /** Web pairing: `/link <code>` links this chat to a web session (ADR-0040). */
+  | { kind: 'link'; code: string }
   | { kind: 'help' }
   | { kind: 'brief'; minutes?: number }
   | { kind: 'outline'; topic?: string; minutes?: number }
@@ -43,7 +46,11 @@ export function parseCommand(text: string): Command {
 
   switch (name) {
     case 'start':
-      return { kind: 'start' };
+      // Telegram deep links arrive as `/start <payload>` (e.g. from a
+      // `t.me/<bot>?start=link_<code>` link); a bare /start has no payload.
+      return args[0] ? { kind: 'start', payload: args[0] } : { kind: 'start' };
+    case 'link':
+      return { kind: 'link', code: args[0] ?? '' };
     case 'help':
       return { kind: 'help' };
     case 'brief': {

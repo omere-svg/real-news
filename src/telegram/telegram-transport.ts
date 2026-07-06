@@ -10,6 +10,8 @@ export interface TelegramUpdate {
   readonly chatId: number;
   /** Message text; "" for a button tap (carries `callbackData` instead). */
   readonly text: string;
+  /** Sender's Telegram first name, when present — used only for a friendly greeting (ADR-0040). */
+  readonly senderName?: string;
   /** Set when the update is an inline-button tap (ADR-0028): the button's data. */
   readonly callbackData?: string;
   /** The callback query id to acknowledge, paired with `callbackData`. */

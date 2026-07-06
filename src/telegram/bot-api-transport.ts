@@ -83,7 +83,7 @@ export function toUpdates(raw: unknown): TelegramUpdate[] {
   for (const entry of result) {
     const e = entry as {
       update_id?: number;
-      message?: { chat?: { id?: number }; text?: string };
+      message?: { chat?: { id?: number }; text?: string; from?: { first_name?: string } };
       callback_query?: { id?: string; data?: string; message?: { chat?: { id?: number } } };
     };
     if (typeof e.update_id !== 'number') continue;
@@ -104,7 +104,13 @@ export function toUpdates(raw: unknown): TelegramUpdate[] {
     const chatId = e.message?.chat?.id;
     const text = e.message?.text;
     if (typeof chatId === 'number' && typeof text === 'string') {
-      updates.push({ updateId: e.update_id, chatId, text });
+      const senderName = e.message?.from?.first_name;
+      updates.push({
+        updateId: e.update_id,
+        chatId,
+        text,
+        ...(senderName ? { senderName } : {}),
+      });
     }
   }
   return updates;

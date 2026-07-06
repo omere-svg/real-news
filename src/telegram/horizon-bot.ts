@@ -9,6 +9,7 @@ import type {
 } from '../db/chat-preferences-repo.js';
 import type { StoryRepo } from '../db/story-repo.js';
 import type { UsageRepo } from '../db/usage-repo.js';
+import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import type { PresentationDefaults } from '../server/app.js';
@@ -29,6 +30,9 @@ import { canonical } from '../domain/vocab.js';
 
 /** The slice of the Story store the chat feature reads for grounding (ADR-0029). */
 export type StoryReader = Pick<StoryRepo, 'topStories'>;
+
+/** The slice of the web-auth store the bot needs to claim a pairing code (ADR-0040). */
+export type WebLinker = Pick<WebAuthRepo, 'claim'>;
 
 /**
  * Per-chat conversational state (ADR-0028/0029), held in memory. `idle` is the
@@ -90,6 +94,8 @@ export interface HorizonBotDeps {
   readonly storyRepo?: StoryReader;
   /** Live web fallback when the cache can't answer (ADR-0029); omit to stay cache-only. */
   readonly webSearch?: WebSearch;
+  /** Claims web pairing codes to link a web session to this chat (ADR-0040); omit to disable. */
+  readonly webLink?: WebLinker;
   /** TTS for podcast audio; null sends the script as text (ADR-0020). */
   readonly synthesizer: Synthesizer | null;
   /** Config-driven fallback when a chat has set nothing (ADR-0015). */
@@ -158,7 +164,7 @@ export class HorizonBot {
     const command = await this.interpret(session, update.text);
     if (!(await this.withinQuota(chatId, command, now))) return;
 
-    await this.dispatch(chatId, command);
+    await this.dispatch(chatId, command, update.senderName);
 
     // A button-initiated feedback message returns the chat to conversation mode.
     if (awaitingFeedback && session.mode === 'feedback') session.mode = 'chat';
@@ -327,10 +333,24 @@ export class HorizonBot {
     return true;
   }
 
-  private async dispatch(chatId: number, command: Command): Promise<void> {
+  private async dispatch(
+    chatId: number,
+    command: Command,
+    senderName?: string,
+  ): Promise<void> {
     const { transport, query } = this.deps;
     switch (command.kind) {
       case 'start':
+        // A `t.me/<bot>?start=link_<code>` deep link routes to web pairing (ADR-0040);
+        // a bare /start is the normal welcome.
+        if (command.payload?.startsWith('link_')) {
+          return this.handleLink(chatId, command.payload.slice('link_'.length), senderName);
+        }
+        return this.sendMenu(chatId);
+
+      case 'link':
+        return this.handleLink(chatId, command.code, senderName);
+
       case 'help':
       case 'unknown':
         return this.sendMenu(chatId);
@@ -506,6 +526,45 @@ export class HorizonBot {
       chatId,
       "Saved — I'll keep that in mind. (/prefs to view · /forget to clear)",
     );
+  }
+
+  /**
+   * Link this Telegram chat to a web session via a pairing code (ADR-0040). The
+   * code originates on the web ("Connect Telegram"); claiming it here proves the
+   * visitor controls this account, so the web app can share this chat's
+   * preferences. Free and SMS-less — Telegram itself is the identity.
+   */
+  private async handleLink(chatId: number, code: string, senderName?: string): Promise<void> {
+    const { transport, webLink, clock } = this.deps;
+    if (!webLink) {
+      return transport.sendMessage(chatId, 'Connecting the web app is not available right now.');
+    }
+    const c = code.trim();
+    if (!c) {
+      return transport.sendMessage(
+        chatId,
+        'Usage: /link <code> — get the code from the web app’s “Connect Telegram” button.',
+      );
+    }
+    const result = await webLink.claim(c, chatId, senderName ?? null, clock.now());
+    switch (result) {
+      case 'linked':
+        return transport.sendMessage(
+          chatId,
+          '✅ Connected! Your web app is now linked to this chat — your topics, brief length, ' +
+            'and remembered interests are shared across both. Change them here or on the web anytime.',
+        );
+      case 'expired':
+        return transport.sendMessage(
+          chatId,
+          'That link code has expired. Open the web app and tap “Connect Telegram” for a fresh one.',
+        );
+      case 'unknown':
+        return transport.sendMessage(
+          chatId,
+          'I don’t recognize that link code. Double-check it, or generate a new one on the web.',
+        );
+    }
   }
 
   /** Clear the chat's remembered context (ADR-0028). */

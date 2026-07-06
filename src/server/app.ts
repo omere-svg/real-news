@@ -1,8 +1,12 @@
+import { randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
 import type { TickReportRepo } from '../db/tick-report-repo.js';
-import type { Topic } from '../domain/types.js';
+import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
+import type { WebAuthRepo } from '../db/web-auth-repo.js';
+import { TOPICS, type Topic } from '../domain/types.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
 import { renderUI, renderDashboard } from './ui.js';
@@ -30,6 +34,42 @@ export interface WebOptions {
   readonly podcastEnabled: boolean;
 }
 
+/**
+ * Wiring for the web "Log in with Telegram" flow (ADR-0040). When provided, the
+ * server exposes the pairing + preferences endpoints; when omitted, the viewer
+ * runs in guest-only mode (browser-local preferences, no accounts).
+ */
+export interface WebAuthOptions {
+  readonly webAuth: WebAuthRepo;
+  /** The shared per-chat preferences store — the same one the Telegram bot uses. */
+  readonly prefs: ChatPreferencesRepo;
+  /** Bot username (no `@`) for `t.me/<bot>?start=…` deep links; omit for code-only linking. */
+  readonly botUsername?: string;
+  /** Linked-session lifetime; default 30 days. */
+  readonly sessionTtlMs?: number;
+  /** Pairing-code lifetime; default 10 minutes. */
+  readonly codeTtlMs?: number;
+  /** Injectable time source (tests); defaults to `Date.now`. */
+  readonly now?: () => number;
+}
+
+const SESSION_COOKIE = 'horizon_session';
+const DEFAULT_SESSION_TTL_MS = 30 * 24 * 3600_000;
+const DEFAULT_CODE_TTL_MS = 10 * 60_000;
+/** Unambiguous code alphabet (no 0/O/1/I) so a human can retype it into the bot. */
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function newToken(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+function newCode(): string {
+  const bytes = randomBytes(8);
+  let out = '';
+  for (const b of bytes) out += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  return out;
+}
+
 export function createApp(
   storyRepo: StoryRepo,
   queryEngine: QueryEngine,
@@ -37,10 +77,14 @@ export function createApp(
   web: WebOptions,
   /** Observability log (ADR-0033); when omitted the dashboard/feed return empty. */
   tickReports?: TickReportRepo,
+  /** Web login + shared preferences (ADR-0040); when omitted the viewer is guest-only. */
+  auth?: WebAuthOptions,
 ): Hono {
   const app = new Hono();
 
   app.get('/health', (c) => c.json({ ok: true }));
+
+  if (auth) wireAuth(app, auth, defaults, web);
 
   // Observability (ADR-0033): recent tick outcomes as JSON + an HTML dashboard.
   app.get('/api/ticks', async (c) => {
@@ -88,11 +132,116 @@ export function createApp(
       renderUI({
         minutes: defaults.minutes,
         ...(defaults.topics?.length ? { topics: defaults.topics } : {}),
+        podcastEnabled: web.podcastEnabled,
+        authEnabled: auth !== undefined,
+        ...(auth?.botUsername ? { botUsername: auth.botUsername } : {}),
       }),
     ),
   );
 
   return app;
+}
+
+/**
+ * Mount the "Log in with Telegram" pairing + shared-preferences endpoints
+ * (ADR-0040). A visitor gets an opaque session token in an httpOnly cookie;
+ * once the paired Telegram chat claims the code, the session carries that
+ * `chatId` and reads/writes the same `chat_preferences` the bot uses.
+ */
+function wireAuth(
+  app: Hono,
+  auth: WebAuthOptions,
+  defaults: PresentationDefaults,
+  web: WebOptions,
+): void {
+  const now = auth.now ?? Date.now;
+  const sessionTtlMs = auth.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+  const codeTtlMs = auth.codeTtlMs ?? DEFAULT_CODE_TTL_MS;
+
+  /** The linked chat for the request's session cookie, or null when unauthenticated. */
+  const currentChat = async (
+    c: Context,
+  ): Promise<{ chatId: number; name: string | null } | null> => {
+    const token = getCookie(c, SESSION_COOKIE);
+    if (!token) return null;
+    const session = await auth.webAuth.resolve(token, now());
+    if (!session || session.chatId === null) return null;
+    return { chatId: session.chatId, name: session.name };
+  };
+
+  // Begin pairing: mint a session + short-lived code, set the cookie, and return
+  // the code plus a deep link the visitor opens in Telegram to confirm.
+  app.post('/api/auth/start', async (c) => {
+    const token = newToken();
+    const code = newCode();
+    await auth.webAuth.createPending({ token, code, now: now(), sessionTtlMs, codeTtlMs });
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: Math.floor(sessionTtlMs / 1000),
+    });
+    return c.json({
+      code,
+      deepLink: auth.botUsername ? `https://t.me/${auth.botUsername}?start=link_${code}` : null,
+      expiresInSec: Math.floor(codeTtlMs / 1000),
+    });
+  });
+
+  // Poll: has the paired chat claimed the code yet?
+  app.get('/api/auth/status', async (c) => {
+    const chat = await currentChat(c);
+    return c.json(
+      chat ? { authenticated: true, name: chat.name } : { authenticated: false },
+    );
+  });
+
+  app.post('/api/auth/logout', async (c) => {
+    const token = getCookie(c, SESSION_COOKIE);
+    if (token) await auth.webAuth.logout(token);
+    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    return c.json({ ok: true });
+  });
+
+  // The signed-in user's shared preferences (topics + default brief length).
+  app.get('/api/preferences', async (c) => {
+    const chat = await currentChat(c);
+    if (!chat) return c.json({ error: 'not authenticated' }, 401);
+    const p = await auth.prefs.get(chat.chatId);
+    return c.json({
+      topics: p?.topics ?? [],
+      minutes: p?.defaultMinutes ?? defaults.minutes,
+      name: chat.name,
+    });
+  });
+
+  app.put('/api/preferences', async (c) => {
+    const chat = await currentChat(c);
+    if (!chat) return c.json({ error: 'not authenticated' }, 401);
+
+    const body = (await c.req.json().catch(() => ({}))) as {
+      topics?: unknown;
+      minutes?: unknown;
+    };
+    const patch: { topics?: Topic[] | undefined; defaultMinutes?: number } = {};
+
+    if (Array.isArray(body.topics)) {
+      const valid = body.topics.filter((t): t is Topic =>
+        (TOPICS as readonly string[]).includes(t as string),
+      );
+      // An empty/no-valid selection clears the filter back to the default ("all").
+      patch.topics = valid.length ? valid : undefined;
+    }
+    if (body.minutes !== undefined && Number.isFinite(Number(body.minutes))) {
+      patch.defaultMinutes = normalizeMinutes(Number(body.minutes), web.maxMinutes);
+    }
+
+    const saved = await auth.prefs.set(chat.chatId, patch);
+    return c.json({
+      topics: saved.topics ?? [],
+      minutes: saved.defaultMinutes ?? defaults.minutes,
+    });
+  });
 }
 
 /** A positive limit clamped to [1, 200]; falls back to `fallback` for bad input. */

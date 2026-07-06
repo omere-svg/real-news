@@ -3,7 +3,9 @@ import {
   HorizonBot,
   type BotLimits,
   type StoryReader,
+  type WebLinker,
 } from '../../src/telegram/horizon-bot.js';
+import type { ClaimResult } from '../../src/db/web-auth-repo.js';
 import { FixedWindowLimiter, type RateLimiter } from '../../src/telegram/rate-limiter.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
@@ -92,6 +94,16 @@ class FakeQuery implements QueryEngine {
 const audioSynth: Synthesizer = { synthesize: async () => Buffer.from([1, 2, 3]) };
 const nullSynth: Synthesizer = { synthesize: async () => null };
 
+/** A WebLinker that records claims and returns a configured result (ADR-0040). */
+class FakeWebLink implements WebLinker {
+  readonly calls: { code: string; chatId: number; name: string | null }[] = [];
+  constructor(private readonly result: ClaimResult = 'linked') {}
+  async claim(code: string, chatId: number, name: string | null): Promise<ClaimResult> {
+    this.calls.push({ code, chatId, name });
+    return this.result;
+  }
+}
+
 const GENEROUS: BotLimits = {
   perMinute: 1000,
   podcastPerDay: 1000,
@@ -114,6 +126,7 @@ async function build(opts: {
   webSearch?: WebSearch;
   router?: IntentRouter;
   prefsInterpreter?: PreferencesInterpreter;
+  webLink?: WebLinker;
 } = {}) {
   const transport = new FakeTransport();
   const query = new FakeQuery();
@@ -141,6 +154,7 @@ async function build(opts: {
     ...(opts.router ? { router: opts.router } : {}),
     ...(opts.prefsInterpreter ? { prefsInterpreter: opts.prefsInterpreter } : {}),
     ...(opts.allowedChatIds ? { allowedChatIds: opts.allowedChatIds } : {}),
+    ...(opts.webLink ? { webLink: opts.webLink } : {}),
   });
   return { bot, transport, query, prefs, usage, clock };
 }
@@ -711,6 +725,49 @@ describe('HorizonBot', () => {
       await bot.handle(callback(5, 'menu'));
       await bot.handle(callback(5, 'menu')); // navigation is free — still answered
       expect(transport.messages.filter((m) => /Horizon/.test(m.text)).length).toBe(2);
+    });
+  });
+
+  describe('web pairing (ADR-0040)', () => {
+    it('/link <code> claims the code for this chat and confirms', async () => {
+      const webLink = new FakeWebLink('linked');
+      const { bot, transport } = await build({ webLink });
+      await bot.handle({ updateId: 1, chatId: 5, text: '/link ABC123', senderName: 'Omer' });
+      expect(webLink.calls).toEqual([{ code: 'ABC123', chatId: 5, name: 'Omer' }]);
+      expect(transport.messages.at(-1)?.text).toMatch(/Connected/i);
+    });
+
+    it('a t.me deep link (/start link_<code>) routes to pairing', async () => {
+      const webLink = new FakeWebLink('linked');
+      const { bot } = await build({ webLink });
+      await bot.handle({ updateId: 1, chatId: 5, text: '/start link_XYZ789' });
+      expect(webLink.calls).toEqual([{ code: 'XYZ789', chatId: 5, name: null }]);
+    });
+
+    it('a bare /start still shows the menu (no pairing)', async () => {
+      const webLink = new FakeWebLink('linked');
+      const { bot, transport } = await build({ webLink });
+      await bot.handle(update(5, '/start'));
+      expect(webLink.calls).toHaveLength(0);
+      expect(transport.messages.at(-1)?.text).toMatch(/Horizon/);
+    });
+
+    it('reports an expired code', async () => {
+      const { bot, transport } = await build({ webLink: new FakeWebLink('expired') });
+      await bot.handle(update(5, '/link OLD'));
+      expect(transport.messages.at(-1)?.text).toMatch(/expired/i);
+    });
+
+    it('reports an unrecognized code', async () => {
+      const { bot, transport } = await build({ webLink: new FakeWebLink('unknown') });
+      await bot.handle(update(5, '/link NOPE'));
+      expect(transport.messages.at(-1)?.text).toMatch(/recognize/i);
+    });
+
+    it('when web linking is not wired, /link says it is unavailable', async () => {
+      const { bot, transport } = await build();
+      await bot.handle(update(5, '/link ABC'));
+      expect(transport.messages.at(-1)?.text).toMatch(/not available/i);
     });
   });
 });

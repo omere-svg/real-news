@@ -7,159 +7,543 @@ export interface UiDefaults {
   readonly minutes: number;
   /** Pre-checked topics; empty/omitted means none checked ("All"). */
   readonly topics?: readonly string[];
+  /** Show the Podcast format tab (web podcast is off by default — ADR-0023). */
+  readonly podcastEnabled?: boolean;
+  /** When true, expose the "Log in with Telegram" flow (ADR-0040); else guest-only. */
+  readonly authEnabled?: boolean;
+  /** Bot username (no `@`) for a one-tap `t.me` deep link; absent ⇒ show the code only. */
+  readonly botUsername?: string;
 }
 
-/** Render the topic multi-select as a checkbox group, pre-checking defaults. */
-function topicCheckboxes(checked: readonly string[]): string {
+/** Render the topic filter as a group of pill toggles, pre-selecting defaults. */
+function topicChips(checked: readonly string[]): string {
   const set = new Set(checked);
   return TOPICS.map(
     (t) =>
-      `<label class="chk"><input type="checkbox" name="topic" value="${t}"${
+      `<label class="chip" data-topic="${t}"><input type="checkbox" name="topic" value="${t}"${
         set.has(t) ? ' checked' : ''
-      } />${t}</label>`,
+      } /><span class="dot"></span>${t}</label>`,
   ).join('');
 }
 
 /**
  * The single-page read-only viewer (ADR-0011/0014). Plain HTML + fetch, no build
- * step. Controls are seeded from the configured presentation defaults (ADR-0015).
+ * step. Controls are seeded from the configured presentation defaults (ADR-0015);
+ * per-visitor choices (name, topics, minutes, format, theme) persist client-side
+ * in localStorage — a lightweight "profile" with no server/DB dependency.
  */
 export function renderUI(defaults: UiDefaults): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Project Horizon</title>
+<title>Project Horizon — your world, already read</title>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --muted:#8b93a7; --fg:#e7ebf3; --accent:#e0a458; }
+  :root {
+    --bg:#0b0d12; --bg2:#0f1218; --card:#14171f; --card2:#181c25;
+    --line:#232833; --line2:#2c3340; --muted:#8b93a7; --fg:#e9edf6; --fg-dim:#c3cad9;
+    --accent:#e0a458; --accent2:#f0c07a; --accent-soft:rgba(224,164,88,.14);
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.28);
+    --radius:16px;
+  }
+  html[data-theme="light"] {
+    --bg:#f6f7fb; --bg2:#eef1f7; --card:#ffffff; --card2:#f7f9fc;
+    --line:#e4e8f0; --line2:#d6dce7; --muted:#697086; --fg:#1a1f2b; --fg-dim:#3b4252;
+    --accent:#c6862f; --accent2:#a96f22; --accent-soft:rgba(198,134,47,.12);
+    --shadow:0 1px 2px rgba(16,24,40,.06), 0 10px 30px rgba(16,24,40,.08);
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 ui-sans-serif,system-ui,sans-serif; }
-  header { padding:24px 20px 8px; max-width:860px; margin:0 auto; }
-  h1 { margin:0; font-size:22px; letter-spacing:.3px; }
-  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
-  .filters { max-width:860px; margin:12px auto; padding:0 20px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  select { background:var(--card); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:6px 10px; }
-  .topics { display:flex; gap:6px; flex-wrap:wrap; align-items:center; background:var(--card); border:1px solid #2a2f3a; border-radius:8px; padding:5px 8px; }
-  .topics .lbl { color:var(--muted); font-size:13px; }
-  .chk { display:inline-flex; align-items:center; gap:4px; font-size:13px; color:var(--fg); cursor:pointer; }
-  .chk input { accent-color:var(--accent); }
-  .budget { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
-  .budget input { accent-color:var(--accent); }
-  main { max-width:860px; margin:0 auto; padding:8px 20px 60px; }
-  .card { background:var(--card); border:1px solid #232833; border-radius:12px; padding:16px; margin:12px 0; }
-  .row { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
-  .title { font-size:17px; font-weight:600; margin:0; }
+  html, body { margin:0; }
+  body {
+    background:
+      radial-gradient(1100px 520px at 78% -8%, var(--accent-soft), transparent 60%),
+      linear-gradient(180deg, var(--bg2), var(--bg) 340px);
+    background-attachment:fixed;
+    color:var(--fg);
+    font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:900px; margin:0 auto; padding:0 20px; }
+
+  /* Top bar */
+  .topbar { position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
+    background:color-mix(in srgb, var(--bg) 72%, transparent);
+    border-bottom:1px solid var(--line); }
+  .topbar-in { display:flex; align-items:center; justify-content:space-between; height:60px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:.2px; font-size:16px; }
+  .brand .logo { font-size:20px; filter:saturate(1.1); }
+  .brand .tag { color:var(--muted); font-weight:500; font-size:12px; }
+  .top-actions { display:flex; align-items:center; gap:8px; }
+  .icon-btn, .ghost-btn {
+    display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+    background:var(--card); color:var(--fg); border:1px solid var(--line);
+    border-radius:999px; padding:7px 13px; font-size:13.5px; font-weight:600;
+    transition:border-color .15s, background .15s, transform .05s;
+  }
+  .icon-btn { padding:8px 10px; }
+  .icon-btn:hover, .ghost-btn:hover { border-color:var(--line2); background:var(--card2); }
+  .icon-btn:active, .ghost-btn:active { transform:translateY(1px); }
+  .ghost-btn .who { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* Hero */
+  .hero { padding:40px 0 8px; }
+  .hero h1 { margin:0; font-size:clamp(26px,4.4vw,40px); line-height:1.12; letter-spacing:-.4px; font-weight:800; }
+  .hero h1 .grad { background:linear-gradient(92deg, var(--accent2), var(--accent)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .hero p { color:var(--fg-dim); font-size:clamp(15px,1.8vw,17px); margin:14px 0 0; max-width:620px; }
+  .hero .greet { color:var(--accent); font-weight:700; }
+
+  /* How-it-works strip */
+  .how { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:22px 0 4px; }
+  .how .step { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:13px 15px; }
+  .how .step h3 { margin:0; font-size:13.5px; display:flex; align-items:center; gap:8px; }
+  .how .step h3 .n { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:7px;
+    background:var(--accent-soft); color:var(--accent); font-size:12px; font-weight:800; }
+  .how .step p { margin:7px 0 0; color:var(--muted); font-size:12.5px; line-height:1.5; }
+  @media (max-width:640px){ .how { grid-template-columns:1fr; } }
+
+  /* Controls */
+  .controls { position:sticky; top:60px; z-index:15;
+    background:color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter:blur(8px);
+    padding:16px 0 12px; margin-top:24px; }
+  .seg { display:inline-flex; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:4px; gap:2px; flex-wrap:wrap; }
+  .seg button { border:0; background:transparent; color:var(--muted); cursor:pointer;
+    font:600 13.5px/1 inherit; padding:8px 14px; border-radius:9px; transition:color .15s, background .15s; }
+  .seg button:hover { color:var(--fg); }
+  .seg button[aria-pressed="true"] { background:var(--accent); color:#1a1205; }
+  html[data-theme="light"] .seg button[aria-pressed="true"] { color:#fff; }
+  .hint { color:var(--muted); font-size:13px; margin:10px 2px 0; min-height:18px; }
+  .subctl { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+  .topics { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+  .chip { position:relative; display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+    font-size:13px; font-weight:600; color:var(--muted); background:var(--card);
+    border:1px solid var(--line); border-radius:999px; padding:6px 12px; user-select:none;
+    transition:border-color .15s, color .15s, background .15s; }
+  .chip:hover { border-color:var(--line2); color:var(--fg); }
+  .chip input { position:absolute; opacity:0; pointer-events:none; }
+  .chip .dot { width:8px; height:8px; border-radius:50%; background:var(--td,#8b93a7); opacity:.6; transition:opacity .15s; }
+  .chip:has(input:checked) { color:var(--fg); border-color:color-mix(in srgb, var(--td) 55%, var(--line));
+    background:color-mix(in srgb, var(--td) 14%, var(--card)); }
+  .chip:has(input:checked) .dot { opacity:1; }
+  .budget { display:inline-flex; align-items:center; gap:10px; color:var(--muted); font-size:13px;
+    background:var(--card); border:1px solid var(--line); border-radius:999px; padding:6px 14px; margin-left:auto; }
+  .budget input[type=range]{ accent-color:var(--accent); width:130px; }
+  .budget b { color:var(--fg); font-variant-numeric:tabular-nums; }
+
+  /* Content */
+  main { padding:6px 0 80px; }
+  .count { color:var(--muted); font-size:12.5px; margin:6px 2px 12px; text-transform:uppercase; letter-spacing:.5px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:18px; margin:12px 0; box-shadow:var(--shadow); transition:border-color .15s, transform .12s; }
+  .story:hover { border-color:var(--line2); transform:translateY(-1px); }
+  .row { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; }
+  .title { font-size:17.5px; font-weight:700; margin:0; line-height:1.35; letter-spacing:-.15px; }
   .title a { color:var(--fg); text-decoration:none; }
-  .title a:hover { text-decoration:underline; }
-  .score { color:var(--accent); font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .badges { margin:8px 0; display:flex; gap:6px; flex-wrap:wrap; }
-  .badge { font-size:12px; color:var(--muted); border:1px solid #2a2f3a; border-radius:999px; padding:2px 9px; }
-  .why { color:#c7cede; margin:8px 0 0; }
-  .why-score { margin-top:8px; font-size:13px; color:var(--muted); }
-  .why-score summary { cursor:pointer; color:var(--accent); list-style:none; }
+  .title a:hover { color:var(--accent); }
+  .scorepill { display:inline-flex; align-items:baseline; gap:2px; white-space:nowrap;
+    background:var(--accent-soft); color:var(--accent); font-weight:800; font-variant-numeric:tabular-nums;
+    border-radius:10px; padding:4px 9px; font-size:15px; }
+  .scorepill .max { font-size:11px; opacity:.7; font-weight:600; }
+  .badges { margin:11px 0 0; display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+  .badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--fg-dim);
+    border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
+  .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--td,#8b93a7); }
+  .why { color:var(--fg-dim); margin:12px 0 0; }
+  .why-score { margin-top:12px; font-size:13px; color:var(--muted); }
+  .why-score summary { cursor:pointer; color:var(--accent); list-style:none; font-weight:600; width:max-content; }
   .why-score summary::-webkit-details-marker { display:none; }
   .why-score summary::before { content:'▸ '; }
   .why-score[open] summary::before { content:'▾ '; }
-  .why-score table { margin:8px 0 4px; border-collapse:collapse; width:100%; max-width:360px; }
-  .why-score td { padding:1px 10px 1px 0; }
-  .why-score td.num { text-align:right; color:var(--fg); font-variant-numeric:tabular-nums; }
-  .meta { color:var(--muted); font-size:12px; margin-top:8px; }
-  .empty { color:var(--muted); text-align:center; padding:48px 0; }
-  pre.doc { white-space:pre-wrap; word-wrap:break-word; font:15px/1.6 ui-sans-serif,system-ui,sans-serif; margin:0; }
+  .bars { margin:12px 0 4px; display:grid; grid-template-columns:auto 1fr auto; gap:6px 12px; align-items:center; max-width:420px; }
+  .bars .lbl { color:var(--fg-dim); }
+  .bars .track { height:7px; border-radius:999px; background:var(--line); overflow:hidden; }
+  .bars .fill { height:100%; border-radius:999px; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+  .bars .val { color:var(--fg); font-variant-numeric:tabular-nums; font-size:12px; }
+  .meta { color:var(--muted); font-size:12px; margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .empty { color:var(--muted); text-align:center; padding:56px 20px; }
+  .empty .big { font-size:16px; color:var(--fg-dim); }
+  .skel { height:118px; border-radius:var(--radius); border:1px solid var(--line);
+    background:linear-gradient(100deg,var(--card) 30%,var(--card2) 50%,var(--card) 70%);
+    background-size:220% 100%; animation:sh 1.3s ease-in-out infinite; margin:12px 0; }
+  @keyframes sh { from{background-position:180% 0} to{background-position:-40% 0} }
+  pre.doc { white-space:pre-wrap; word-wrap:break-word; font:15.5px/1.7 ui-sans-serif,system-ui,sans-serif; margin:0; color:var(--fg-dim); }
+
+  /* Profile popover + modal */
+  .pop { position:fixed; inset:0; z-index:50; display:none; align-items:flex-start; justify-content:center; }
+  .pop.open { display:flex; }
+  .pop .scrim { position:absolute; inset:0; background:rgba(3,5,10,.55); backdrop-filter:blur(2px); }
+  .sheet { position:relative; margin-top:14vh; width:min(420px,92vw); background:var(--card); border:1px solid var(--line);
+    border-radius:18px; box-shadow:var(--shadow); padding:22px; }
+  .sheet h2 { margin:0 0 4px; font-size:19px; }
+  .sheet p { margin:0 0 16px; color:var(--muted); font-size:13.5px; }
+  .field label { display:block; font-size:12.5px; color:var(--muted); margin-bottom:6px; font-weight:600; }
+  .field input[type=text] { width:100%; background:var(--card2); border:1px solid var(--line2); color:var(--fg);
+    border-radius:11px; padding:11px 13px; font-size:15px; }
+  .field input[type=text]:focus { outline:none; border-color:var(--accent); }
+  .sheet-actions { display:flex; gap:10px; margin-top:18px; }
+  .btn-primary { flex:1; border:0; cursor:pointer; background:linear-gradient(92deg,var(--accent2),var(--accent));
+    color:#1a1205; font-weight:800; font-size:14.5px; border-radius:11px; padding:12px; }
+  html[data-theme="light"] .btn-primary { color:#fff; }
+  .btn-text { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13.5px; font-weight:600; padding:12px; }
+  .btn-text:hover { color:var(--fg); }
+  .note { color:var(--muted); font-size:11.5px; margin-top:14px; line-height:1.5; }
+  .note.err { color:var(--bad,#e06c75); }
+  a.btn-primary { text-decoration:none; text-align:center; display:block; }
+  .btn-primary[disabled] { opacity:.6; cursor:progress; }
+  .hidden { display:none !important; }
+  /* Connect-Telegram states */
+  .ok-badge { font-size:40px; text-align:center; line-height:1; margin-bottom:6px; }
+  .code { font:800 24px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:5px;
+    text-align:center; background:var(--card2); border:1px dashed var(--line2); border-radius:12px;
+    padding:15px; color:var(--fg); user-select:all; margin:6px 0; }
+  .waiting { display:flex; align-items:center; gap:9px; color:var(--muted); font-size:12.5px; margin-top:14px; }
+  .spinner { width:15px; height:15px; border:2px solid var(--line2); border-top-color:var(--accent);
+    border-radius:50%; animation:spin .8s linear infinite; flex:none; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  /* Compact hero for a returning / linked reader */
+  .hero.compact { padding:26px 0 4px; }
+  .hero.compact h1 { font-size:clamp(21px,3vw,28px); }
+  .hero.compact p { display:none; }
+  /* Visible keyboard focus (accessibility) */
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:8px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>🌅 Project Horizon</h1>
-  <div class="sub">Background intelligence — stories scored, deduped, and explained.</div>
-</header>
-<div class="filters">
-  <select id="format">
-    <option value="stories">Stories</option>
-    <option value="brief">Text brief</option>
-    <option value="outline">Topic outline</option>
-    <option value="podcast">Podcast script</option>
-  </select>
-  <div class="topics" id="topics"><span class="lbl">Topics:</span>${topicCheckboxes(defaults.topics ?? [])}</div>
-  <label class="budget" id="budgetCtl">⏱ <input id="minutes" type="range" min="1" max="30" value="${defaults.minutes}" /> <span id="minutesLabel">${defaults.minutes} min</span></label>
+<div class="topbar">
+  <div class="wrap topbar-in">
+    <div class="brand"><span class="logo">🌅</span> Project Horizon <span class="tag">executive editor</span></div>
+    <div class="top-actions">
+      <button class="icon-btn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
+      ${defaults.authEnabled ? '<button class="ghost-btn" id="profileBtn">✈️ <span class="who" id="whoLabel">Connect Telegram</span></button>' : ''}
+    </div>
+  </div>
 </div>
-<main id="list"><div class="empty">Loading…</div></main>
+
+<div class="wrap">
+  <section class="hero">
+    <h1 id="heroTitle">Your world, <span class="grad">already read.</span></h1>
+    <p id="heroSub">Horizon reads thousands of items from official APIs every few minutes, then keeps only what matters — scored, de-duplicated, and explained in plain language. No feed to scroll. No noise. Just the signal, sized to the time you have.</p>
+  </section>
+
+  <section class="how" id="how">
+    <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source authority.</p></div>
+    <div class="step"><h3><span class="n">2</span> De-duplicated</h3><p>The same event from many sources is merged into one story, so you read it once with all its corroboration.</p></div>
+    <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> — and you can open the exact breakdown behind its score.</p></div>
+  </section>
+
+  <section class="controls">
+    <div class="seg" id="format" role="tablist" aria-label="Format">
+      <button data-fmt="stories" aria-pressed="true">Stories</button>
+      <button data-fmt="brief" aria-pressed="false">Brief</button>
+      <button data-fmt="outline" aria-pressed="false">Topic outline</button>
+      ${defaults.podcastEnabled ? '<button data-fmt="podcast" aria-pressed="false">Podcast</button>' : ''}
+    </div>
+    <div class="hint" id="hint"></div>
+    <div class="subctl">
+      <div class="topics" id="topics">${topicChips(defaults.topics ?? [])}</div>
+      <label class="budget" id="budgetCtl">⏱ Time <input id="minutes" type="range" min="1" max="30" value="${defaults.minutes}" /> <b id="minutesLabel">${defaults.minutes} min</b></label>
+    </div>
+  </section>
+
+  <main id="list"></main>
+</div>
+
+<!-- Log in with Telegram (ADR-0040) -->
+<div class="pop" id="pop">
+  <div class="scrim" data-close></div>
+  <div class="sheet">
+    <div id="stateStart">
+      <h2>Log in with Telegram</h2>
+      <p>Connect your Telegram account so your topics and reading time follow you across the web app and the bot. It's free — no password, no phone number, nothing to install.</p>
+      <div class="sheet-actions">
+        <button class="btn-primary" id="startPair">Generate my link</button>
+      </div>
+      <div class="note">We never see your phone number. Connecting simply proves it's you via your Telegram account.</div>
+    </div>
+
+    <div id="statePending" class="hidden">
+      <h2>Confirm in Telegram</h2>
+      <p id="pendingSub">Tap the button to open the bot, then press <b>Start</b> to connect.</p>
+      <a class="btn-primary" id="deepLink" target="_blank" rel="noopener">Open Telegram</a>
+      <p class="note">No button, or on another device? Message the bot:<br>send <b id="codeCmd">/link CODE</b></p>
+      <div class="code" id="codeBox">------</div>
+      <div class="waiting"><span class="spinner"></span> Waiting for you to confirm…</div>
+      <div class="sheet-actions"><button class="btn-text" id="cancelPair">Cancel</button></div>
+    </div>
+
+    <div id="stateLinked" class="hidden">
+      <div class="ok-badge">✅</div>
+      <h2 id="linkedTitle">Connected</h2>
+      <p>Your preferences now sync between this web app and Telegram. Change your topics and reading time in either place — they stay in step.</p>
+      <div class="sheet-actions"><button class="btn-text" id="signOut">Disconnect</button></div>
+    </div>
+
+    <div id="pairErr" class="note err hidden"></div>
+  </div>
+</div>
+
 <script>
+const CFG = { authEnabled: ${defaults.authEnabled ? 'true' : 'false'}, podcastEnabled: ${defaults.podcastEnabled ? 'true' : 'false'} };
 const list = document.getElementById('list');
-const formatSel = document.getElementById('format');
+const seg = document.getElementById('format');
 const topicsBox = document.getElementById('topics');
 const minutesInput = document.getElementById('minutes');
-
-function selectedTopics() {
-  return [...topicsBox.querySelectorAll('input[name="topic"]:checked')].map(c => c.value);
-}
 const minutesLabel = document.getElementById('minutesLabel');
 const budgetCtl = document.getElementById('budgetCtl');
+const hint = document.getElementById('hint');
+const heroEl = document.querySelector('.hero');
+const heroTitle = document.getElementById('heroTitle');
+const howEl = document.getElementById('how');
+
+// Restrained, consistent topic palette (one hue per topic aids scanning).
+const TOPIC_COLORS = {
+  AI:'#7aa2f7', Geopolitics:'#e0a458', Politics:'#bb9af7', Sports:'#5fd38d',
+  Business:'#f7b955', Science:'#7dcfff', Health:'#ff85c0', Climate:'#73daca',
+  Israel:'#82aaff', Other:'#9aa3b6'
+};
+document.querySelectorAll('.chip').forEach(c => c.style.setProperty('--td', TOPIC_COLORS[c.dataset.topic] || '#8b93a7'));
+
+const HINTS = {
+  stories: 'Ranked cards — the most significant first. Filter by topic below.',
+  brief: 'A tight, bulleted summary sized to the minutes you pick.',
+  outline: 'A deeper dive on a single topic — select exactly one topic.',
+  podcast: 'A narrated script you can read or hand to text-to-speech.'
+};
 const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
+let format = 'stories';
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function selectedTopics(){ return [...topicsBox.querySelectorAll('input[name="topic"]:checked')].map(c => c.value); }
+function setTopics(list){ const set = new Set(list || []); topicsBox.querySelectorAll('input[name="topic"]').forEach(i => { i.checked = set.has(i.value); }); }
+function setFormat(f){ if(f && seg.querySelector('button[data-fmt="'+f+'"]')) format = f; seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fmt === format))); }
 
-// "Why this score?" — render the persisted breakdown. Axis labels are injected
-// from the shared interpreter (ADR-0037), so there's one source of truth.
+// ---- Preferences persistence ----
+// Guests: everything is cached in this browser (localStorage). Once linked to
+// Telegram, topics + minutes are the shared server-side prefs (ADR-0040); theme
+// and format stay a local UI convenience either way.
+const LS = 'horizon.prefs.v2';
+function readLS(){ try { return JSON.parse(localStorage.getItem(LS) || '{}'); } catch { return {}; } }
+function cacheLocal(){
+  localStorage.setItem(LS, JSON.stringify({
+    topics: selectedTopics(), minutes: Number(minutesInput.value),
+    format, theme: document.documentElement.dataset.theme,
+  }));
+}
+let authed = false;
+let pushTimer = null;
+function pushServerSoon(){
+  if (!authed) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    fetch('/api/preferences', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ topics: selectedTopics(), minutes: Number(minutesInput.value) }),
+    }).catch(() => {});
+  }, 400);
+}
+function onPrefChanged(){ cacheLocal(); pushServerSoon(); load(); }
+
+// ---- Theme (always a local preference) ----
+function syncThemeIcon(){ document.getElementById('themeBtn').textContent = document.documentElement.dataset.theme === 'light' ? '☀️' : '🌙'; }
+document.getElementById('themeBtn').onclick = () => {
+  document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  syncThemeIcon(); cacheLocal();
+};
+
+// ---- "Log in with Telegram" (ADR-0040) ----
+const pop = document.getElementById('pop');
+const profileBtn = document.getElementById('profileBtn');
+function setWho(text){ const w = document.getElementById('whoLabel'); if (w) w.textContent = text; }
+function compactHero(name){ heroEl.classList.add('compact'); howEl.classList.add('hidden'); if (name) heroTitle.innerHTML = 'Welcome back, <span class="grad">' + esc(name) + '.</span>'; }
+function expandHero(){ heroEl.classList.remove('compact'); howEl.classList.remove('hidden'); heroTitle.innerHTML = 'Your world, <span class="grad">already read.</span>'; }
+
+function showState(which){
+  for (const id of ['stateStart','statePending','stateLinked']) document.getElementById(id).classList.toggle('hidden', id !== which);
+  document.getElementById('pairErr').classList.add('hidden');
+}
+function showPairError(msg){ const e = document.getElementById('pairErr'); e.textContent = msg; e.classList.remove('hidden'); }
+function openPop(){ pop.classList.add('open'); showState(authed ? 'stateLinked' : 'stateStart'); }
+function closePop(){ pop.classList.remove('open'); stopPolling(); }
+
+let pollTimer = null, pollDeadline = 0;
+function stopPolling(){ clearTimeout(pollTimer); pollTimer = null; }
+async function poll(){
+  if (Date.now() > pollDeadline){ showState('stateStart'); showPairError('That code expired. Generate a new one.'); return; }
+  try {
+    const r = await fetch('/api/auth/status');
+    const j = await r.json();
+    if (j.authenticated) return onLinked(j.name);
+  } catch (e) { /* transient — keep polling */ }
+  pollTimer = setTimeout(poll, 2500);
+}
+
+async function startPair(){
+  const btn = document.getElementById('startPair');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/start', { method: 'POST' });
+    const j = await res.json();
+    document.getElementById('codeBox').textContent = j.code;
+    document.getElementById('codeCmd').textContent = '/link ' + j.code;
+    const dl = document.getElementById('deepLink');
+    const sub = document.getElementById('pendingSub');
+    if (j.deepLink) { dl.href = j.deepLink; dl.classList.remove('hidden'); sub.innerHTML = 'Tap the button to open the bot, then press <b>Start</b> to connect.'; }
+    else { dl.classList.add('hidden'); sub.innerHTML = 'Open your Telegram bot and send it the code below.'; }
+    showState('statePending');
+    pollDeadline = Date.now() + (j.expiresInSec * 1000);
+    poll();
+  } catch (e) {
+    showState('stateStart'); showPairError('Could not start — please try again.');
+  } finally { btn.disabled = false; }
+}
+
+async function onLinked(name){
+  stopPolling();
+  authed = true;
+  setWho(name || 'Telegram');
+  compactHero(name);
+  document.getElementById('linkedTitle').textContent = name ? ('Connected, ' + name) : 'Connected';
+  showState('stateLinked');
+  await loadServerPrefs();
+  load();
+}
+
+async function loadServerPrefs(){
+  try {
+    const r = await fetch('/api/preferences');
+    if (!r.ok) return;
+    const p = await r.json();
+    setTopics(p.topics);
+    if (p.minutes) { minutesInput.value = p.minutes; minutesLabel.textContent = p.minutes + ' min'; }
+    cacheLocal();
+  } catch (e) { /* stay with cached prefs */ }
+}
+
+async function refreshAuth(){
+  try {
+    const r = await fetch('/api/auth/status');
+    const j = await r.json();
+    if (j.authenticated){ authed = true; setWho(j.name || 'Telegram'); compactHero(j.name); await loadServerPrefs(); }
+  } catch (e) { /* offline — run as guest */ }
+}
+
+async function signOut(){
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) {}
+  authed = false; setWho('Connect Telegram'); expandHero(); closePop();
+}
+
+if (CFG.authEnabled) {
+  if (profileBtn) profileBtn.onclick = openPop;
+  pop.querySelector('[data-close]').onclick = closePop;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
+  document.getElementById('startPair').onclick = startPair;
+  document.getElementById('cancelPair').onclick = () => { stopPolling(); showState('stateStart'); };
+  document.getElementById('signOut').onclick = signOut;
+}
+
+// ---- "Why this score?" — persisted breakdown as labelled bars (ADR-0037). ----
 const SCORE_LABELS = ${JSON.stringify(COMPONENT_LABELS)};
 function pct(v){ return Math.round(Number(v)*100) + '%'; }
 function breakdownHtml(b){
   if(!b) return '';
-  const rows = (b.components||[])
-    .map(c => '<tr><td>'+esc(SCORE_LABELS[c.key]||c.key)+'</td><td class="num">'+pct(c.value)+'</td></tr>');
+  const bars = (b.components||[]).map(c =>
+    '<div class="lbl">'+esc(SCORE_LABELS[c.key]||c.key)+'</div>'+
+    '<div class="track"><div class="fill" style="width:'+pct(c.value)+'"></div></div>'+
+    '<div class="val">'+pct(c.value)+'</div>'
+  ).join('');
   const s = b.signals||{};
   const recency = b.recencyFactor!=null ? pct(b.recencyFactor) : '100%';
   const nudge = Math.abs(b.signalNudge) > 0.05 ? ' · attention/macro nudge '+(b.signalNudge>=0?'+':'')+Number(b.signalNudge).toFixed(1) : '';
   const facts = (s.corroboration||1)+' source(s) · recency '+recency+nudge;
   return '<details class="why-score"><summary>Why this score?</summary>'+
-    '<table>'+rows.join('')+'</table>'+
+    '<div class="bars">'+bars+'</div>'+
     '<div class="meta">'+esc(facts)+'</div></details>';
 }
 
+function skeletons(n){ let h=''; for(let i=0;i<n;i++) h+='<div class="skel"></div>'; return h; }
+
 async function load() {
-  const format = formatSel.value;
   const topics = selectedTopics();
-  budgetCtl.style.display = format === 'stories' ? 'none' : 'flex';
+  budgetCtl.style.display = format === 'stories' ? 'none' : 'inline-flex';
+  hint.textContent = HINTS[format] || '';
   minutesLabel.textContent = minutesInput.value + ' min';
 
   if (format === 'stories') return loadStories(topics);
 
   if (format === 'outline' && topics.length !== 1) {
-    list.innerHTML = '<div class="empty">Pick exactly one topic for the outline.</div>';
+    list.innerHTML = '<div class="empty"><div class="big">Pick exactly one topic</div>The outline is a deep dive into a single topic — select one chip above.</div>';
     return;
   }
-  const params = new URLSearchParams({ minutes: minutesInput.value });
-  for (const t of topics) params.append('topic', t);
-  const res = await fetch('/api/' + format + '?' + params);
-  const body = await res.json();
-  const text = body[DOC_FIELD[format]] || '';
-  list.innerHTML = '<div class="card"><pre class="doc">' + esc(text) + '</pre></div>';
+  list.innerHTML = skeletons(1);
+  try {
+    const params = new URLSearchParams({ minutes: minutesInput.value });
+    for (const t of topics) params.append('topic', t);
+    const res = await fetch('/api/' + format + '?' + params);
+    if (format === 'podcast' && res.status === 404) {
+      list.innerHTML = '<div class="empty"><div class="big">Podcast is not enabled here</div>The narrated podcast runs on the Telegram bot. Try Brief or Stories on the web.</div>';
+      return;
+    }
+    const body = await res.json();
+    const text = body[DOC_FIELD[format]] || '';
+    if (!text.trim()) { list.innerHTML = '<div class="empty"><div class="big">Nothing to show yet</div>The worker fills the cache on each tick — check back shortly.</div>'; return; }
+    list.innerHTML = '<div class="card"><pre class="doc">' + esc(text) + '</pre></div>';
+  } catch (e) {
+    list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load that</div>Check your connection and try again.</div>';
+  }
 }
 
 async function loadStories(topics) {
-  const params = new URLSearchParams({ limit: '50' });
-  for (const t of topics) params.append('topic', t);
-  const res = await fetch('/api/stories?' + params);
-  const { stories } = await res.json();
-  if (!stories.length) { list.innerHTML = '<div class="empty">No stories yet. The worker fills the cache on each tick.</div>'; return; }
-  list.innerHTML = stories.map(s => {
+  list.innerHTML = skeletons(4);
+  let stories;
+  try {
+    const params = new URLSearchParams({ limit: '50' });
+    for (const t of topics) params.append('topic', t);
+    const res = await fetch('/api/stories?' + params);
+    stories = (await res.json()).stories;
+  } catch (e) {
+    list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load stories</div>Check your connection and try again.</div>';
+    return;
+  }
+  if (!stories.length) {
+    list.innerHTML = '<div class="empty"><div class="big">No stories match yet</div>' +
+      (topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.') + '</div>';
+    return;
+  }
+  list.innerHTML = '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map(s => {
+    const color = TOPIC_COLORS[s.topic] || '#8b93a7';
     const title = s.url ? '<a href="'+s.url+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
     const sources = [...new Set(s.memberRefs.map(r => r.source))].join(', ');
-    return '<div class="card"><div class="row"><p class="title">'+title+'</p>'+
-      '<span class="score">'+s.significance.toFixed(1)+'</span></div>'+
-      '<div class="badges"><span class="badge">'+esc(s.topic)+'</span></div>'+
+    return '<div class="card story"><div class="row"><p class="title">'+title+'</p>'+
+      '<span class="scorepill">'+s.significance.toFixed(1)+'<span class="max">/10</span></span></div>'+
+      '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic)+'</span></div>'+
       (s.whyItMatters ? '<p class="why">'+esc(s.whyItMatters)+'</p>' : '')+
       breakdownHtml(s.scoreBreakdown)+
-      '<div class="meta">'+s.memberRefs.length+' source(s): '+esc(sources)+'</div></div>';
+      '<div class="meta">'+s.memberRefs.length+' source'+(s.memberRefs.length===1?'':'s')+': '+esc(sources)+'</div></div>';
   }).join('');
 }
 
-formatSel.onchange = load;
-topicsBox.addEventListener('change', load);
+seg.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-fmt]'); if (!btn) return;
+  setFormat(btn.dataset.fmt);
+  cacheLocal(); // format is a local UI preference, not a synced one
+  load();
+});
+topicsBox.addEventListener('change', onPrefChanged);
 minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + ' min'; };
-minutesInput.onchange = load;
-load();
+minutesInput.onchange = onPrefChanged;
+
+// ---- Init: seed controls from cache, then let the server (if linked) win. ----
+(async function init(){
+  const cached = readLS();
+  if (cached.theme) document.documentElement.dataset.theme = cached.theme;
+  syncThemeIcon();
+  if (Array.isArray(cached.topics)) setTopics(cached.topics);
+  if (cached.minutes) { minutesInput.value = cached.minutes; }
+  setFormat(cached.format || 'stories');
+  minutesLabel.textContent = minutesInput.value + ' min';
+  if (CFG.authEnabled) await refreshAuth(); // may override topics/minutes from the linked account
+  load();
+})();
 </script>
 </body>
 </html>`;

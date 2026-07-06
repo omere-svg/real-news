@@ -143,3 +143,40 @@ export const usage = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.key, t.day] })],
 );
+
+/**
+ * `web_sessions` backs the web "Log in with Telegram" pairing (ADR-0040) — a
+ * free, SMS-less way to link the web viewer to a Telegram user. The browser
+ * holds an opaque `token` in an httpOnly cookie. `chatId` is null until the
+ * paired Telegram chat claims the session's link code, at which point the web
+ * visitor *is* that Telegram user and shares its `chat_preferences` row. `name`
+ * is the Telegram first name, kept only for a friendly greeting.
+ */
+export const webSessions = sqliteTable('web_sessions', {
+  token: text('token').primaryKey(),
+  chatId: integer('chat_id'),
+  name: text('name'),
+  createdAt: integer('created_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+});
+
+/**
+ * `link_codes` are the short-lived, single-use pairing codes shown on the web
+ * and claimed by the Telegram bot via a `t.me/<bot>?start=link_<code>` deep
+ * link (or `/link <code>`). Claiming stamps `chatId`/`name`; the next web status
+ * poll promotes those onto the owning session and deletes the code (ADR-0040).
+ */
+export const linkCodes = sqliteTable(
+  'link_codes',
+  {
+    code: text('code').primaryKey(),
+    /** The web session (token) this code pairs. */
+    token: text('token').notNull(),
+    /** Set by the bot when a Telegram chat claims the code. */
+    chatId: integer('chat_id'),
+    name: text('name'),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [index('link_codes_token_idx').on(t.token)],
+);

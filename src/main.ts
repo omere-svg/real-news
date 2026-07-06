@@ -50,7 +50,10 @@ import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
 import { DrizzleChatPreferencesRepo } from './db/chat-preferences-repo.js';
+import type { ChatPreferencesRepo } from './db/chat-preferences-repo.js';
 import { DrizzleUsageRepo } from './db/usage-repo.js';
+import { DrizzleWebAuthRepo } from './db/web-auth-repo.js';
+import type { WebAuthRepo } from './db/web-auth-repo.js';
 import { FixedWindowLimiter } from './telegram/rate-limiter.js';
 import { BotApiTransport } from './telegram/bot-api-transport.js';
 import { OpenAITTS } from './telegram/openai-tts.js';
@@ -211,6 +214,10 @@ async function main(): Promise<void> {
   const rawItemRepo = new DrizzleRawItemRepo(db);
   const storyRepo = new DrizzleStoryRepo(db, systemClock);
   const tickReportRepo = new DrizzleTickReportRepo(db);
+  // Shared across the web viewer and the Telegram bot so a linked user sees the
+  // same preferences on both surfaces (ADR-0040).
+  const chatPrefs = new DrizzleChatPreferencesRepo(db);
+  const webAuth = new DrizzleWebAuthRepo(db);
 
   const llm = new ResilientLLMClient(
     new Reasoner(
@@ -320,6 +327,9 @@ async function main(): Promise<void> {
   }
 
   const defaults = toPresentationDefaults(config);
+  // Bot username (no `@`) powers the one-tap `t.me/<bot>?start=…` deep link on
+  // the web login. Optional: without it the web shows the pairing code to type.
+  const botUsername = process.env.TELEGRAM_BOT_USERNAME;
   const app = createApp(
     storyRepo,
     queryEngine,
@@ -330,11 +340,18 @@ async function main(): Promise<void> {
       podcastEnabled: config.presentation.webPodcastEnabled,
     },
     tickReportRepo,
+    {
+      webAuth,
+      prefs: chatPrefs,
+      ...(botUsername ? { botUsername } : {}),
+    },
   );
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
-  if (config.telegram.enabled) startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo);
+  if (config.telegram.enabled) {
+    startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth);
+  }
 }
 
 /** Build the web-search fallback for chat (ADR-0029), or null when off / unkeyed. */
@@ -359,6 +376,8 @@ function startTelegramBot(
   defaults: ReturnType<typeof toPresentationDefaults>,
   llm: LLMClient,
   storyRepo: StoryRepo,
+  prefs: ChatPreferencesRepo,
+  webAuth: WebAuthRepo,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -393,7 +412,9 @@ function startTelegramBot(
     ...(tg.naturalLanguage ? { router: llm, prefsInterpreter: llm } : {}),
     ...(chat ? { discussant: llm, storyRepo } : {}), // chat reuses the Reasoner (ADR-0029)
     ...(webSearch ? { webSearch } : {}),
-    prefs: new DrizzleChatPreferencesRepo(db),
+    prefs,
+    // Lets a `t.me/<bot>?start=link_<code>` deep link connect the web app (ADR-0040).
+    webLink: webAuth,
     usage: new DrizzleUsageRepo(db),
     clock: systemClock,
     limiter: new FixedWindowLimiter(tg.limits.perMinute, 60_000),
