@@ -1,0 +1,48 @@
+name: Deploy to VM
+
+# Deploy-on-push: whenever main changes, SSH into the always-on VM
+# (docs/DEPLOY-ORACLE-CLOUD.md) and update the running systemd service.
+# Secrets: DEPLOY_SSH_KEY (private key), DEPLOY_HOST (VM public IP).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Never let two deploys race the same box.
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Pull latest + restart service
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
+          set -euo pipefail
+          cd ~/real-news
+          BEFORE=$(git rev-parse HEAD)
+          git fetch --quiet origin main
+          git reset --hard origin/main
+          AFTER=$(git rev-parse HEAD)
+          echo "deployed: $BEFORE -> $AFTER"
+          # Only reinstall deps when the lockfile actually changed (npm ci is heavy on this small VM).
+          if [ "$BEFORE" = "$AFTER" ] || git diff --name-only "$BEFORE" "$AFTER" | grep -qx 'package-lock.json'; then
+            echo "running npm ci"
+            npm ci --no-audit --no-fund
+          else
+            echo "no lockfile change; skipping npm ci"
+          fi
+          sudo systemctl restart horizon
+          sleep 6
+          sudo systemctl is-active horizon
+          curl -fsS -m 10 http://127.0.0.1:3000/health && echo " health OK"
+          EOF
