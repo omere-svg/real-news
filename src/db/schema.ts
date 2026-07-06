@@ -205,6 +205,22 @@ export const webSessions = sqliteTable('web_sessions', {
 });
 
 /**
+ * `tick_lock` is a single-row cross-process advisory lock (ADR-0047). When more
+ * than one process points at the same database (a lingering local run beside the
+ * deployed one), both would tick and double-write — corrupting counts and racing
+ * membership. A process acquires the lock by conditionally stamping
+ * `lockedUntil` into the future; a crashed holder's lock simply expires. One row
+ * (id = 1) is enough; the TTL bounds a stuck holder.
+ */
+export const tickLock = sqliteTable('tick_lock', {
+  id: integer('id').primaryKey(),
+  /** Epoch ms until which the lock is held; a past value means free. */
+  lockedUntil: integer('locked_until').notNull(),
+  /** Opaque id of the current holder (host+pid+random), for release + debugging. */
+  holder: text('holder'),
+});
+
+/**
  * `link_codes` are the short-lived, single-use pairing codes shown on the web
  * and claimed by the Telegram bot via a `t.me/<bot>?start=link_<code>` deep
  * link (or `/link <code>`). Claiming stamps `chatId`/`name`; the next web status
