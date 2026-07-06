@@ -22,3 +22,7 @@ data/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Throwaway QA/inspection scripts (loop convention)
+scripts/_*
+reports/
