@@ -25,9 +25,11 @@ export interface PendingInput {
   readonly token: string;
   readonly code: string;
   readonly now: number;
-  /** How long the (eventually linked) session stays valid. */
-  readonly sessionTtlMs: number;
-  /** How long the visitor has to complete the pairing in Telegram. */
+  /**
+   * How long the visitor has to complete the pairing in Telegram. The pending
+   * session lives exactly this long too (ADR-0048): an unclaimed session must
+   * not outlive its code, else anonymous page-opens mint month-lived rows.
+   */
   readonly codeTtlMs: number;
 }
 
@@ -42,9 +44,11 @@ export interface WebAuthRepo {
   /**
    * Resolve a session by token, promoting a claimed code onto it. Returns the
    * session (with `chatId` set once linked, null while still pending), or null
-   * when the token is unknown or the session has expired.
+   * when the token is unknown or the session has expired. Promotion extends the
+   * session to `now + sessionTtlMs` — the full session lifetime starts at
+   * pairing, not at page-open (ADR-0048).
    */
-  resolve(token: string, now: number): Promise<WebSession | null>;
+  resolve(token: string, now: number, sessionTtlMs: number): Promise<WebSession | null>;
   /** Sign out: drop the session and any pending code it owns. */
   logout(token: string): Promise<void>;
   /**
@@ -63,7 +67,7 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
       chatId: null,
       name: null,
       createdAt: input.now,
-      expiresAt: input.now + input.sessionTtlMs,
+      expiresAt: input.now + input.codeTtlMs,
     });
     await this.db.insert(linkCodes).values({
       code: input.code,
@@ -95,7 +99,7 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
     return 'linked';
   }
 
-  async resolve(token: string, now: number): Promise<WebSession | null> {
+  async resolve(token: string, now: number, sessionTtlMs: number): Promise<WebSession | null> {
     const rows = await this.db.select().from(webSessions).where(eq(webSessions.token, token));
     const s = rows[0];
     if (!s) return null;
@@ -113,9 +117,10 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
     const c = claimed[0];
     if (!c || c.chatId === null) return { token: s.token, chatId: null, name: null };
 
+    // Promote: the pairing succeeded, so the session earns its full lifetime now.
     await this.db
       .update(webSessions)
-      .set({ chatId: c.chatId, name: c.name })
+      .set({ chatId: c.chatId, name: c.name, expiresAt: now + sessionTtlMs })
       .where(eq(webSessions.token, token));
     await this.db.delete(linkCodes).where(eq(linkCodes.token, token));
     return { token: s.token, chatId: c.chatId, name: c.name };

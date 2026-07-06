@@ -188,7 +188,7 @@ function wireAuth(
   ): Promise<{ chatId: number; name: string | null } | null> => {
     const token = getCookie(c, SESSION_COOKIE);
     if (!token) return null;
-    const session = await auth.webAuth.resolve(token, now());
+    const session = await auth.webAuth.resolve(token, now(), sessionTtlMs);
     if (!session || session.chatId === null) return null;
     return { chatId: session.chatId, name: session.name };
   };
@@ -198,7 +198,9 @@ function wireAuth(
   app.post('/api/auth/start', async (c) => {
     const token = newToken();
     const code = newCode();
-    await auth.webAuth.createPending({ token, code, now: now(), sessionTtlMs, codeTtlMs });
+    // The pending session lives only as long as its code (ADR-0048); the cookie
+    // may outlive it — an expired pending token simply resolves to null.
+    await auth.webAuth.createPending({ token, code, now: now(), codeTtlMs });
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: 'Lax',
