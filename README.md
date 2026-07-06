@@ -201,5 +201,21 @@ reads the last few ticks as a group (ADR-0042); semantic retrieval over `story_v
 chat grounding (ADR-0045); entity-linked Wikipedia Pageviews attention down to the individual
 story (ADR-0043); and persisted Signal history for trend-aware scoring (ADR-0044).
 
+**Second integrity & resilience pass (ADR-0047).** A fresh-start run (wipe → three ticks →
+use every surface → inspect all collections) drove a correctness/cost/resilience sweep: deep
+summaries + "why it matters" now persist across ticks instead of being wiped by cheap
+re-upserts; the two GDELT adapters share a per-host rate limiter (no more 429 every tick);
+`/api/stories` can't be 500'd by a non-numeric param; HTML entities are decoded in summaries;
+`raw_items`/`signal_observations` are kept bounded; classify/score run with bounded
+concurrency and the boot backfill no longer races live ticks; the OpenAI transport + embedder
+retry transient blips (so a hash vector can't poison the neural store); pairing codes are
+single-claim; and chat grounds only on genuinely-relevant stories.
+
+> **Operational rule: one writer per database.** The tick pipeline is **not** safe to run
+> twice against the same DB — two writers double-count corroboration and race membership. Run
+> exactly one instance per Turso database. As a backstop, `lock.enabled` (ADR-0047, on by
+> default in `config/horizon.yaml`) takes a cross-process advisory lock so a stray second
+> process skips its tick instead of corrupting the store.
+
 `data.gov.il` stays disabled (datasets, not events); other probed sources are PARKed in
 [`docs/research/`](docs/research) as future reference.

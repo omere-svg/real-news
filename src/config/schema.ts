@@ -73,6 +73,21 @@ export const configSchema = z.object({
     })
     .default({}),
 
+  /**
+   * Cross-process tick lock (ADR-0047). Guards against two processes ticking the
+   * same database — a lingering local run beside the deployed one would
+   * double-write and corrupt counts. The real fix is one writer per DB; enable
+   * this as a backstop when that can't be guaranteed.
+   */
+  lock: z
+    .object({
+      /** Acquire a DB advisory lock before each tick; skip the tick if held. */
+      enabled: z.boolean().default(false),
+      /** How long a held lock stays valid — bounds a crashed holder (minutes). */
+      ttlMinutes: z.number().positive().default(45),
+    })
+    .default({}),
+
   embedder: z
     .object({
       /** `openai` (neural, ADR-0018) or `hashing` (offline stand-in, ADR-0007). */
@@ -142,6 +157,12 @@ export const configSchema = z.object({
       signalHistoryDays: z.number().int().nonnegative().default(14),
       /** Prune expired web sessions / link codes each tick (ADR-0040 hardening). */
       pruneExpiredAuth: z.boolean().default(true),
+      /**
+       * After each tick, delete raw_items that no Story references (ADR-0047).
+       * Provenance for an item that never joined a surviving Story is dead weight;
+       * pruning it keeps the raw table from growing without bound.
+       */
+      pruneUnreferencedRawItems: z.boolean().default(true),
       /** Generate an LLM reflection advisory every N ticks; 0 disables it. */
       reflectEveryTicks: z.number().int().nonnegative().default(5),
       /** How many recent ticks each reflection reasons over. */

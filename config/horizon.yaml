@@ -157,8 +157,17 @@ retention:
   reflections: 20         # keep only the most recent N reflection advisories
   signalHistoryDays: 14   # prune persisted signal observations older than N days
   pruneExpiredAuth: true  # sweep expired web sessions / link codes each tick (ADR-0040)
+  pruneUnreferencedRawItems: true  # drop raw_items no story kept, so the raw table can't grow unbounded (ADR-0047)
   reflectEveryTicks: 5    # generate an LLM reflection every N ticks (0 = disable)
   reflectWindow: 5        # how many recent ticks each reflection reasons over
+
+# Cross-process tick lock (ADR-0047). The pipeline is NOT safe to run twice
+# against one database — a lingering local run beside the deployed instance would
+# double-write and corrupt counts. The real fix is one writer per DB; this is a
+# backstop. Enabled here because the same Turso DB is used from more than one place.
+lock:
+  enabled: true
+  ttlMinutes: 45          # a held lock auto-expires after this, so a crash can't wedge the loop
 
 # Telegram bot interface (ADR-0019/0020). Token in .env (TELEGRAM_BOT_TOKEN), never here.
 # Off by default; set enabled: true to run the bot alongside the tick loop + viewer.

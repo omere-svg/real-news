@@ -15,6 +15,7 @@ import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
 import type { TickRecord } from './db/tick-report-repo.js';
 import { DrizzleSignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
+import { DrizzleTickLock } from './db/tick-lock-repo.js';
 import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
 import { ArxivSource } from './sources/arxiv.js';
@@ -37,7 +38,7 @@ import { CoinGeckoSource } from './sources/coingecko.js';
 import { FrankfurterSource } from './sources/frankfurter.js';
 import { OpenAlexSource } from './sources/openalex.js';
 import { GdeltSignalSource } from './sources/gdelt-signal.js';
-import { makeFetchJson } from './sources/http.js';
+import { makeFetchJson, rateLimitByHost } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
 import type { SignalSource } from './sources/signal-source.js';
 import type { JsonFetcher } from './sources/http.js';
@@ -244,10 +245,14 @@ async function main(): Promise<void> {
     params: toQueryParams(config),
   });
 
-  const fetchJson = makeFetchJson(fetch, {
-    timeoutMs: config.http.fetchTimeoutMs,
-    maxBytes: config.http.maxResponseBytes,
-  });
+  // Serialize + space requests to self-rate-limited hosts (GDELT) so the story
+  // feed and the tone signal can't collide and trip its ~1-req/5s limit (ADR-0047).
+  const fetchJson = rateLimitByHost(
+    makeFetchJson(fetch, {
+      timeoutMs: config.http.fetchTimeoutMs,
+      maxBytes: config.http.maxResponseBytes,
+    }),
+  );
   // One embedder, shared by the tick pipeline (dedup) and — when semantic chat is
   // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
   const embedder = buildEmbedder(config);
@@ -269,6 +274,12 @@ async function main(): Promise<void> {
   };
 
   const retention = config.retention;
+  if (retention.signalHistoryDays === 0) {
+    console.warn(
+      '[retention] signalHistoryDays=0 keeps every Signal observation forever — ' +
+        'signal_observations will grow unbounded. Set a positive window to prune (ADR-0047).',
+    );
+  }
 
   // History retention + the LLM reflection advisory (ADR-0042). Best-effort:
   // an advisory/prune failure must never break the loop.
@@ -277,6 +288,8 @@ async function main(): Promise<void> {
     tickCount += 1;
     if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
     if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
+    // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
+    if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
 
     if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
       // Reason over the trailing window of ticks as a group and persist the note.
@@ -296,15 +309,26 @@ async function main(): Promise<void> {
     }
   };
 
-  // A tick can take longer than the interval; without this guard setInterval
-  // would start a second tick over the first and race the same DB (ADR-0038).
-  let ticking = false;
-  const runTick = async (): Promise<void> => {
-    if (ticking) {
-      console.warn('[tick] previous tick still running — skipping this interval');
+  // Optional cross-process advisory lock (ADR-0047): when two processes point at
+  // one DB, only the lock holder ticks — the other skips instead of double-writing.
+  const tickLock = new DrizzleTickLock(db);
+  const lockEnabled = config.lock.enabled;
+  const lockTtlMs = config.lock.ttlMinutes * 60_000;
+
+  // Serialize the pipeline: the boot backfill and every tick share one queue, so
+  // they never overlap and contend for the model / race the store (ADR-0047).
+  let pipelineChain: Promise<unknown> = Promise.resolve();
+  const runExclusive = <T>(fn: () => Promise<T>): Promise<T> => {
+    const result = pipelineChain.then(fn, fn);
+    pipelineChain = result.catch(() => undefined);
+    return result;
+  };
+
+  const tickBody = async (): Promise<void> => {
+    if (lockEnabled && !(await tickLock.acquire(systemClock.now(), lockTtlMs))) {
+      console.warn('[tick] another process holds the tick lock — skipping this interval');
       return;
     }
-    ticking = true;
     const ranAt = systemClock.now();
     try {
       const report = await runner.run();
@@ -316,7 +340,6 @@ async function main(): Promise<void> {
       );
       // Steady-state healing (ADR-0038): deep-analyze a few cached Stories still
       // missing a summary / whyItMatters, so the whole cache converges over time.
-      // In-loop (within the tick guard) so it never races the pipeline's writes.
       if (config.reasoner.backfillPerTick > 0) {
         await backfillSummaries(
           { storyRepo, rawItemRepo, llm },
@@ -346,6 +369,22 @@ async function main(): Promise<void> {
       // Retention + reflection run whether or not the tick itself succeeded, so a
       // failing tick is still counted, pruned, and reflected on (ADR-0042).
       await maintain().catch((err) => console.error('[maintain] failed:', err));
+      if (lockEnabled) await tickLock.release().catch((err) => console.error('[tick] lock release failed:', err));
+    }
+  };
+
+  // A tick can take longer than the interval; without this guard setInterval
+  // would start a second tick over the first and race the same DB (ADR-0038).
+  let ticking = false;
+  const runTick = async (): Promise<void> => {
+    if (ticking) {
+      console.warn('[tick] previous tick still running — skipping this interval');
+      return;
+    }
+    ticking = true;
+    try {
+      await runExclusive(tickBody);
+    } finally {
       ticking = false;
     }
   };
@@ -357,17 +396,20 @@ async function main(): Promise<void> {
   // Self-heal cached Stories that lack a factual summary (e.g. created before the
   // field existed, or never top-N) — in the background, most-significant first, so
   // the brief fixes itself after a restart without a manual backfill (ADR-0006).
+  // Serialized with ticks (runExclusive) so the two never contend (ADR-0047).
   if (config.reasoner.backfillOnBoot) {
-    void backfillSummaries(
-      { storyRepo, rawItemRepo, llm },
-      {
-        max: config.reasoner.backfillMaxOnBoot,
-        concurrency: config.dedup.confirmConcurrency,
-        onProgress: (done, total) => {
-          if (done === 1) console.log(`[backfill] healing ${total} stories missing a summary…`);
-          if (done === total) console.log(`[backfill] done: ${total} stories updated.`);
+    void runExclusive(() =>
+      backfillSummaries(
+        { storyRepo, rawItemRepo, llm },
+        {
+          max: config.reasoner.backfillMaxOnBoot,
+          concurrency: config.dedup.confirmConcurrency,
+          onProgress: (done, total) => {
+            if (done === 1) console.log(`[backfill] healing ${total} stories missing a summary…`);
+            if (done === total) console.log(`[backfill] done: ${total} stories updated.`);
+          },
         },
-      },
+      ),
     ).catch((err) => console.error('[backfill] failed:', err));
   }
 

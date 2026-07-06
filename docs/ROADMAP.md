@@ -206,3 +206,25 @@ one `Climate` story) and surfaced two residuals, now fixed:
 | **`whyItMatters` ~92% null** after 2 ticks; `backfillSummaries` analyzed **serially** so the 500-Story boot heal took many minutes | Backfill runs with **bounded concurrency** (reuses the ADR-0038 `mapWithConcurrency`); boot/per-tick heal finish fast; `backfillPerTick` 8 → 12 |
 
 Cost stays bounded — concurrency changes *throughput*, not the per-call count. See ADR-0039.
+
+## 6. Second integrity & resilience pass — ADR-0047 (resolved 2026-07-06)
+
+A third review — wipe the DB, tick three times, use every surface as a user, inspect all
+collections — surfaced a batch of correctness/cost/resilience defects, all now fixed and
+covered by tests:
+
+| Was | Now (ADR-0047) |
+|---|---|
+| **Two processes ticked one DB** (a stray local run beside prod) → double-writes, raced membership | Optional cross-process advisory lock (`tick_lock`, `lock.enabled`, **on** in config); stray process skips its tick. Operational rule: **one writer per DB** |
+| **`whyItMatters`/deep summary wiped** by cheap non-top-N re-upserts; degraded `analyze` returned `''` so backfill couldn't heal | Tick preserves existing analysis via `existingAnalysis`; `analyze` returns `null` on blank/degrade; backfill preserves + skips no-ops |
+| **GDELT 429 every tick** (story feed + tone signal hit the host concurrently) | Shared per-host rate limiter (`rateLimitByHost`) serializes + spaces GDELT to 1-req/5s |
+| **`/api/stories?minSignificance=abc` → 500** (NaN bind) | Numeric params clamped/guarded before the query |
+| Raw `&#x2F;` shown in summaries | Numeric/hex/named HTML entities decoded in the lead summary |
+| `raw_items` / `signal_observations` grew unbounded | Per-tick prune of unreferenced raw items; boot warning at `signalHistoryDays: 0` |
+| `classify`/`score` fanned out with `Promise.all`; boot backfill raced ticks | Bounded concurrency; boot backfill + ticks share one serialization queue |
+| Transient embed error → silent hash fallback, poisoning cosine dedup | OpenAI transport + embedder retry transient blips before degrading |
+| A pairing code could be **hijacked** by a second chat | `claim` is single-claim (idempotent for the owner) |
+| Chat grounded on its top-k regardless of relevance; menu/help taps burned quota | Similarity floor + fallback; factual summary in the grounding context; free navigation exempt from the command quota |
+
+Cost stays bounded — concurrency and retries change *throughput/reliability*, not the
+per-call design. See ADR-0047.
