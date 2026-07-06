@@ -28,6 +28,15 @@ const responseSchema = z.object({
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
+/** A short, stable hash of a string (djb2) — a deterministic dedup key. */
+function stableId(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
+
 /** Strip HTML tags + decode the common entities, collapse whitespace. */
 function plainText(html: string): string {
   return html
@@ -84,7 +93,11 @@ export class WikipediaSource implements SourceAdapter {
         if (!title) return null;
         return {
           source: 'wikipedia' as const,
-          externalId: lead?.title ?? `news-${now}-${i}`,
+          // Prefer the lead article title (stable). Only when a blurb has no
+          // linked article, key off the headline text — NOT the wall-clock time,
+          // which would mint a brand-new id every tick and re-ingest the same
+          // blurb forever (ADR-0047). Index disambiguates same-headline blurbs.
+          externalId: lead?.title ?? `news:${stableId(title)}:${i}`,
           title,
           url: lead?.content_urls?.desktop?.page ?? null,
           text: title,

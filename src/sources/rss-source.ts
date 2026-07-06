@@ -1,4 +1,5 @@
 import { parseRssItems } from './rss.js';
+import { canonicalizeUrl } from './url.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem, SourceId, StorySourceId, Topic } from '../domain/types.js';
@@ -44,7 +45,9 @@ export class RssSource implements SourceAdapter {
       .filter((item) => item.link !== null)
       .map((item) => ({
         source: this.deps.id,
-        externalId: item.link as string,
+        // Canonicalize the link so tracking params / trailing slashes can't make
+        // the same article arrive under different ids across fetches (ADR-0047).
+        externalId: canonicalizeUrl(item.link as string),
         title: item.title,
         url: item.link,
         text: item.description,

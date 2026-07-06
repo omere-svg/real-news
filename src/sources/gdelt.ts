@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canonicalizeUrl } from './url.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
@@ -82,7 +83,9 @@ export class GdeltSource implements SourceAdapter {
       .filter((a) => a.title)
       .map((a) => ({
         source: 'gdelt' as const,
-        externalId: a.url,
+        // GDELT reprints the same article URL with varying params; canonicalize
+        // so one article is one id across ticks (ADR-0047).
+        externalId: canonicalizeUrl(a.url),
         title: a.title as string,
         url: a.url,
         text: null,

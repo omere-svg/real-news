@@ -74,3 +74,67 @@ export function makeFetchJson(
 
 /** Production fetcher: hardened, over the global `fetch`, with default limits. */
 export const fetchJson: JsonFetcher = makeFetchJson(fetch, DEFAULT_FETCH_LIMITS);
+
+/** Minimum spacing between requests to a rate-limited host, keyed by hostname. */
+export type HostRateLimits = Readonly<Record<string, number>>;
+
+/** The hosts that enforce their own request rate. GDELT allows ~1 req / 5s and
+ * returns 429 when two adapters (the story feed + the tone signal) hit it in the
+ * same tick — so serialize and space calls to it (ADR-0047). */
+export const DEFAULT_HOST_RATE_LIMITS: HostRateLimits = {
+  'api.gdeltproject.org': 5_000,
+};
+
+/**
+ * Wrap a fetcher so requests to a rate-limited host are serialized and spaced by
+ * at least the configured interval (ADR-0047). GDELT's story adapter and its tone
+ * Signal both call `api.gdeltproject.org`, and the tick fires extraction and
+ * signal observation concurrently — without this they collide and trip GDELT's
+ * ~1-req/5s limit (429) every tick. Calls to any other host pass straight
+ * through with no added latency.
+ */
+export function rateLimitByHost(
+  fetcher: JsonFetcher,
+  limits: HostRateLimits = DEFAULT_HOST_RATE_LIMITS,
+): JsonFetcher {
+  // Per-host serialization tail + the timestamp of the last completed request.
+  const tail = new Map<string, Promise<unknown>>();
+  const lastAt = new Map<string, number>();
+
+  const runSpaced = async (
+    host: string,
+    minMs: number,
+    url: string,
+    options?: FetchOptions,
+  ): Promise<unknown> => {
+    const wait = Math.max(0, (lastAt.get(host) ?? 0) + minMs - Date.now());
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return await fetcher(url, options);
+    } finally {
+      lastAt.set(host, Date.now());
+    }
+  };
+
+  return (url, options) => {
+    const host = hostOf(url);
+    const minMs = host ? limits[host] : undefined;
+    if (!host || !minMs) return fetcher(url, options);
+
+    // Chain onto this host's tail so requests never overlap; a prior failure
+    // must not break the chain, so swallow it before scheduling the next.
+    const prev = tail.get(host) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(() => runSpaced(host, minMs, url, options));
+    tail.set(host, next);
+    return next;
+  };
+}
+
+/** The hostname of a URL, or null when it can't be parsed. */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
