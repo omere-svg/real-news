@@ -32,18 +32,17 @@ export interface TickLock {
 export class DrizzleTickLock implements TickLock {
   /** This process's opaque holder id — unique per run so releases can't collide. */
   private readonly holder = `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
-  private ensured = false;
 
   constructor(private readonly db: Db) {}
 
-  /** Ensure the singleton row exists before the first conditional update. */
+  /** Ensure the singleton row exists before the conditional update. Runs every
+   * acquire (one cheap INSERT..ON CONFLICT per tick): an out-of-band deletion of
+   * the row (e.g. an ops/QA wipe) must not wedge the loop forever (ADR-0048). */
   private async ensureRow(): Promise<void> {
-    if (this.ensured) return;
     await this.db
       .insert(tickLock)
       .values({ id: 1, lockedUntil: 0, holder: null })
       .onConflictDoNothing();
-    this.ensured = true;
   }
 
   async acquire(now: number, ttlMs: number): Promise<boolean> {

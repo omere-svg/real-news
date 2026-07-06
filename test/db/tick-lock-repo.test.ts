@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DrizzleTickLock } from '../../src/db/tick-lock-repo.js';
+import { tickLock } from '../../src/db/schema.js';
 import { createTestDb } from '../helpers/test-db.js';
 
 describe('DrizzleTickLock (cross-process tick lock, ADR-0047)', () => {
@@ -40,5 +41,14 @@ describe('DrizzleTickLock (cross-process tick lock, ADR-0047)', () => {
     const a = new DrizzleTickLock(db);
     expect(await a.acquire(1000, 5000)).toBe(true);
     expect(await a.acquire(2000, 5000)).toBe(true); // renew before expiry
+  });
+
+  it('re-acquires after the lock row is deleted out-of-band (QA wipe, ADR-0048)', async () => {
+    const db = await createTestDb();
+    const a = new DrizzleTickLock(db);
+
+    expect(await a.acquire(1000, 5000)).toBe(true);
+    await db.delete(tickLock); // a DB wipe removes the singleton row mid-hold
+    expect(await a.acquire(7000, 5000)).toBe(true); // must self-heal, not wedge forever
   });
 });
