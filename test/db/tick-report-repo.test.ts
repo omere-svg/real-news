@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createTestDb } from '../helpers/test-db.js';
-import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report-repo.js';
+import { DrizzleTickReportRepo, lockSkipRecord, type TickRecord } from '../../src/db/tick-report-repo.js';
 
 function record(over: Partial<TickRecord> = {}): TickRecord {
   return {
@@ -68,5 +68,14 @@ describe('TickReportRepo (ADR-0033)', () => {
     await repo.record(record({ ranAt: 100 }));
     expect(await repo.pruneToRecent(5)).toBe(0);
     expect(await repo.recent(10)).toHaveLength(1);
+  });
+
+  it('lockSkipRecord marks a lock-skip visibly without alarming counts (ADR-0048)', () => {
+    const r = lockSkipRecord(1234);
+    expect(r.ranAt).toBe(1234);
+    expect(r.ok).toBe(true); // a skip is not a failure — dashboard stays green
+    expect(r.error).toMatch(/lock/i); // but the reason is visible remotely
+    expect(r.extracted).toBe(0);
+    expect(r.storiesUpserted).toBe(0);
   });
 });

@@ -11,7 +11,7 @@ import { openDb } from './db/client.js';
 import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
-import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
+import { DrizzleTickReportRepo, lockSkipRecord } from './db/tick-report-repo.js';
 import type { TickRecord } from './db/tick-report-repo.js';
 import { DrizzleSignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
@@ -327,6 +327,9 @@ async function main(): Promise<void> {
   const tickBody = async (): Promise<void> => {
     if (lockEnabled && !(await tickLock.acquire(systemClock.now(), lockTtlMs))) {
       console.warn('[tick] another process holds the tick lock — skipping this interval');
+      // Make the skip visible in tick_reports (ADR-0048): a remote observer must
+      // be able to tell "skipped by lock" from "process dead".
+      recordTick(lockSkipRecord(systemClock.now()));
       return;
     }
     const ranAt = systemClock.now();

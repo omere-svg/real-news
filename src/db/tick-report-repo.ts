@@ -17,8 +17,31 @@ export interface TickRecord extends TickReport {
   readonly durationMs: number;
   /** False when the tick threw; the loop records it anyway. */
   readonly ok: boolean;
-  /** Error message when `ok` is false, else null. */
+  /** Error message when `ok` is false; also carries the skip reason for
+   * lock-skipped ticks (recorded with `ok = true`, ADR-0048). */
   readonly error: string | null;
+}
+
+/**
+ * The TickRecord written when a tick is skipped because another process holds
+ * the advisory lock (ADR-0048). ok=true (a skip is not a failure) with the
+ * reason in `error`, so /api/ticks and /dashboard show WHY nothing ran —
+ * absence alone is indistinguishable from a dead process.
+ */
+export function lockSkipRecord(ranAt: number): TickRecord {
+  return {
+    ranAt,
+    durationMs: 0,
+    ok: true,
+    error: 'tick skipped: lock held by another process',
+    extracted: 0,
+    storiesUpserted: 0,
+    signalsObserved: 0,
+    skipped: [],
+    failed: [],
+    signalsSkipped: [],
+    signalsFailed: [],
+  };
 }
 
 /** The observability log store (ADR-0033). */
