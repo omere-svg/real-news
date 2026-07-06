@@ -72,6 +72,25 @@ describe('HTTP API', () => {
     expect(body.stories.map((s: { id: string }) => s.id)).toEqual(['b']);
   });
 
+  it('GET /api/stories ignores a non-numeric minSignificance instead of 500ing (ADR-0047)', async () => {
+    // A NaN reaching the SQL bind crashes libsql; the endpoint must degrade to no filter.
+    const app = await appWithStories();
+    const res = await app.request('/api/stories?minSignificance=notanumber');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { stories: { id: string }[] };
+    expect(body.stories.map((s) => s.id)).toEqual(['a', 'b']); // filter dropped, all returned
+  });
+
+  it('GET /api/stories clamps an out-of-range or bad limit (ADR-0047)', async () => {
+    const app = await appWithStories();
+    for (const q of ['limit=99999', 'limit=-5', 'limit=abc']) {
+      const res = await app.request(`/api/stories?${q}`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { stories: unknown[] };
+      expect(body.stories.length).toBeGreaterThan(0); // never errors, always a sane page
+    }
+  });
+
   it('GET /health returns ok', async () => {
     const app = await appWithStories();
     const res = await app.request('/health');

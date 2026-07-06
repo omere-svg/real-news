@@ -51,6 +51,20 @@ describe('DrizzleWebAuthRepo (Log in with Telegram pairing)', () => {
     expect(await r.claim('NOPE', 42, null, 1000)).toBe('unknown');
   });
 
+  it('a code already claimed by one chat cannot be hijacked by another (ADR-0047)', async () => {
+    const r = await repo();
+    await r.createPending({ token: 't1', code: 'ABC123', now: 1000, ...TTL });
+
+    expect(await r.claim('ABC123', 42, 'Omer', 2000)).toBe('linked');
+    // A second chat must NOT be able to steal the pending session before resolve.
+    expect(await r.claim('ABC123', 99, 'Mallory', 2500)).toBe('unknown');
+    // Re-claiming by the original chat is still idempotent.
+    expect(await r.claim('ABC123', 42, 'Omer', 2600)).toBe('linked');
+
+    const s = await r.resolve('t1', 3000);
+    expect(s).toEqual({ token: 't1', chatId: 42, name: 'Omer' }); // the rightful owner
+  });
+
   it('an expired session resolves to null', async () => {
     const r = await repo();
     await r.createPending({ token: 't1', code: 'ABC123', now: 1000, sessionTtlMs: 5000, codeTtlMs: 5000 });

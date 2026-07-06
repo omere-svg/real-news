@@ -83,6 +83,11 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
       await this.db.delete(linkCodes).where(eq(linkCodes.code, code));
       return 'expired';
     }
+    // Single-claim: once a code is bound to a chat, only that chat can (re-)claim
+    // it. A second chat claiming the same in-flight code must not be able to
+    // hijack the pending web session by overwriting its chatId (ADR-0047).
+    // Idempotent for the original claimant.
+    if (row.chatId !== null && row.chatId !== chatId) return 'unknown';
     await this.db
       .update(linkCodes)
       .set({ chatId, name })

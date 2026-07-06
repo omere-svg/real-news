@@ -109,7 +109,13 @@ async function main(): Promise<void> {
     usage: new DrizzleUsageRepo(db),
     clock: systemClock,
     limiter: new FixedWindowLimiter(1000, 60_000),
-    limits: { perMinute: 1000, podcastPerDay: 1000, commandsPerDay: 1000, globalPodcastPerDay: 1000 },
+    limits: {
+      perMinute: 1000,
+      podcastPerDay: 1000,
+      commandsPerDay: 1000,
+      globalPodcastPerDay: 1000,
+      globalCommandsPerDay: 10_000,
+    },
     maxMinutes: 60,
     synthesizer,
     defaults: { minutes: 3 },
@@ -123,7 +129,8 @@ async function main(): Promise<void> {
   };
 
   await run('/start', 'help');
-  checks.push({ name: 'help lists commands', ok: /\/brief/.test(transport.lastText), note: '' });
+  // /start shows the tap-to-run menu (ADR-0030): assert the Brief affordance, not a slash command.
+  checks.push({ name: 'help shows the menu', ok: /Brief/.test(transport.lastText), note: '' });
 
   await run('/prefs topics AI,Geopolitics', 'set topics');
   const saved = await prefs.get(CHAT);

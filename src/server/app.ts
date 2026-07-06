@@ -119,11 +119,15 @@ export function createApp(
   app.get('/api/stories', async (c) => {
     const q = c.req.query();
     const topics = c.req.queries('topic') as Topic[] | undefined;
+    // Guard both numeric params: a bad `limit` or `minSignificance` (e.g.
+    // `?minSignificance=abc`) must degrade to a sane query, never reach the DB
+    // as NaN — libsql rejects a NaN bind and 500s the whole endpoint (ADR-0047).
+    const minSignificance = q.minSignificance !== undefined ? Number(q.minSignificance) : undefined;
     const query: StoryQuery = {
-      limit: q.limit ? Number(q.limit) : 50,
+      limit: normalizeLimit(q.limit, 50),
       ...(topics?.length ? { topic: topics } : {}),
-      ...(q.minSignificance
-        ? { minSignificance: Number(q.minSignificance) }
+      ...(minSignificance !== undefined && Number.isFinite(minSignificance)
+        ? { minSignificance }
         : {}),
     };
     return c.json({ stories: await storyRepo.topStories(query) });

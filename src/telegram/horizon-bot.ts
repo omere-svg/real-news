@@ -54,6 +54,14 @@ interface ChatSession {
 
 /** How many prior turns to carry as conversation context. */
 const MAX_HISTORY_TURNS = 6;
+/**
+ * Minimum cosine similarity for a Story to count as relevant chat grounding
+ * (ADR-0047). Without a floor, semantic search always returns its top-k even
+ * when nothing is actually about the question, so the model gets fed unrelated
+ * stories and answers from noise. Below the floor we fall back to top-by-
+ * significance (a sensible "here's today's news" default).
+ */
+const CHAT_MIN_SIMILARITY = 0.35;
 /** Cap on stored memory length, to bound the prompt it's injected into. */
 const MAX_MEMORY_CHARS = 2000;
 /** The inline button that opens the per-answer feedback flow (ADR-0028). */
@@ -313,6 +321,12 @@ export class HorizonBot {
     command: Command,
     now: number,
   ): Promise<boolean> {
+    // Free, zero-cost navigation (menu/help, viewing/clearing prefs, pairing)
+    // never draws down the daily command budget — only work that reads the cache
+    // or hits the model does. Otherwise a few menu taps could burn a user's whole
+    // allowance and lock them out of an actual brief (ADR-0047).
+    if (isFreeCommand(command.kind)) return true;
+
     const day = utcDay(now);
     const { usage, transport, limits } = this.deps;
 
@@ -520,6 +534,7 @@ export class HorizonBot {
 
     return stories.map((s) => ({
       title: s.title,
+      summary: s.summary,
       whyItMatters: s.whyItMatters,
       topic: s.topic,
       significance: s.significance,
@@ -541,7 +556,16 @@ export class HorizonBot {
     if (!vector || vector.length === 0 || vector.every((v) => v === 0)) {
       return this.deps.storyRepo!.topStories({ limit: 30, ...topicFilter });
     }
-    return search({ vector, limit: 12, ...topicFilter });
+    // Only ground on genuinely-relevant matches (ADR-0047); if nothing clears the
+    // floor, fall back to today's top stories rather than feeding the model noise.
+    const relevant = await search({
+      vector,
+      limit: 12,
+      minSimilarity: CHAT_MIN_SIMILARITY,
+      ...topicFilter,
+    });
+    if (relevant.length > 0) return relevant;
+    return this.deps.storyRepo!.topStories({ limit: 30, ...topicFilter });
   }
 
   /** Append a turn to the session, keeping only the most recent ones. */
@@ -837,6 +861,28 @@ function callbackCommand(data: string): Command | null {
 /** The UTC day key (YYYY-MM-DD) for a quota bucket. */
 function utcDay(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
+}
+
+/**
+ * Commands that cost nothing (no model call, no cache render) and so are exempt
+ * from the daily command quota (ADR-0047): menu/help, pairing, and viewing or
+ * changing settings. Everything else (brief/outline/podcast/chat/feedback)
+ * still counts.
+ */
+const FREE_COMMANDS: ReadonlySet<Command['kind']> = new Set([
+  'start',
+  'link',
+  'help',
+  'unknown',
+  'prefsShow',
+  'prefsSet',
+  'prefsClear',
+  'feedbackUndo',
+  'forget',
+]);
+
+function isFreeCommand(kind: Command['kind']): boolean {
+  return FREE_COMMANDS.has(kind);
 }
 
 /** Parse a comma list against a controlled vocabulary, dropping invalid entries. */
