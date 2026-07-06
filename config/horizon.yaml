@@ -109,6 +109,11 @@ sources:
     enabled: true
     weight: 0.5
     maxItems: 25
+  # ADR-0041 — GDELT aggregate tone ⇒ Geopolitics intensity signal (keyless).
+  - id: gdelt-signal         # negativity of world-news tone ⇒ Geopolitics signal
+    enabled: true
+    weight: 0.5
+    maxItems: 1
 
 # The Reasoner tiers (ADR-0006/0012). OpenAI models — change to any your key can access.
 reasoner:
@@ -143,6 +148,17 @@ dedup:
 scoring:
   recencyHalfLifeHours: 36    # floored recency factor decays one step per this (ADR-0034)
   maxSignalAdjustment: 1.0    # max numeric-Signal nudge to significance (ADR-0025)
+  signalTrendBoost: 0.5       # extra salience for a rising signal vs its prior reading (ADR-0044)
+  entitySignalWeight: 1.0     # nudge the specific story whose entities match a hot Pageviews article (ADR-0043)
+
+# History retention + LLM reflection over recent ticks (ADR-0042).
+retention:
+  tickReports: 5          # keep only the most recent N tick reports (0 = keep all)
+  reflections: 20         # keep only the most recent N reflection advisories
+  signalHistoryDays: 14   # prune persisted signal observations older than N days
+  pruneExpiredAuth: true  # sweep expired web sessions / link codes each tick (ADR-0040)
+  reflectEveryTicks: 5    # generate an LLM reflection every N ticks (0 = disable)
+  reflectWindow: 5        # how many recent ticks each reflection reasons over
 
 # Telegram bot interface (ADR-0019/0020). Token in .env (TELEGRAM_BOT_TOKEN), never here.
 # Off by default; set enabled: true to run the bot alongside the tick loop + viewer.
@@ -165,6 +181,7 @@ telegram:
     voice: alloy
   chat:                   # chat about the news (ADR-0029)
     enabled: true         # free-text questions after a brief, /chat, /ask
+    semanticRetrieval: true  # ground answers on semantically-relevant stories, not just top ones (ADR-0045)
     webSearch:            # fallback when the cache can't answer
       provider: none      # none = cache-only (Principle 4); tavily = live lookup (needs TAVILY_API_KEY)
       maxResults: 5
@@ -173,6 +190,11 @@ telegram:
 http:
   fetchTimeoutMs: 10000
   maxResponseBytes: 5000000
+
+# Web surface (ADR-0040). Set secureCookie:true once the site is served over HTTPS
+# so the login session cookie is never sent over plain http.
+web:
+  secureCookie: false
 
 # Presentation / query layer (ADR-0013/0014/0015). Attention budgeting + preferences.
 presentation:

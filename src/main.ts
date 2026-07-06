@@ -12,6 +12,10 @@ import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
 import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
+import type { TickRecord } from './db/tick-report-repo.js';
+import { DrizzleSignalObservationRepo } from './db/signal-observation-repo.js';
+import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
+import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
 import { ArxivSource } from './sources/arxiv.js';
 import { GdeltSource } from './sources/gdelt.js';
@@ -32,6 +36,7 @@ import { WorldBankSource } from './sources/worldbank.js';
 import { CoinGeckoSource } from './sources/coingecko.js';
 import { FrankfurterSource } from './sources/frankfurter.js';
 import { OpenAlexSource } from './sources/openalex.js';
+import { GdeltSignalSource } from './sources/gdelt-signal.js';
 import { makeFetchJson } from './sources/http.js';
 import type { SourceAdapter } from './sources/source-adapter.js';
 import type { SignalSource } from './sources/signal-source.js';
@@ -173,6 +178,9 @@ function buildSignalSource(id: SignalSourceId, s: SourceConfig, fetchJson: JsonF
       return new FrankfurterSource(base);
     case 'openalex':
       return new OpenAlexSource(base);
+    // ADR-0041 — GDELT aggregate tone ⇒ Geopolitics intensity signal.
+    case 'gdelt-signal':
+      return new GdeltSignalSource(base);
     default: {
       const _exhaustive: never = id;
       return _exhaustive;
@@ -214,6 +222,8 @@ async function main(): Promise<void> {
   const rawItemRepo = new DrizzleRawItemRepo(db);
   const storyRepo = new DrizzleStoryRepo(db, systemClock);
   const tickReportRepo = new DrizzleTickReportRepo(db);
+  const signalObservationRepo = new DrizzleSignalObservationRepo(db);
+  const tickReflectionRepo = new DrizzleTickReflectionRepo(db);
   // Shared across the web viewer and the Telegram bot so a linked user sees the
   // same preferences on both surfaces (ADR-0040).
   const chatPrefs = new DrizzleChatPreferencesRepo(db);
@@ -238,13 +248,17 @@ async function main(): Promise<void> {
     timeoutMs: config.http.fetchTimeoutMs,
     maxBytes: config.http.maxResponseBytes,
   });
+  // One embedder, shared by the tick pipeline (dedup) and — when semantic chat is
+  // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
+  const embedder = buildEmbedder(config);
   const runner = new TickRunner({
     sources: buildSources(config, fetchJson),
     signalSources: buildSignalSources(config, fetchJson),
     rawItemRepo,
     storyRepo,
+    signalObservationRepo,
     llm,
-    embedder: buildEmbedder(config),
+    embedder,
     clock: systemClock,
     config: toTickConfig(config),
   });
@@ -252,6 +266,34 @@ async function main(): Promise<void> {
   // Best-effort persist of a tick outcome (ADR-0033); a failed write never breaks the loop.
   const recordTick = (rec: Parameters<typeof tickReportRepo.record>[0]): void => {
     void tickReportRepo.record(rec).catch((err) => console.error('[tick] record failed:', err));
+  };
+
+  const retention = config.retention;
+
+  // History retention + the LLM reflection advisory (ADR-0042). Best-effort:
+  // an advisory/prune failure must never break the loop.
+  let tickCount = 0;
+  const maintain = async (): Promise<void> => {
+    tickCount += 1;
+    if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
+    if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
+
+    if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
+      // Reason over the trailing window of ticks as a group and persist the note.
+      const recent = await tickReportRepo.recent(retention.reflectWindow);
+      const text = (await llm.reflect({ ticks: recent.map(toTickDigest) })).trim();
+      if (text) {
+        await tickReflectionRepo.record({
+          createdAt: systemClock.now(),
+          ticksCovered: recent.length,
+          text,
+        });
+        if (retention.reflections > 0) {
+          await tickReflectionRepo.pruneToRecent(retention.reflections);
+        }
+        console.log(`[reflect] advisory written over ${recent.length} ticks.`);
+      }
+    }
   };
 
   // A tick can take longer than the interval; without this guard setInterval
@@ -301,6 +343,9 @@ async function main(): Promise<void> {
       });
       console.error('[tick] failed:', err); // never let a bad tick kill the loop
     } finally {
+      // Retention + reflection run whether or not the tick itself succeeded, so a
+      // failing tick is still counted, pruned, and reflected on (ADR-0042).
+      await maintain().catch((err) => console.error('[maintain] failed:', err));
       ticking = false;
     }
   };
@@ -343,15 +388,32 @@ async function main(): Promise<void> {
     {
       webAuth,
       prefs: chatPrefs,
+      secureCookie: config.web.secureCookie,
       ...(botUsername ? { botUsername } : {}),
     },
+    tickReflectionRepo,
   );
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
   if (config.telegram.enabled) {
-    startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth);
+    startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder);
   }
+}
+
+/** Flatten a persisted tick record into the reflection prompt's digest (ADR-0042). */
+function toTickDigest(r: TickRecord): TickDigest {
+  return {
+    ranAt: r.ranAt,
+    ok: r.ok,
+    durationMs: r.durationMs,
+    extracted: r.extracted,
+    storiesUpserted: r.storiesUpserted,
+    signalsObserved: r.signalsObserved,
+    skipped: [...r.skipped, ...r.signalsSkipped],
+    failed: [...r.failed, ...r.signalsFailed],
+    error: r.error,
+  };
 }
 
 /** Build the web-search fallback for chat (ADR-0029), or null when off / unkeyed. */
@@ -378,6 +440,7 @@ function startTelegramBot(
   storyRepo: StoryRepo,
   prefs: ChatPreferencesRepo,
   webAuth: WebAuthRepo,
+  embedder: Embedder,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -411,6 +474,8 @@ function startTelegramBot(
     // NL routing + plain-language preference edits reuse the Reasoner (ADR-0030).
     ...(tg.naturalLanguage ? { router: llm, prefsInterpreter: llm } : {}),
     ...(chat ? { discussant: llm, storyRepo } : {}), // chat reuses the Reasoner (ADR-0029)
+    // Semantic chat grounding over story_vectors (ADR-0045); off ⇒ top-by-significance.
+    ...(chat && tg.chat.semanticRetrieval ? { embedder } : {}),
     ...(webSearch ? { webSearch } : {}),
     prefs,
     // Lets a `t.me/<bot>?start=link_<code>` deep link connect the web app (ADR-0040).

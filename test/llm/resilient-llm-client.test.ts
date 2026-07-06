@@ -32,6 +32,9 @@ const brokenLLM: LLMClient = {
   interpretPrefs: async () => {
     throw new Error('api down');
   },
+  reflect: async () => {
+    throw new Error('api down');
+  },
 };
 
 const classifyInput = { title: 't', text: null };
@@ -84,5 +87,7 @@ describe('ResilientLLMClient', () => {
       minutes: null,
       summary: '',
     }); // no-op patch: the preference edit didn't land, change nothing
+
+    expect(await llm.reflect({ ticks: [] })).toBe(''); // skip the advisory on an outage
   });
 });

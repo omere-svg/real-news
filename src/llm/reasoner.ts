@@ -14,11 +14,13 @@ import type {
   NarrateInput,
   PrefsInput,
   PrefsPatch,
+  ReflectInput,
   RouteInput,
   RouterIntent,
   StoryAnalysis,
   StoryContext,
   StoryStub,
+  TickDigest,
   WebContext,
 } from './llm-client.js';
 import { TOPICS, type Topic } from '../domain/types.js';
@@ -306,4 +308,33 @@ export class Reasoner implements LLMClient {
     );
     return prefsPatchSchema.parse(json);
   }
+
+  async reflect(input: ReflectInput): Promise<string> {
+    if (input.ticks.length === 0) return '';
+    return this.transport.complete(
+      `You are the operations analyst for Horizon, an autonomous news pipeline. ` +
+        `Below are its most recent ticks (newest first). Study them AS A GROUP and ` +
+        `write a brief operator advisory: 2–4 short bullet points naming any ` +
+        `recurring failing/skipped sources, throughput or duration drift, repeated ` +
+        `errors, or anything trending the wrong way — each with a concrete, ` +
+        `actionable suggestion. If everything looks healthy, say so in one line. ` +
+        `Be specific and terse; no preamble, no restating the raw numbers.\n\n` +
+        `RECENT TICKS:\n${input.ticks.map(tickLine).join('\n')}`,
+      { tier: 'deep', maxTokens: 500 },
+    );
+  }
+}
+
+/** One compact line describing a tick for the reflection prompt (ADR-0042). */
+function tickLine(t: TickDigest): string {
+  const when = new Date(t.ranAt).toISOString();
+  const status = t.ok ? 'ok' : `FAILED (${t.error ?? 'unknown'})`;
+  const skipped = t.skipped.length ? ` skipped=[${t.skipped.join(',')}]` : '';
+  const failed = t.failed.length
+    ? ` failed=[${t.failed.map((f) => `${f.source}:${f.error}`).join('; ')}]`
+    : '';
+  return (
+    `- ${when} ${status} · ${t.durationMs}ms · extracted=${t.extracted} ` +
+    `stories=${t.storiesUpserted} signals=${t.signalsObserved}${skipped}${failed}`
+  );
 }

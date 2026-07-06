@@ -1,8 +1,10 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-07-05 (**341 tests green, 38 ADRs**; live on Render +
-Turso). A production-DB review drove a throughput/dedup/integrity hardening pass
+the plan to finish it. Updated 2026-07-06 (**389 tests green, 46 ADRs**; live on Render +
+Turso). Latest: a **Log in with Telegram** web-auth (ADR-0040, no passwords/emails), all
+five optional deepenings shipped (ADR-0041–0045), and web-session security hardening
+(ADR-0046). See §"Optional deepening — DONE" below. A production-DB review drove a throughput/dedup/integrity hardening pass
 (**ADR-0038**): bounded-concurrency ticks (~17 min → ~1.5 min), a re-entrancy guard,
 orphan-Story pruning, cross-topic cross-tick dedup, a sharper classifier (`Other` 22% → 6%),
 and steady-state summary/why backfill. Phases 1–4 complete
@@ -129,9 +131,10 @@ the rest PARKed in `docs/research/` as reference.*
 12. ✅ **Observability** (ADR-0033) — every tick's outcome persisted to `tick_reports`
     (success *and* failure), surfaced on a self-refreshing `/dashboard` health page +
     `/api/ticks` JSON feed.
-    **Optional follow-ups:** GDELT rate-limit pacing; GDELT signal enrichment (its artlist
-    endpoint exposes no per-article tone/mentions — ADR-0032 note); a retention prune for
-    `tick_reports`; an LLM "reflection" advisor over the persisted history (ADR-0033).
+    **Follow-ups (all DONE):** GDELT rate-limit pacing (ADR-0039); GDELT signal enrichment via
+    a `timelinetone` Signal source since `artlist` has no per-article tone (ADR-0041); a
+    retention prune for `tick_reports` + an LLM "reflection" advisor over the persisted
+    history (ADR-0042).
 
 ### ✅ Score transparency *(DONE)*
 16. ✅ **Inspectable score breakdown** (ADR-0032) — `computeBaseScore` now also yields a
@@ -145,11 +148,28 @@ the rest PARKed in `docs/research/` as reference.*
 production**. The full MVP vision plus the Phase-6 deepening, score transparency (ADR-0032),
 and observability (ADR-0033) are done.
 
-**Optional further deepening (no longer on the critical path):** GDELT signal enrichment
-(ADR-0032 note; rate-limit pacing resolved in ADR-0039); a retention prune + LLM "reflection" advisor over
-`tick_reports` (ADR-0033); semantic retrieval over `story_vectors` for chat grounding;
-per-member source URLs in the brief; entity-linking Pageviews to clusters / persisting Signal
-history (noted in ADR-0025).
+### Optional deepening — DONE (2026-07-06, ADR-0041–0046)
+
+All five optional deepenings are now shipped, tested, and reversible via config:
+
+1. **GDELT signal enrichment (ADR-0041)** — a new `gdelt-signal` Signal source reads
+   GDELT's `timelinetone` and emits world-coverage negativity as a bounded `Geopolitics`
+   nudge (the per-article tone `artlist` can't give). No probe fetch, so the rate limit is safe.
+2. **Retention + reflection advisor (ADR-0042)** — a `retention` config block keeps only the
+   last N tick reports (default 5) so history stays viewable but bounded; every N ticks the
+   Reasoner reads the trailing window **as a group** and writes a "what to improve" advisory,
+   persisted to `tick_reflections` and shown on `/dashboard` + `/api/reflection`.
+3. **Semantic retrieval for chat (ADR-0045)** — chat grounds on the Stories most cosine-similar
+   to the question (embedding the question, searching `story_vectors`), not just top-by-significance,
+   with an automatic fallback.
+4. **Entity-linked Pageviews (ADR-0043)** — Pageviews attention is matched to a story's named
+   entities and nudges that specific story, not just its whole Topic.
+5. **Persisted Signal history + trend (ADR-0044)** — a `signal_observations` table lets scoring
+   reward a *rising* signal series over a flat one, pruned to a bounded window.
+
+Also: **web-session security hardening (ADR-0046)** — no passwords/emails are stored (identity is
+the Telegram id, ADR-0040); a config-gated `Secure` cookie and per-tick pruning of expired
+sessions/codes were added.
 
 ---
 

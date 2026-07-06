@@ -253,6 +253,36 @@ describe('StoryRepo', () => {
       expect(tooOld).toEqual([]);
     });
 
+    it('semanticSearch ranks stories by cosine similarity to the query vector (ADR-0045)', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(5000));
+      await repo.upsert(storyUpsert({ id: 'a', topic: 'AI', memberRefs: [{ source: 'hackernews', externalId: 'a1' }] }));
+      await repo.upsert(storyUpsert({ id: 'b', topic: 'AI', memberRefs: [{ source: 'hackernews', externalId: 'b1' }] }));
+      await repo.upsert(storyUpsert({ id: 'c', topic: 'AI', memberRefs: [{ source: 'hackernews', externalId: 'c1' }] }));
+      await repo.putVector('a', [1, 0, 0]);
+      await repo.putVector('b', [0.9, 0.1, 0]); // closest to the query
+      await repo.putVector('c', [0, 1, 0]); // orthogonal
+
+      const ranked = await repo.semanticSearch({ vector: [1, 0, 0], limit: 2 });
+      expect(ranked.map((s) => s.id)).toEqual(['a', 'b']); // most similar first, capped
+
+      const floored = await repo.semanticSearch({ vector: [1, 0, 0], limit: 5, minSimilarity: 0.5 });
+      expect(floored.map((s) => s.id)).not.toContain('c'); // orthogonal filtered out
+      expect(floored.every((s) => s.memberRefs.length > 0)).toBe(true); // hydrated
+    });
+
+    it('semanticSearch filters by topic', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(5000));
+      await repo.upsert(storyUpsert({ id: 'ai', topic: 'AI', memberRefs: [{ source: 'hackernews', externalId: 'a1' }] }));
+      await repo.upsert(storyUpsert({ id: 'clm', topic: 'Climate', memberRefs: [{ source: 'gdelt', externalId: 'c1' }] }));
+      await repo.putVector('ai', [1, 0, 0]);
+      await repo.putVector('clm', [1, 0, 0]);
+
+      const aiOnly = await repo.semanticSearch({ vector: [1, 0, 0], limit: 5, topic: 'AI' });
+      expect(aiOnly.map((s) => s.id)).toEqual(['ai']);
+    });
+
     it('recentVectors with no topic returns all topics in the window (cross-topic, ADR-0038)', async () => {
       const db = await createTestDb();
       const repo = new DrizzleStoryRepo(db, new FakeClock(5000));

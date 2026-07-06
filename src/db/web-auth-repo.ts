@@ -1,4 +1,4 @@
-import { and, eq, isNotNull } from 'drizzle-orm';
+import { and, eq, isNotNull, lt } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { linkCodes, webSessions } from './schema.js';
 
@@ -47,6 +47,11 @@ export interface WebAuthRepo {
   resolve(token: string, now: number): Promise<WebSession | null>;
   /** Sign out: drop the session and any pending code it owns. */
   logout(token: string): Promise<void>;
+  /**
+   * Delete expired sessions and link codes (ADR-0040 hardening). Called
+   * periodically so stale, unusable rows never accumulate. Returns rows removed.
+   */
+  pruneExpired(now: number): Promise<number>;
 }
 
 export class DrizzleWebAuthRepo implements WebAuthRepo {
@@ -114,5 +119,24 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
   async logout(token: string): Promise<void> {
     await this.db.delete(linkCodes).where(eq(linkCodes.token, token));
     await this.db.delete(webSessions).where(eq(webSessions.token, token));
+  }
+
+  async pruneExpired(now: number): Promise<number> {
+    const staleSessions = await this.db
+      .select({ token: webSessions.token })
+      .from(webSessions)
+      .where(lt(webSessions.expiresAt, now));
+    const staleCodes = await this.db
+      .select({ code: linkCodes.code })
+      .from(linkCodes)
+      .where(lt(linkCodes.expiresAt, now));
+
+    if (staleSessions.length > 0) {
+      await this.db.delete(webSessions).where(lt(webSessions.expiresAt, now));
+    }
+    if (staleCodes.length > 0) {
+      await this.db.delete(linkCodes).where(lt(linkCodes.expiresAt, now));
+    }
+    return staleSessions.length + staleCodes.length;
   }
 }

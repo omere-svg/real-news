@@ -32,6 +32,9 @@ import type {
   RouterIntent,
 } from '../../src/llm/llm-client.js';
 import type { WebSearch, WebResult } from '../../src/web/web-search.js';
+import type { Embedder } from '../../src/embedding/embedder.js';
+import { FakeEmbedder } from '../helpers/fake-embedder.js';
+import type { SemanticQuery } from '../../src/db/story-repo.js';
 
 class FakeTransport implements TelegramTransport {
   readonly messages: { chatId: number; text: string; opts?: SendMessageOptions }[] = [];
@@ -127,6 +130,7 @@ async function build(opts: {
   router?: IntentRouter;
   prefsInterpreter?: PreferencesInterpreter;
   webLink?: WebLinker;
+  embedder?: Embedder;
 } = {}) {
   const transport = new FakeTransport();
   const query = new FakeQuery();
@@ -155,6 +159,7 @@ async function build(opts: {
     ...(opts.prefsInterpreter ? { prefsInterpreter: opts.prefsInterpreter } : {}),
     ...(opts.allowedChatIds ? { allowedChatIds: opts.allowedChatIds } : {}),
     ...(opts.webLink ? { webLink: opts.webLink } : {}),
+    ...(opts.embedder ? { embedder: opts.embedder } : {}),
   });
   return { bot, transport, query, prefs, usage, clock };
 }
@@ -454,6 +459,52 @@ describe('HorizonBot', () => {
       await bot.handle(update(5, '/chat tell me about AI'));
       expect(transport.messages.at(-1)?.text).toContain('Answer to: tell me about AI');
       expect(llm.lastDiscuss?.stories[0]?.title).toBe('Cache story');
+    });
+
+    it('grounds chat on semantically-relevant stories when an embedder is wired (ADR-0045)', async () => {
+      const semanticCalls: SemanticQuery[] = [];
+      let topCalls = 0;
+      const reader: StoryReader = {
+        topStories: async () => {
+          topCalls += 1;
+          return [makeStory({ title: 'By significance', significance: 9 })];
+        },
+        semanticSearch: async (q) => {
+          semanticCalls.push(q);
+          return [makeStory({ title: 'Semantically relevant', significance: 2 })];
+        },
+      };
+      const embedder = new FakeEmbedder({ 'tell me about AI': [1, 0, 0] });
+      const llm = new FakeLLM();
+      const { bot } = await chatBuild({ discussant: llm, storyRepo: reader, embedder });
+
+      await bot.handle(update(5, '/chat tell me about AI'));
+
+      expect(semanticCalls).toHaveLength(1);
+      expect(semanticCalls[0]?.vector).toEqual([1, 0, 0]);
+      expect(topCalls).toBe(0); // semantic path used, not significance
+      expect(llm.lastDiscuss?.stories[0]?.title).toBe('Semantically relevant');
+    });
+
+    it('falls back to top-by-significance when the embedding is empty (ADR-0045)', async () => {
+      let topCalls = 0;
+      const reader: StoryReader = {
+        topStories: async () => {
+          topCalls += 1;
+          return [makeStory({ title: 'By significance' })];
+        },
+        semanticSearch: async () => {
+          throw new Error('should not be reached with an empty embedding');
+        },
+      };
+      // Unknown text ⇒ FakeEmbedder returns a zero vector; the bot must fall back.
+      const embedder = new FakeEmbedder({});
+      const llm = new FakeLLM();
+      const { bot } = await chatBuild({ discussant: llm, storyRepo: reader, embedder });
+
+      await bot.handle(update(5, '/chat something'));
+      expect(topCalls).toBe(1);
+      expect(llm.lastDiscuss?.stories[0]?.title).toBe('By significance');
     });
 
     it('escalates to web search only when the cache cannot answer (ADR-0029)', async () => {

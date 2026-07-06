@@ -24,10 +24,19 @@ export type SaturationRefs = Partial<Record<SourceId, number>>;
 export interface SignalContext {
   /** Salience ∈ [0, 1] per `partitionKey(topic)`. */
   readonly salience: ReadonlyMap<string, number>;
+  /**
+   * Salience ∈ [0, 1] per normalized real-world entity (ADR-0043), so a Story
+   * whose named entities match a high-traffic Pageviews article gets a targeted
+   * nudge — not just its whole Topic. Empty when no source emits entities.
+   */
+  readonly entitySalience: ReadonlyMap<string, number>;
 }
 
 /** The no-signal context — yields a zero adjustment, leaving base scoring intact. */
-export const EMPTY_SIGNAL_CONTEXT: SignalContext = { salience: new Map() };
+export const EMPTY_SIGNAL_CONTEXT: SignalContext = {
+  salience: new Map(),
+  entitySalience: new Map(),
+};
 
 /** Stable partition key; `topic === null` is the global (all-topics) bucket. */
 function partitionKey(topic: Topic | null): string {
@@ -35,15 +44,41 @@ function partitionKey(topic: Topic | null): string {
 }
 
 /**
+ * Trend enrichment (ADR-0044): compare each observation to its own prior stored
+ * reading and lift a **rising** series' salience by up to `trendBoost`. A flat or
+ * falling series is untouched (positive-only, like the base nudge). `priorByKey`
+ * is the latest value stored for each series *before* this tick.
+ */
+export interface TrendOptions {
+  /** The most recent prior value per observation `key` (from persisted history). */
+  readonly priorByKey?: ReadonlyMap<string, number>;
+  /** Max fractional salience lift for a fully-rising series, e.g. 0.5. Absent ⇒ off. */
+  readonly trendBoost?: number;
+  /** [0, 1] weight on entity-level salience (ADR-0043); 0/absent ⇒ don't index entities. */
+  readonly entityWeight?: number;
+}
+
+/** The fraction [0, 1] by which `value` rose over `prior` (0 when not rising). */
+function riseFraction(value: number, prior: number | undefined): number {
+  if (prior === undefined || value <= prior || value <= 0) return 0;
+  return clamp01((value - prior) / value);
+}
+
+/**
  * Reduce a tick's observations to peak salience per topic. Each observation is
- * normalized against its source's reference, and the strongest reading in a
- * topic wins (one loud signal shouldn't be diluted by quiet ones).
+ * normalized against its source's reference, optionally lifted when the series is
+ * rising vs. its prior reading (ADR-0044), and the strongest reading in a topic
+ * wins (one loud signal shouldn't be diluted by quiet ones).
  */
 export function assembleSignalContext(
   observations: readonly SignalObservation[],
   refBySource: SaturationRefs,
+  trend: TrendOptions = {},
 ): SignalContext {
   const salience = new Map<string, number>();
+  const entitySalience = new Map<string, number>();
+  const boost = Math.max(0, trend.trendBoost ?? 0);
+  const entityWeight = Math.max(0, trend.entityWeight ?? 0);
 
   for (const o of observations) {
     const ref = refBySource[o.source];
@@ -51,12 +86,22 @@ export function assembleSignalContext(
     // guess. In practice the interface forces every source to declare one, so
     // this only guards malformed calls (ADR-0031).
     if (ref === undefined || ref <= 0) continue;
-    const s = normalize(o.value, ref);
+    let s = normalize(o.value, ref);
+    if (boost > 0 && trend.priorByKey) {
+      s = clamp01(s * (1 + boost * riseFraction(o.value, trend.priorByKey.get(o.key))));
+    }
     const key = partitionKey(o.topic);
     salience.set(key, Math.max(salience.get(key) ?? 0, s));
+
+    // Index entity-level salience so scoring can nudge a specific matching Story
+    // (ADR-0043). Scaled by entityWeight; skipped entirely when disabled.
+    if (entityWeight > 0 && o.entity) {
+      const e = o.entity.trim().toLowerCase();
+      if (e) entitySalience.set(e, Math.max(entitySalience.get(e) ?? 0, s * entityWeight));
+    }
   }
 
-  return { salience };
+  return { salience, entitySalience };
 }
 
 /**
@@ -75,4 +120,23 @@ export function signalAdjustment(
     ctx.salience.get(partitionKey(null)) ??
     0;
   return clamp01(salience) * Math.max(0, maxAdjustment);
+}
+
+/**
+ * The entity-level nudge for a Story (ADR-0043): the strongest entity salience
+ * among the Story's own named entities, scaled to `[0, maxAdjustment]`. Lets a
+ * spike in attention on a *specific* person/place lift that story alone, not its
+ * whole Topic. Zero when nothing matches (positive-only, like the partition nudge).
+ */
+export function entityAdjustment(
+  entities: ReadonlySet<string>,
+  ctx: SignalContext,
+  maxAdjustment: number,
+): number {
+  let best = 0;
+  for (const e of entities) {
+    const s = ctx.entitySalience.get(e);
+    if (s !== undefined && s > best) best = s;
+  }
+  return clamp01(best) * Math.max(0, maxAdjustment);
 }

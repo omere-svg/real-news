@@ -69,6 +69,14 @@ export interface LLMClient {
    * vocabulary and merges it. Distinct from `interpretFeedback` (soft weights).
    */
   interpretPrefs(input: PrefsInput): Promise<PrefsPatch>;
+
+  /**
+   * Deep tier: read the last few tick outcomes as a group and write a short
+   * operator advisory — recurring failures, throughput drift, and concrete
+   * things to improve (ADR-0042). An internal ops aid, not user-facing content;
+   * runs infrequently (every N ticks) so its cost is negligible.
+   */
+  reflect(input: ReflectInput): Promise<string>;
 }
 
 /**
@@ -88,6 +96,29 @@ export type PreferencesInterpreter = Pick<LLMClient, 'interpretPrefs'>;
 
 /** The narrow seam the Presentation layer depends on for podcast narration (ADR-0014). */
 export type Narrator = Pick<LLMClient, 'narrate'>;
+
+/** The narrow seam the tick loop depends on for the reflection advisor (ADR-0042). */
+export type Reflector = Pick<LLMClient, 'reflect'>;
+
+// --- Reflection over recent ticks (ADR-0042) ---
+
+/** A flattened tick outcome for the reflection prompt (mirrors a persisted TickRecord). */
+export interface TickDigest {
+  readonly ranAt: number;
+  readonly ok: boolean;
+  readonly durationMs: number;
+  readonly extracted: number;
+  readonly storiesUpserted: number;
+  readonly signalsObserved: number;
+  readonly skipped: readonly string[];
+  readonly failed: readonly { readonly source: string; readonly error: string }[];
+  readonly error: string | null;
+}
+
+export interface ReflectInput {
+  /** The recent ticks to reason over, newest first. */
+  readonly ticks: readonly TickDigest[];
+}
 
 export interface ClassifyInput {
   readonly title: string;

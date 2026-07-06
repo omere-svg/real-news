@@ -12,11 +12,14 @@ import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { SignalSource } from '../sources/signal-source.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { StoryRepo, StoryUpsert } from '../db/story-repo.js';
+import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { LLMClient } from '../llm/llm-client.js';
 import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SourceId } from '../domain/types.js';
 import type { AnalyzedCluster } from './types.js';
+
+const HOUR_MS = 3_600_000;
 
 export interface TickConfig {
   readonly candidateThreshold: number;
@@ -28,6 +31,12 @@ export interface TickConfig {
   readonly sourceWeights: Partial<Record<SourceId, number>>;
   /** Max absolute numeric-Signal nudge to significance (ADR-0025); 0/absent disables it. */
   readonly maxSignalAdjustment?: number;
+  /** Max fractional salience lift for a rising Signal series (ADR-0044); 0/absent ⇒ snapshot only. */
+  readonly signalTrendBoost?: number;
+  /** Weight of entity-level Pageviews attention on a matching story (ADR-0043); 0/absent ⇒ off. */
+  readonly entitySignalWeight?: number;
+  /** Prune persisted Signal observations older than this many days (ADR-0042); 0/absent ⇒ keep all. */
+  readonly signalHistoryDays?: number;
   /** Resolve across all Topics, not just the Cluster's own (ADR-0038); absent ⇒ same-Topic. */
   readonly crossTopic?: boolean;
   /** Max concurrent LLM confirm calls in cluster/resolve (ADR-0038); absent ⇒ default. */
@@ -40,6 +49,8 @@ export interface TickRunnerDeps {
   readonly signalSources?: readonly SignalSource[];
   readonly rawItemRepo: RawItemRepo;
   readonly storyRepo: StoryRepo;
+  /** Persisted Signal history for trend enrichment (ADR-0044); absent ⇒ snapshot-only. */
+  readonly signalObservationRepo?: SignalObservationRepo;
   readonly llm: LLMClient;
   readonly embedder: Embedder;
   readonly clock: Clock;
@@ -82,7 +93,29 @@ export class TickRunner {
     const refBySource: SaturationRefs = Object.fromEntries(
       signalSources.map((s) => [s.id, s.saturationReference]),
     );
-    const signalContext = assembleSignalContext(signals.observations, refBySource);
+
+    // Trend enrichment (ADR-0044): load each series' prior reading BEFORE recording
+    // this tick, so a rising series lifts its salience over a flat one.
+    const signalRepo = this.deps.signalObservationRepo;
+    const priorByKey =
+      signalRepo && (config.signalTrendBoost ?? 0) > 0
+        ? await signalRepo.priorValues(signals.observations.map((o) => o.key))
+        : undefined;
+
+    const signalContext = assembleSignalContext(signals.observations, refBySource, {
+      ...(priorByKey ? { priorByKey } : {}),
+      ...(config.signalTrendBoost ? { trendBoost: config.signalTrendBoost } : {}),
+      ...(config.entitySignalWeight ? { entityWeight: config.entitySignalWeight } : {}),
+    });
+
+    // Persist this tick's observations, then prune the history window (ADR-0042/0044).
+    if (signalRepo) {
+      await signalRepo.record(signals.observations);
+      const days = config.signalHistoryDays ?? 0;
+      if (days > 0) {
+        await signalRepo.pruneOlderThan(clock.now() - days * 24 * HOUR_MS);
+      }
+    }
 
     const classified = await classify(extraction.items, llm);
     const embedded = await embed(classified, embedder);

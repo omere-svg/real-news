@@ -100,6 +100,10 @@ export class WikipediaPageviewsSource implements SignalSource {
               source: 'wikipedia-pageviews',
               topic,
               key: `${project}:${a.article}:${yyyymm}`,
+              // The article title as a real-world entity (underscores → spaces,
+              // lowercased) so scoring can nudge the specific matching Story, not
+              // just its Topic (ADR-0043). Matches `extractEntities`' casing.
+              entity: a.article.replace(/_/g, ' ').toLowerCase(),
               value: a.views,
               observedAt: now,
             }),

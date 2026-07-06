@@ -10,6 +10,7 @@ import type {
 import type { StoryRepo } from '../db/story-repo.js';
 import type { UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
+import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import type { PresentationDefaults } from '../server/app.js';
@@ -28,8 +29,14 @@ import { normalizeMinutes } from '../presentation/minutes.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import { canonical } from '../domain/vocab.js';
 
-/** The slice of the Story store the chat feature reads for grounding (ADR-0029). */
-export type StoryReader = Pick<StoryRepo, 'topStories'>;
+/**
+ * The slice of the Story store the chat feature reads for grounding (ADR-0029).
+ * `semanticSearch` is optional: when it AND an `embedder` are wired, chat grounds
+ * on the Stories most *semantically* similar to the question (ADR-0045); otherwise
+ * it falls back to the reader's top Stories by significance.
+ */
+export type StoryReader = Pick<StoryRepo, 'topStories'> &
+  Partial<Pick<StoryRepo, 'semanticSearch'>>;
 
 /** The slice of the web-auth store the bot needs to claim a pairing code (ADR-0040). */
 export type WebLinker = Pick<WebAuthRepo, 'claim'>;
@@ -92,6 +99,12 @@ export interface HorizonBotDeps {
   readonly discussant?: Discussant;
   /** Reads Stories from the cache as chat grounding (ADR-0029); required for chat. */
   readonly storyRepo?: StoryReader;
+  /**
+   * Embeds a chat question for semantic retrieval over `story_vectors` (ADR-0045);
+   * omit to ground chat on top-by-significance Stories instead. Needs a
+   * `semanticSearch`-capable `storyRepo` to take effect.
+   */
+  readonly embedder?: Embedder;
   /** Live web fallback when the cache can't answer (ADR-0029); omit to stay cache-only. */
   readonly webSearch?: WebSearch;
   /** Claims web pairing codes to link a web session to this chat (ADR-0040); omit to disable. */
@@ -462,7 +475,7 @@ export class HorizonBot {
     }
 
     const prefs = await this.deps.prefs.get(chatId);
-    const stories = await this.storyContext(prefs);
+    const stories = await this.storyContext(prefs, q);
     const memory = prefs?.memory;
     const history = this.session(chatId).history;
     const base = { question: q, history, stories, ...(memory ? { memory } : {}) };
@@ -484,13 +497,27 @@ export class HorizonBot {
     return this.sendContent(chatId, result.answer + note);
   }
 
-  /** Pull the chat's preferred Stories from the cache as chat grounding (ADR-0029). */
-  private async storyContext(prefs: ChatPreferences | null): Promise<StoryContext[]> {
+  /**
+   * Pull Stories from the cache as chat grounding (ADR-0029). When an embedder and
+   * a semantic-capable reader are wired, retrieve the Stories most *relevant* to the
+   * question via cosine over `story_vectors` (ADR-0045); otherwise fall back to the
+   * chat's preferred top Stories by significance. Preference topics filter both.
+   */
+  private async storyContext(
+    prefs: ChatPreferences | null,
+    question?: string,
+  ): Promise<StoryContext[]> {
     const topics = (prefs?.topics ?? this.deps.defaults.topics) as readonly Topic[] | undefined;
-    const stories = await this.deps.storyRepo!.topStories({
-      limit: 30,
-      ...(topics?.length ? { topic: topics } : {}),
-    });
+    const topicFilter = topics?.length ? { topic: topics } : {};
+    const reader = this.deps.storyRepo!;
+
+    const q = question?.trim();
+    const search = reader.semanticSearch;
+    const stories =
+      q && this.deps.embedder && search
+        ? await this.semanticStories(search.bind(reader), q, topicFilter)
+        : await reader.topStories({ limit: 30, ...topicFilter });
+
     return stories.map((s) => ({
       title: s.title,
       whyItMatters: s.whyItMatters,
@@ -498,6 +525,23 @@ export class HorizonBot {
       significance: s.significance,
       url: s.url,
     }));
+  }
+
+  /**
+   * Embed the question and retrieve the most semantically similar Stories (ADR-0045).
+   * A degenerate/empty embedding can't rank anything — fall back to significance.
+   */
+  private async semanticStories(
+    search: NonNullable<StoryReader['semanticSearch']>,
+    question: string,
+    topicFilter: { topic?: readonly Topic[] },
+  ): Promise<Awaited<ReturnType<StoryReader['topStories']>>> {
+    const [vector] = await this.deps.embedder!.embed([question]);
+    // A missing or all-zero embedding can't rank anything (cosine is 0 everywhere).
+    if (!vector || vector.length === 0 || vector.every((v) => v === 0)) {
+      return this.deps.storyRepo!.topStories({ limit: 30, ...topicFilter });
+    }
+    return search({ vector, limit: 12, ...topicFilter });
   }
 
   /** Append a turn to the session, keeping only the most recent ones. */

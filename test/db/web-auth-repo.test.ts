@@ -69,4 +69,21 @@ describe('DrizzleWebAuthRepo (Log in with Telegram pairing)', () => {
     const r = await repo();
     expect(await r.resolve('ghost', 1000)).toBeNull();
   });
+
+  it('pruneExpired sweeps stale sessions and codes but keeps live ones (ADR-0040)', async () => {
+    const r = await repo();
+    // Expired code (60s TTL) under a still-live session (long TTL).
+    await r.createPending({ token: 'old', code: 'OLD123', now: 1000, sessionTtlMs: 5000, codeTtlMs: 60_000 });
+    // A fully live pairing.
+    await r.createPending({ token: 'new', code: 'NEW456', now: 1000, ...TTL });
+
+    // At t = 1000 + 61s: 'old' session (5s TTL) AND its code (60s TTL) are expired.
+    const removed = await r.pruneExpired(1000 + 61_000);
+    expect(removed).toBeGreaterThanOrEqual(2);
+
+    expect(await r.resolve('old', 1000 + 61_000)).toBeNull(); // swept
+    expect(await r.claim('OLD123', 1, null, 1000 + 61_000)).toBe('unknown'); // code swept
+    expect(await r.resolve('new', 1000 + 61_000)).toEqual({ token: 'new', chatId: null, name: null }); // kept
+    expect(await r.claim('NEW456', 7, 'Live', 1000 + 61_000)).toBe('linked'); // live code kept
+  });
 });

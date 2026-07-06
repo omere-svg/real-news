@@ -12,13 +12,16 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
 1. **Extraction worker** — pulls from **18 Story APIs/feeds** behind one `SourceAdapter`
    contract (Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, Guardian, Times
    of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv, plus TheSportsDB→Sports,
-   WHO Outbreaks→Health, and NASA EONET / USGS / GDACS→Climate — ADR-0031) plus **5 numeric
+   WHO Outbreaks→Health, and NASA EONET / USGS / GDACS→Climate — ADR-0031) plus **6 numeric
    Signal sources** behind a sibling `SignalSource` seam (Wikipedia Pageviews attention, World
-   Bank macro — ADR-0025; CoinGecko + Frankfurter FX → Business, OpenAlex → Science — ADR-0031),
-   with per-source health checks so a dead endpoint never crashes the loop.
+   Bank macro — ADR-0025; CoinGecko + Frankfurter FX → Business, OpenAlex → Science — ADR-0031;
+   GDELT aggregate tone → Geopolitics — ADR-0041), with per-source health checks so a dead
+   endpoint never crashes the loop.
 2. **Two-tier cache** — `raw_items` (idempotent provenance) → `stories` (finalized, scored,
    classified) + `membership` (corroboration), in SQLite; plus `story_vectors` (cross-tick
-   dedup) and `chat_preferences` / `usage` (the bot).
+   dedup + semantic chat retrieval, ADR-0045), `signal_observations` (trend history, ADR-0044),
+   `tick_reports` / `tick_reflections` (observability + advisories, ADR-0033/0042), and
+   `chat_preferences` / `usage` / web-auth tables (the bot + web login, ADR-0040).
 3. **Reasoning loop** — classify (Topic) → embed → cluster → **resolve** (cross-tick
    merge) → score (0–10, **impact-first**: real-world impact + corroboration + source authority,
    with social popularity only a bounded booster + a bounded numeric-Signal nudge — ADR-0034) → factual **summary** + **"why it matters"** → upsert.
@@ -186,11 +189,17 @@ skipping every tick (a health-check + extract double-call tripped its 1-req/5s l
 starving `Geopolitics`) and parallelised the enrichment backfill so the cache heals fast.
 All verified end-to-end; deploys to prod on the next push to `main`.
 
-Optional further deepening (not on the critical path — see [`docs/ROADMAP.md`](docs/ROADMAP.md)):
-GDELT signal enrichment (ADR-0032 note), a retention prune / LLM-reflection
-advisor over `tick_reports` (ADR-0033), and semantic retrieval over `story_vectors` for chat.
+**Web access (ADR-0040)** — an optional "Log in with Telegram" flow lets a reader open the
+brief in a browser without any password or email: identity is the Telegram id, proved by a
+single-use pairing code. **Security hardening (ADR-0046)** added a config-gated `Secure`
+cookie and per-tick pruning of expired sessions/codes. No passwords or emails are ever stored.
 
-Possible deepening (not MVP): entity-link Wikipedia Pageviews to individual clusters (today
-the attention nudge is partition-level, ADR-0025); persist Signal history for trend signals.
+**Optional deepening — all DONE (ADR-0041–0045).** The five follow-ups once listed here are
+now shipped and reversible via config: GDELT signal enrichment via a `timelinetone` Signal
+source (ADR-0041); a retention prune of `tick_reports` plus an LLM "reflection" advisor that
+reads the last few ticks as a group (ADR-0042); semantic retrieval over `story_vectors` for
+chat grounding (ADR-0045); entity-linked Wikipedia Pageviews attention down to the individual
+story (ADR-0043); and persisted Signal history for trend-aware scoring (ADR-0044).
+
 `data.gov.il` stays disabled (datasets, not events); other probed sources are PARKed in
 [`docs/research/`](docs/research) as future reference.

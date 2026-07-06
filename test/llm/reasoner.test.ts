@@ -218,4 +218,34 @@ describe('Reasoner', () => {
 
     expect(intent.topics).toEqual([{ topic: 'AI', direction: 'more' }]);
   });
+
+  it('reflect: summarizes recent ticks on the deep tier (ADR-0042)', async () => {
+    const t = new FakeTransport({}, 'GDELT keeps failing — check its rate limit.');
+    const out = await new Reasoner(t).reflect({
+      ticks: [
+        {
+          ranAt: Date.UTC(2026, 6, 6),
+          ok: false,
+          durationMs: 1200,
+          extracted: 0,
+          storiesUpserted: 0,
+          signalsObserved: 0,
+          skipped: ['gdelt'],
+          failed: [{ source: 'gdelt', error: 'timeout' }],
+          error: 'boom',
+        },
+      ],
+    });
+
+    expect(out).toContain('GDELT');
+    expect(t.calls[0]?.kind).toBe('text');
+    expect(t.calls[0]?.opts.tier).toBe('deep');
+    expect(t.calls[0]?.prompt).toContain('gdelt'); // the tick digest is in the prompt
+  });
+
+  it('reflect: returns empty for no ticks without calling the model', async () => {
+    const t = new FakeTransport({}, 'unused');
+    expect(await new Reasoner(t).reflect({ ticks: [] })).toBe('');
+    expect(t.calls).toHaveLength(0);
+  });
 });

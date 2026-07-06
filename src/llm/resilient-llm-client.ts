@@ -11,6 +11,7 @@ import type {
   NarrateInput,
   PrefsInput,
   PrefsPatch,
+  ReflectInput,
   RouteInput,
   RouterIntent,
   StoryAnalysis,
@@ -115,6 +116,15 @@ export class ResilientLLMClient implements LLMClient {
       this.onError('interpretPrefs', err);
       // Degrade to a no-op patch: change nothing, tell the caller it didn't land.
       return { topics: null, minutes: null, summary: '' };
+    }
+  }
+
+  async reflect(input: ReflectInput): Promise<string> {
+    try {
+      return await this.delegate.reflect(input);
+    } catch (err) {
+      this.onError('reflect', err);
+      return ''; // an advisory failure is non-critical; skip this cycle's reflection
     }
   }
 }

@@ -72,6 +72,8 @@ export const SIGNAL_SOURCE_IDS = [
   'coingecko', // Business — crypto price-momentum
   'frankfurter', // Business — FX volatility
   'openalex', // Science — recent-research citation impact
+  // ADR-0041 — GDELT aggregate tone as a Geopolitics intensity signal.
+  'gdelt-signal', // Geopolitics — negativity/volume of world-news tone
 ] as const;
 
 /** Every Source id, both roles — the vocabulary config validates against. */
@@ -190,6 +192,13 @@ export interface SignalObservation {
   readonly topic: Topic | null;
   /** Entity/series identifier (e.g. `he.wikipedia:article:202405`, `USA:NY.GDP.MKTP.CD`). */
   readonly key: string;
+  /**
+   * Optional normalized real-world entity this reading is *about* (e.g. a person
+   * or place — `cristiano ronaldo`), used to nudge the specific matching Story
+   * rather than only its Topic (ADR-0043). Absent for series with no clean entity
+   * (macro indicators, FX pairs). Lowercased to match `extractEntities`.
+   */
+  readonly entity?: string;
   /** The reading: view count, macro volatility, … Always >= 0. */
   readonly value: number;
   readonly observedAt: number;

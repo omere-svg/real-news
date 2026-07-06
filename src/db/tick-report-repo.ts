@@ -1,4 +1,4 @@
-import { desc } from 'drizzle-orm';
+import { desc, notInArray } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { tickReports } from './schema.js';
 import type { SourceId } from '../domain/types.js';
@@ -26,6 +26,8 @@ export interface TickReportRepo {
   record(rec: TickRecord): Promise<void>;
   /** The most recent records, newest first. */
   recent(limit: number): Promise<TickRecord[]>;
+  /** Delete all but the most recent `keep` records (ADR-0042). Returns rows removed. */
+  pruneToRecent(keep: number): Promise<number>;
 }
 
 export class DrizzleTickReportRepo implements TickReportRepo {
@@ -54,6 +56,25 @@ export class DrizzleTickReportRepo implements TickReportRepo {
       .orderBy(desc(tickReports.ranAt))
       .limit(limit);
     return rows.map(toRecord);
+  }
+
+  async pruneToRecent(keep: number): Promise<number> {
+    if (keep <= 0) return 0;
+    // Ids of the most recent `keep` rows; delete everything else.
+    const survivors = await this.db
+      .select({ id: tickReports.id })
+      .from(tickReports)
+      .orderBy(desc(tickReports.ranAt))
+      .limit(keep);
+    if (survivors.length < keep) return 0; // nothing to prune yet
+    const keepIds = survivors.map((r) => r.id);
+    const stale = await this.db
+      .select({ id: tickReports.id })
+      .from(tickReports)
+      .where(notInArray(tickReports.id, keepIds));
+    if (stale.length === 0) return 0;
+    await this.db.delete(tickReports).where(notInArray(tickReports.id, keepIds));
+    return stale.length;
   }
 }
 

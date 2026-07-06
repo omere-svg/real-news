@@ -1,5 +1,6 @@
 import { TOPICS } from '../domain/types.js';
 import type { TickRecord } from '../db/tick-report-repo.js';
+import type { TickReflection } from '../db/tick-reflection-repo.js';
 import { COMPONENT_LABELS } from '../presentation/score-explanation.js';
 
 /** Defaults the viewer seeds its controls from (ADR-0015). */
@@ -576,7 +577,11 @@ function ago(thenMs: number, nowMs: number): string {
  * table of recent tick outcomes. Data is passed in (no client fetch); the page
  * self-refreshes. `nowMs` is injected for testable "age" rendering.
  */
-export function renderDashboard(ticks: readonly TickRecord[], nowMs = Date.now()): string {
+export function renderDashboard(
+  ticks: readonly TickRecord[],
+  reflections: readonly TickReflection[] = [],
+  nowMs = Date.now(),
+): string {
   const last = ticks[0];
   const issues = (t: TickRecord): number =>
     t.failed.length + t.signalsFailed.length + t.skipped.length + t.signalsSkipped.length;
@@ -585,6 +590,19 @@ export function renderDashboard(ticks: readonly TickRecord[], nowMs = Date.now()
     ? 'No ticks recorded yet — the worker writes one on each cycle.'
     : `${last.ok ? (degraded ? 'Degraded' : 'Healthy') : 'Last tick FAILED'} · ` +
       `last tick ${ago(last.ranAt, nowMs)} · ${last.storiesUpserted} stories · ${last.extracted} items`;
+
+  const reflectionHtml = reflections.length
+    ? `<section class="reflect">
+    <h2>🧠 Reflection advisories <span class="muted">(ADR-0042 · last ${reflections.length})</span></h2>
+    ${reflections
+      .map(
+        (r) =>
+          `<article class="advisory"><div class="meta">${ago(r.createdAt, nowMs)} · over ${r.ticksCovered} ticks</div>` +
+          `<pre>${escHtml(r.text)}</pre></article>`,
+      )
+      .join('')}
+  </section>`
+    : '';
 
   const rows = ticks
     .map((t) => {
@@ -632,6 +650,12 @@ export function renderDashboard(ticks: readonly TickRecord[], nowMs = Date.now()
   td.num { text-align:right; } td.c { text-align:center; } td.muted { color:var(--muted); font-size:13px; }
   .empty { color:var(--muted); text-align:center; padding:40px 0; }
   a { color:var(--accent); }
+  .reflect { margin:0 0 22px; }
+  .reflect h2 { font-size:15px; margin:0 0 10px; }
+  .reflect h2 .muted { color:var(--muted); font-weight:400; font-size:12px; }
+  .advisory { background:var(--card); border:1px solid #2a2f3a; border-radius:10px; padding:12px 16px; margin:8px 0; }
+  .advisory .meta { color:var(--muted); font-size:12px; margin-bottom:6px; }
+  .advisory pre { margin:0; white-space:pre-wrap; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
 </style>
 </head>
 <body>
@@ -641,6 +665,7 @@ export function renderDashboard(ticks: readonly TickRecord[], nowMs = Date.now()
 </header>
 <div class="banner ${degraded ? 'bad' : 'ok'}">${escHtml(banner)}</div>
 <main>
+  ${reflectionHtml}
   ${
     ticks.length === 0
       ? '<div class="empty">No ticks recorded yet.</div>'

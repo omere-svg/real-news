@@ -62,6 +62,17 @@ export const configSchema = z.object({
     })
     .default({}),
 
+  web: z
+    .object({
+      /**
+       * Mark the "Log in with Telegram" session cookie `Secure` (ADR-0040). Keep
+       * false when serving plain `http://`; set true behind HTTPS so the session
+       * token is never transmitted over an unencrypted connection.
+       */
+      secureCookie: z.boolean().default(false),
+    })
+    .default({}),
+
   embedder: z
     .object({
       /** `openai` (neural, ADR-0018) or `hashing` (offline stand-in, ADR-0007). */
@@ -104,7 +115,39 @@ export const configSchema = z.object({
     recencyHalfLifeHours: z.number().positive().default(36),
     /** Max absolute numeric-Signal nudge to significance (ADR-0025). */
     maxSignalAdjustment: z.number().min(0).max(10).default(1.0),
+    /**
+     * Max fractional salience lift for a numeric Signal series that is rising vs.
+     * its prior persisted reading (ADR-0044). 0 disables trend enrichment (the
+     * signal is then a pure snapshot). Needs persisted history to have any effect.
+     */
+    signalTrendBoost: z.number().min(0).max(2).default(0.5),
+    /**
+     * Entity-level attention (ADR-0043): also match a Cluster's named entities
+     * against high-traffic Wikipedia Pageviews articles and nudge the specific
+     * story, not just its whole topic. 0 disables entity matching. Shares the
+     * `maxSignalAdjustment` ceiling — a story is nudged by the stronger of the
+     * partition and entity signals, never both stacked past the cap.
+     */
+    entitySignalWeight: z.number().min(0).max(1).default(1.0),
   }),
+
+  /** History retention + LLM reflection over recent ticks (ADR-0042). */
+  retention: z
+    .object({
+      /** Keep only the most recent N tick reports; 0 keeps all. */
+      tickReports: z.number().int().nonnegative().default(5),
+      /** Keep only the most recent N reflection advisories; 0 keeps all. */
+      reflections: z.number().int().nonnegative().default(20),
+      /** Prune persisted Signal observations older than this many days; 0 keeps all. */
+      signalHistoryDays: z.number().int().nonnegative().default(14),
+      /** Prune expired web sessions / link codes each tick (ADR-0040 hardening). */
+      pruneExpiredAuth: z.boolean().default(true),
+      /** Generate an LLM reflection advisory every N ticks; 0 disables it. */
+      reflectEveryTicks: z.number().int().nonnegative().default(5),
+      /** How many recent ticks each reflection reasons over. */
+      reflectWindow: z.number().int().positive().default(5),
+    })
+    .default({}),
 
   telegram: z
     .object({
@@ -150,6 +193,12 @@ export const configSchema = z.object({
         .object({
           /** Enable the cache-grounded chat / free-text questions. */
           enabled: z.boolean().default(false),
+          /**
+           * Ground chat on the Stories most *semantically* similar to the question
+           * (embed it, cosine over `story_vectors`) rather than top-by-significance
+           * (ADR-0045). Falls back automatically when the embedder is unavailable.
+           */
+          semanticRetrieval: z.boolean().default(true),
           /** Web-search fallback when the cache can't answer (ADR-0029). */
           webSearch: z
             .object({

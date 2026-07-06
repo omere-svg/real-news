@@ -1,9 +1,12 @@
 import { baseScoreBreakdown } from '../scoring/compute-base-score.js';
 import {
   EMPTY_SIGNAL_CONTEXT,
+  entityAdjustment,
   signalAdjustment,
   type SignalContext,
 } from '../scoring/signal-context.js';
+import { extractEntities } from './entities.js';
+import { dedupText } from './embed.js';
 import { representativeOf } from '../domain/cluster.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { LLMClient } from '../llm/llm-client.js';
@@ -90,11 +93,18 @@ export async function score(
         recencyHalfLifeHours: ctx.recencyHalfLifeHours,
       });
 
-      const signalNudge = signalAdjustment(
-        cluster.topic,
-        ctx.signalContext ?? EMPTY_SIGNAL_CONTEXT,
-        ctx.maxSignalAdjustment ?? 0,
+      // The Signal nudge is the stronger of the Topic-level attention and the
+      // entity-level attention on THIS story's named entities (ADR-0025/0043) —
+      // taking the max keeps it within the single maxSignalAdjustment ceiling.
+      const signalCtx = ctx.signalContext ?? EMPTY_SIGNAL_CONTEXT;
+      const max = ctx.maxSignalAdjustment ?? 0;
+      const topicNudge = signalAdjustment(cluster.topic, signalCtx, max);
+      const entityNudge = entityAdjustment(
+        extractEntities(dedupText({ title: lead.title, text: lead.text })),
+        signalCtx,
+        max,
       );
+      const signalNudge = Math.max(topicNudge, entityNudge);
 
       return {
         cluster,

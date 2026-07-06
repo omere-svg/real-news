@@ -12,6 +12,7 @@ import {
 import type { Db } from './client.js';
 import { membership, stories, storyVectors } from './schema.js';
 import type { Clock } from '../scheduler/clock.js';
+import { cosine } from '../embedding/cosine.js';
 import type {
   RawItemRef,
   ScoreBreakdown,
@@ -41,6 +42,18 @@ export interface RecentVectorsQuery {
   readonly topic?: Topic;
   /** Lower bound on `updatedAt` — the recency window. */
   readonly sinceMs: number;
+}
+
+/** Semantic-search filter over stored Story embeddings (ADR-0045). */
+export interface SemanticQuery {
+  /** The query embedding to rank Stories against by cosine similarity. */
+  readonly vector: readonly number[];
+  /** Max Stories to return. */
+  readonly limit: number;
+  /** Restrict to these Topics (SQL `IN`); omit/empty for all Topics. */
+  readonly topic?: Topic | readonly Topic[];
+  /** Skip matches below this cosine similarity (0 ⇒ no floor). */
+  readonly minSimilarity?: number;
 }
 
 /** What the pipeline hands the repo to create or update a Story. */
@@ -73,6 +86,12 @@ export interface StoryRepo {
   putVector(storyId: string, vector: number[]): Promise<void>;
   /** Stored vectors for recent Stories in one partition — the cross-tick blocking set. */
   recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]>;
+  /**
+   * Stories ranked by cosine similarity of their stored embedding to a query
+   * vector (ADR-0045) — semantic retrieval for chat grounding. Returns the top
+   * `limit` above `minSimilarity`, most-similar first.
+   */
+  semanticSearch(query: SemanticQuery): Promise<Story[]>;
   /**
    * Delete Stories that have no membership rows (and their vectors). Members can
    * be reassigned to another Story across ticks, which can leave the prior owner
@@ -195,6 +214,27 @@ export class DrizzleStoryRepo implements StoryRepo {
       .insert(storyVectors)
       .values({ storyId, vector })
       .onConflictDoUpdate({ target: storyVectors.storyId, set: { vector } });
+  }
+
+  async semanticSearch(query: SemanticQuery): Promise<Story[]> {
+    const topic = matchFilter(stories.topic, query.topic);
+    const rows = await this.db
+      .select({
+        story: stories,
+        vector: storyVectors.vector,
+      })
+      .from(storyVectors)
+      .innerJoin(stories, eq(storyVectors.storyId, stories.id))
+      .where(topic ?? undefined);
+
+    const floor = query.minSimilarity ?? 0;
+    const ranked = rows
+      .map((r) => ({ row: r.story, sim: cosine(query.vector, r.vector) }))
+      .filter((r) => r.sim >= floor)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, Math.max(0, query.limit));
+
+    return this.hydrate(ranked.map((r) => r.row));
   }
 
   async recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]> {

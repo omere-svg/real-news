@@ -4,6 +4,7 @@ import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
 import type { TickReportRepo } from '../db/tick-report-repo.js';
+import type { TickReflectionRepo } from '../db/tick-reflection-repo.js';
 import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import { TOPICS, type Topic } from '../domain/types.js';
@@ -45,6 +46,12 @@ export interface WebAuthOptions {
   readonly prefs: ChatPreferencesRepo;
   /** Bot username (no `@`) for `t.me/<bot>?start=…` deep links; omit for code-only linking. */
   readonly botUsername?: string;
+  /**
+   * Mark the session cookie `Secure` (ADR-0040 hardening). Off by default because
+   * the current VM serves plain `http://`; set true once served over HTTPS so the
+   * token is never sent over an unencrypted connection.
+   */
+  readonly secureCookie?: boolean;
   /** Linked-session lifetime; default 30 days. */
   readonly sessionTtlMs?: number;
   /** Pairing-code lifetime; default 10 minutes. */
@@ -79,6 +86,8 @@ export function createApp(
   tickReports?: TickReportRepo,
   /** Web login + shared preferences (ADR-0040); when omitted the viewer is guest-only. */
   auth?: WebAuthOptions,
+  /** Reflection advisories (ADR-0042); when omitted the dashboard shows none. */
+  tickReflections?: TickReflectionRepo,
 ): Hono {
   const app = new Hono();
 
@@ -92,8 +101,19 @@ export function createApp(
     return c.json({ ticks: tickReports ? await tickReports.recent(limit) : [] });
   });
 
+  // The LLM reflection advisories drawn from recent ticks (ADR-0042).
+  app.get('/api/reflection', async (c) => {
+    const limit = normalizeLimit(c.req.query('limit'), 10);
+    return c.json({ reflections: tickReflections ? await tickReflections.recent(limit) : [] });
+  });
+
   app.get('/dashboard', async (c) =>
-    c.html(renderDashboard(tickReports ? await tickReports.recent(50) : [])),
+    c.html(
+      renderDashboard(
+        tickReports ? await tickReports.recent(50) : [],
+        tickReflections ? await tickReflections.recent(5) : [],
+      ),
+    ),
   );
 
   app.get('/api/stories', async (c) => {
@@ -178,6 +198,7 @@ function wireAuth(
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: 'Lax',
+      secure: auth.secureCookie ?? false,
       path: '/',
       maxAge: Math.floor(sessionTtlMs / 1000),
     });

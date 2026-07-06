@@ -8,6 +8,7 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import type {
   ScoreBreakdown,
+  SignalSourceId,
   SourceId,
   SourceMetadata,
   StorySourceId,
@@ -127,6 +128,49 @@ export const tickReports = sqliteTable(
     signalsFailed: text('signals_failed', { mode: 'json' }).$type<SourceFailure[]>().notNull(),
   },
   (t) => [index('tick_reports_ran_at_idx').on(t.ranAt)],
+);
+
+/**
+ * `signal_observations` persists each tick's numeric Signal readings (ADR-0044),
+ * so a later tick can compare a series to its prior reading and reward a **rising**
+ * signal — a trend, not just a snapshot. One row per observation; `key` is the
+ * series identifier (stable within its period, e.g. `coingecko:bitcoin:YYYYMMDD`),
+ * indexed with `observedAt` for the "latest prior value per key" read. Pruned to a
+ * bounded window each tick (ADR-0042).
+ */
+export const signalObservations = sqliteTable(
+  'signal_observations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    source: text('source').$type<SignalSourceId>().notNull(),
+    key: text('key').notNull(),
+    topic: text('topic').$type<Topic>(),
+    value: real('value').notNull(),
+    observedAt: integer('observed_at').notNull(),
+  },
+  (t) => [
+    index('signal_obs_key_idx').on(t.key, t.observedAt),
+    index('signal_obs_observed_idx').on(t.observedAt),
+  ],
+);
+
+/**
+ * `tick_reflections` persists the LLM "reflection" advisories (ADR-0042): every
+ * so often the reasoner reads the last few tick reports as a group and writes a
+ * short conclusions/what-to-improve note. Surfaced on `/dashboard` + `/api/reflection`.
+ * Kept to a bounded recent window (ADR-0042).
+ */
+export const tickReflections = sqliteTable(
+  'tick_reflections',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    createdAt: integer('created_at').notNull(),
+    /** How many recent ticks the advisory was drawn from. */
+    ticksCovered: integer('ticks_covered').notNull(),
+    /** The advisory text (concise markdown/plain text). */
+    text: text('text').notNull(),
+  },
+  (t) => [index('tick_reflections_created_idx').on(t.createdAt)],
 );
 
 /**
