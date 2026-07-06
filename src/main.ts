@@ -315,6 +315,19 @@ async function main(): Promise<void> {
   const lockEnabled = config.lock.enabled;
   const lockTtlMs = config.lock.ttlMinutes * 60_000;
 
+  // Release the advisory lock on shutdown (ADR-0048). systemd restarts (every
+  // deploy) land mid-tick about half the time; without this the dying process
+  // leaves a stale lease that stalls ticking for up to lock.ttlMinutes.
+  const shutdown = (signal: string): void => {
+    console.log(`[main] ${signal} — releasing tick lock and exiting`);
+    void (async () => {
+      if (lockEnabled) await tickLock.release().catch(() => undefined);
+      process.exit(0);
+    })();
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+
   // Serialize the pipeline: the boot backfill and every tick share one queue, so
   // they never overlap and contend for the model / race the store (ADR-0047).
   let pipelineChain: Promise<unknown> = Promise.resolve();
