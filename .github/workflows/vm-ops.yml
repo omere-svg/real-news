@@ -1,0 +1,49 @@
+name: VM Ops (diagnose)
+
+# Manual, read-mostly ops runner for the VM (docs/DEPLOY-ORACLE-CLOUD.md): prints
+# public IP, service/firewall/listener state, and refreshes the DuckDNS record if
+# the box has its updater. No app code is touched. Secrets: DEPLOY_SSH_KEY, DEPLOY_HOST.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Diagnose VM
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
+          set -uo pipefail
+          echo "== public IP (from the box) =="
+          curl -fsS -m 8 https://api.ipify.org || echo "(ipify failed)"
+          echo
+          echo "== uptime / mem =="
+          uptime; free -m | head -3
+          echo "== services =="
+          for s in horizon caddy; do echo "$s: $(systemctl is-active $s 2>&1)"; done
+          echo "== listeners =="
+          sudo ss -tlnp | grep -E ':(22|80|443|3000)\s' || echo "(none of 22/80/443/3000)"
+          echo "== iptables INPUT rules =="
+          sudo iptables -S INPUT | head -30
+          echo "== local health =="
+          curl -fsS -m 8 http://127.0.0.1:3000/health || echo "(health failed)"
+          echo
+          echo "== caddy recent logs =="
+          sudo journalctl -u caddy --no-pager -n 12 --output=cat 2>/dev/null || true
+          echo "== duckdns updater =="
+          ls -la ~/duckdns 2>/dev/null || echo "(no ~/duckdns)"
+          crontab -l 2>/dev/null | grep -i duck || echo "(no duckdns cron)"
+          if [ -x ~/duckdns/duck.sh ]; then
+            echo "running duck.sh…"; ~/duckdns/duck.sh >/dev/null 2>&1; sleep 2
+            echo "duck.log: $(tail -c 120 ~/duckdns/duck.log 2>/dev/null)"
+          fi
+          echo "== horizon recent logs =="
+          sudo journalctl -u horizon --no-pager -n 15 --output=cat
+          EOF
