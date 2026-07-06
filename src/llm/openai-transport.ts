@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { ChatTransport, CompletionOptions } from './chat-transport.js';
+import { withRetry } from './retry.js';
 
 export interface OpenAITransportDeps {
   /** Cheap high-volume tier (ADR-0006/0012), e.g. gpt-4o-mini. */
@@ -31,21 +32,26 @@ export class OpenAITransport implements ChatTransport {
   }
 
   async complete(prompt: string, opts: CompletionOptions): Promise<string> {
-    const res = await this.client.chat.completions.create({
-      model: this.model(opts.tier),
-      max_tokens: opts.maxTokens,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    // Retry transient API blips before the caller degrades the tick (ADR-0047).
+    const res = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model(opts.tier),
+        max_tokens: opts.maxTokens,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    );
     return (res.choices[0]?.message?.content ?? '').trim();
   }
 
   async completeJson(prompt: string, opts: CompletionOptions): Promise<unknown> {
-    const res = await this.client.chat.completions.create({
-      model: this.model(opts.tier),
-      max_tokens: opts.maxTokens,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const res = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model(opts.tier),
+        max_tokens: opts.maxTokens,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    );
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error('openai: empty response');
     return JSON.parse(content);

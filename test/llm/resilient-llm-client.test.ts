@@ -64,7 +64,7 @@ describe('ResilientLLMClient', () => {
         topic: 'AI',
         significance: 5,
       }),
-    ).toEqual({ summary: '', whyItMatters: '' }); // no analysis rather than a crash
+    ).toEqual({ summary: null, whyItMatters: null }); // null preserves any existing analysis (ADR-0047)
     expect(await llm.narrate({ minutes: 5, brief: 'b' })).toBe(''); // caller falls back to the brief
     expect(await llm.interpretFeedback({ text: 'more ai' })).toEqual({
       topics: [],

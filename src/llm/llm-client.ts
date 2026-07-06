@@ -146,12 +146,18 @@ export interface AnalyzeInput {
   readonly significance: number;
 }
 
-/** The deep-tier editorial output for a Story: the facts and the so-what. */
+/**
+ * The deep-tier editorial output for a Story: the facts and the so-what. Either
+ * field is `null` when the tier produced nothing usable (a blank model reply, or
+ * a resilient degrade on transport failure) — a null MUST NOT overwrite an
+ * existing value on upsert (ADR-0047), so callers can tell "no analysis" from
+ * "analysis said ''".
+ */
 export interface StoryAnalysis {
-  /** A concise factual recap of what happened (≈2 sentences). */
-  readonly summary: string;
-  /** The editorial "why it matters" justification (2-3 sentences). */
-  readonly whyItMatters: string;
+  /** A concise factual recap of what happened (≈2 sentences); null when none. */
+  readonly summary: string | null;
+  /** The editorial "why it matters" justification; null when none. */
+  readonly whyItMatters: string | null;
 }
 
 export interface NarrateInput {
@@ -194,6 +200,8 @@ export interface FeedbackIntent {
 /** A Story drawn from the cache, flattened to the fields the chat prompt needs. */
 export interface StoryContext {
   readonly title: string;
+  /** The factual "what happened" line, so chat can answer "what happened" questions (ADR-0047). */
+  readonly summary: string | null;
   readonly whyItMatters: string | null;
   readonly topic: Topic;
   readonly significance: number;

@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { Embedder } from './embedder.js';
+import { withRetry } from '../llm/retry.js';
 
 export interface OpenAIEmbedderDeps {
   /** Embeddings model, e.g. `text-embedding-3-small` (ADR-0018). */
@@ -31,11 +32,16 @@ export class OpenAIEmbedder implements Embedder {
 
   async embed(texts: readonly string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
-    const res = await this.client.embeddings.create({
-      model: this.deps.model,
-      dimensions: this.deps.dimensions,
-      input: texts as string[],
-    });
+    // Retry transient blips before the resilient embedder falls back to hashing —
+    // a hash vector mixed into a store of neural vectors breaks cosine dedup for
+    // every later comparison, so avoiding an avoidable fallback matters (ADR-0047).
+    const res = await withRetry(() =>
+      this.client.embeddings.create({
+        model: this.deps.model,
+        dimensions: this.deps.dimensions,
+        input: texts as string[],
+      }),
+    );
     // The API returns one entry per input carrying its `index`; order by it so
     // each vector lines up with its text regardless of response ordering.
     return [...res.data]

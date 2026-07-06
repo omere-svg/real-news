@@ -63,7 +63,8 @@ export class ResilientLLMClient implements LLMClient {
       return await this.delegate.analyze(input);
     } catch (err) {
       this.onError('analyze', err);
-      return { summary: '', whyItMatters: '' }; // no analysis rather than a crash
+      // Null (not '') so the upsert preserves any existing summary/why (ADR-0047).
+      return { summary: null, whyItMatters: null };
     }
   }
 
