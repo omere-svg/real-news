@@ -55,6 +55,11 @@ correct. It recovered on its own within the cycle.
    promote step in `resolve(token, now, sessionTtlMs)` extends it to the full
    lifetime once pairing succeeds. The full session lifetime starts at pairing,
    not at page-open.
+5. **Lock released on shutdown:** a SIGTERM/SIGINT handler releases the
+   advisory lock before exit. Observed live: the first post-fix deploy landed
+   mid-tick and stalled ticking behind the dead process's 45-minute lease
+   (visibly, thanks to §2). systemd restarts happen on every deploy, so without
+   this the stall recurs roughly every other deploy.
 
 ## Consequences
 
