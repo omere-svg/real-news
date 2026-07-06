@@ -19,11 +19,13 @@ requires an auth token. Two gaps remained:
 ## Decision
 
 1. **Config-gated `Secure` cookie.** `web.secureCookie` (default `false`, since the
-   VM serves `http://`) sets `Secure` on the session cookie. Flip it to `true`
-   the moment the site is served over HTTPS so the token never travels
-   unencrypted. (Left default-off rather than always-on because a `Secure` cookie
-   is silently dropped over plain http, which would break login on the current
-   deployment.)
+   VM serves `http://`), or the `WEB_SECURE_COOKIE=true` env override, sets `Secure`
+   on the session cookie. Flip it on the moment the site is served over HTTPS so the
+   token never travels unencrypted. (Left default-off rather than always-on because a
+   `Secure` cookie is silently dropped over plain http, which would break login on the
+   current deployment.) Free HTTPS via a domain + Caddy is documented in
+   `docs/DEPLOY-HTTPS.md` (a `Caddyfile` + `docker-compose.tls.yml` overlay ship in
+   the repo).
 2. **Prune expired auth rows.** `WebAuthRepo.pruneExpired(now)` deletes sessions
    and codes past their TTL; the tick loop calls it each tick when
    `retention.pruneExpiredAuth` is true (ADR-0042).

@@ -1,0 +1,28 @@
+# Optional HTTPS overlay — adds a Caddy reverse proxy that terminates TLS with a
+# free, auto-renewing Let's Encrypt certificate (docs/DEPLOY-HTTPS.md).
+#
+# Use it TOGETHER with the base compose file (it adds Caddy, keeps the app as-is):
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+#
+# Requires in .env:  HORIZON_DOMAIN=your.domain  and  WEB_SECURE_COOKIE=true
+# Requires open VM ports: 80 and 443. Caddy reaches the app over the internal
+# compose network as `horizon:3000`, so you no longer need to expose 3000 publicly.
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - horizon
+
+volumes:
+  caddy_data:
+  caddy_config:

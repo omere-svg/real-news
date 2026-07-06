@@ -388,7 +388,9 @@ async function main(): Promise<void> {
     {
       webAuth,
       prefs: chatPrefs,
-      secureCookie: config.web.secureCookie,
+      // Env override (WEB_SECURE_COOKIE=true) flips this on for HTTPS deploys
+      // without editing the committed config (docs/DEPLOY-HTTPS.md).
+      secureCookie: process.env.WEB_SECURE_COOKIE === 'true' || config.web.secureCookie,
       ...(botUsername ? { botUsername } : {}),
     },
     tickReflectionRepo,

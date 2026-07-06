@@ -1,0 +1,11 @@
+# Free automatic HTTPS for Project Horizon (docs/DEPLOY-HTTPS.md).
+#
+# Caddy fetches and auto-renews a Let's Encrypt certificate for $HORIZON_DOMAIN
+# on the first request, then reverse-proxies to the app container on :3000.
+# It also redirects plain http:// to https:// automatically.
+#
+# HORIZON_DOMAIN is read from .env (e.g. horizon.example.com). Requires ports
+# 80 + 443 open on the VM and DNS for the domain pointing at the VM's public IP.
+{$HORIZON_DOMAIN} {
+	reverse_proxy horizon:3000
+}
