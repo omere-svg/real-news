@@ -41,8 +41,19 @@ jobs:
           else
             echo "no lockfile change; skipping npm ci"
           fi
+          # Restart applies any pending DB migrations on boot (main.ts calls migrate()).
           sudo systemctl restart horizon
-          sleep 6
+          # Wait for boot + migrations + server to come up (slow 1-core box); fail the
+          # deploy only if it never becomes healthy within the window.
+          for i in $(seq 1 24); do
+            if curl -fsS -m 5 http://127.0.0.1:3000/health >/dev/null 2>&1; then
+              echo "health OK after $((i*3))s"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "service did not become healthy in time; recent logs:"
+          sudo journalctl -u horizon --no-pager -n 40 --output=cat
           sudo systemctl is-active horizon
-          curl -fsS -m 10 http://127.0.0.1:3000/health && echo " health OK"
+          exit 1
           EOF
