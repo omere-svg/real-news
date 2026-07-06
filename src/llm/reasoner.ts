@@ -171,8 +171,16 @@ export class Reasoner implements LLMClient {
     // Include a short body snippet when a side has one (ADR-0047): title-only
     // wire/RSS items dedup poorly on headlines alone, both false-merging distinct
     // events and missing genuine matches with differently-worded headlines.
+    // Updates of one developing story must merge (ADR-0048): successive official
+    // reports on the same outbreak/disaster otherwise fragment into duplicate-
+    // title Stories instead of accreting corroboration (CONTEXT.md, Cluster).
     const json = await this.transport.completeJson(
       `Do these two news items describe the SAME real-world news event? ` +
+        `Successive updates, follow-ups, or new developments of ONE ongoing event ` +
+        `(an outbreak, disaster, conflict, rescue, trial, or similar developing story) ` +
+        `count as the SAME event, even when numbers or dates differ between reports. ` +
+        `Distinct events that merely share a subject or headline (separate votes, ` +
+        `filings, matches, or product launches) are NOT the same. ` +
         `Respond with a JSON object {"same": true|false}.\n\n` +
         `A: ${stubBlock(a)}\nB: ${stubBlock(b)}`,
       { tier: 'cheap', maxTokens: 64 },

@@ -57,6 +57,16 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.opts.tier).toBe('cheap');
   });
 
+  it('confirmSameStory: prompt counts updates of one developing event as the same story (ADR-0048)', async () => {
+    const t = new FakeTransport({ same: true });
+    await new Reasoner(t).confirmSameStory(
+      { title: 'Outbreak update #3', text: null },
+      { title: 'Outbreak update #7', text: null },
+    );
+    expect(t.calls[0]?.prompt).toContain('Successive updates');
+    expect(t.calls[0]?.prompt).toContain('NOT the same');
+  });
+
   it('assessImpact: returns the parsed impact, clamped to [0,1]', async () => {
     const t = new FakeTransport({ impact: 0.85 });
     expect(await new Reasoner(t).assessImpact({ title: 'x', text: null })).toBeCloseTo(0.85, 5);
