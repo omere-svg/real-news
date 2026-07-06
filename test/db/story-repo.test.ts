@@ -38,6 +38,20 @@ describe('StoryRepo', () => {
     expect(found?.updatedAt).toBe(1000);
   });
 
+  it('existingAnalysis returns summary/why for known ids only (ADR-0047)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert(storyUpsert({ id: 's1', summary: 'Sum one', whyItMatters: 'Why one' }));
+    await repo.upsert(storyUpsert({ id: 's2', summary: null, whyItMatters: null,
+      memberRefs: [{ source: 'gdelt', externalId: '9' }] }));
+
+    const map = await repo.existingAnalysis(['s1', 's2', 'missing']);
+    expect(map.get('s1')).toEqual({ summary: 'Sum one', whyItMatters: 'Why one' });
+    expect(map.get('s2')).toEqual({ summary: null, whyItMatters: null });
+    expect(map.has('missing')).toBe(false);
+    expect(await repo.existingAnalysis([])).toEqual(new Map()); // empty input, no query
+  });
+
   it('persists and returns the score breakdown; defaults to null when omitted (ADR-0032)', async () => {
     const db = await createTestDb();
     const repo = new DrizzleStoryRepo(db, new FakeClock(1000));

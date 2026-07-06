@@ -7,6 +7,7 @@ import {
 } from '../scoring/signal-context.js';
 import { extractEntities } from './entities.js';
 import { dedupText } from './embed.js';
+import { mapWithConcurrency, DEFAULT_CONFIRM_CONCURRENCY } from './concurrency.js';
 import { representativeOf } from '../domain/cluster.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { LLMClient } from '../llm/llm-client.js';
@@ -24,6 +25,8 @@ export interface ScoreContext {
   readonly signalContext?: SignalContext;
   /** Max absolute Signal nudge; 0/absent leaves base scoring untouched. */
   readonly maxSignalAdjustment?: number;
+  /** Max concurrent impact calls (ADR-0047); absent ⇒ default bound. */
+  readonly concurrency?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number): number =>
@@ -82,8 +85,12 @@ export async function score(
   ctx: ScoreContext,
 ): Promise<ScoredCluster[]> {
   const now = ctx.clock.now();
-  return Promise.all(
-    clusters.map(async (cluster) => {
+  // One impact call per cluster: bound the in-flight count so a large tick can't
+  // fan out hundreds of model requests at once (ADR-0047).
+  return mapWithConcurrency(
+    clusters,
+    ctx.concurrency ?? DEFAULT_CONFIRM_CONCURRENCY,
+    async (cluster) => {
       const signals = assembleSignals(cluster, now, ctx.sourceWeights);
 
       const lead = representativeOf(cluster);
@@ -112,6 +119,6 @@ export async function score(
         // The inspectable "why this score" snapshot (ADR-0032/0034).
         breakdown: { base, recencyFactor, components, impact, signalNudge, signals },
       };
-    }),
+    },
   );
 }

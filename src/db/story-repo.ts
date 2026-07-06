@@ -36,6 +36,12 @@ export interface StoredVector {
   readonly vector: number[];
 }
 
+/** The editorial fields the tick preserves across a re-upsert (ADR-0047). */
+export interface StoryAnalysisFields {
+  readonly summary: string | null;
+  readonly whyItMatters: string | null;
+}
+
 /** Blocking filter for cross-tick dedup: recent window, optionally one topic (ADR-0017/0038). */
 export interface RecentVectorsQuery {
   /** Restrict to this Topic; omit to match across all Topics (cross-topic resolve, ADR-0038). */
@@ -80,6 +86,12 @@ export interface StoryRepo {
   upsert(input: StoryUpsert): Promise<Story>;
   get(id: string): Promise<Story | null>;
   all(): Promise<Story[]>;
+  /**
+   * The current summary/whyItMatters for a set of Story ids, in one query. The
+   * tick reads this before re-upserting so a cheap re-run (non-top-N) preserves
+   * the deep analysis a prior tick wrote instead of clobbering it (ADR-0047).
+   */
+  existingAnalysis(ids: readonly string[]): Promise<Map<string, StoryAnalysisFields>>;
   /** Stories matching the filter, ordered by Significance descending. */
   topStories(query: StoryQuery): Promise<Story[]>;
   /** Store/replace a Story's representative embedding (ADR-0017). */
@@ -187,6 +199,23 @@ export class DrizzleStoryRepo implements StoryRepo {
 
   async all(): Promise<Story[]> {
     return this.hydrate(await this.db.select().from(stories));
+  }
+
+  async existingAnalysis(
+    ids: readonly string[],
+  ): Promise<Map<string, StoryAnalysisFields>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.db
+      .select({
+        id: stories.id,
+        summary: stories.summary,
+        whyItMatters: stories.whyItMatters,
+      })
+      .from(stories)
+      .where(inArray(stories.id, ids as string[]));
+    return new Map(
+      rows.map((r) => [r.id, { summary: r.summary, whyItMatters: r.whyItMatters }]),
+    );
   }
 
   async topStories(query: StoryQuery): Promise<Story[]> {

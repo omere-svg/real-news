@@ -134,6 +134,36 @@ describe('TickRunner', () => {
     expect(story?.url).toBe('https://example.com/bill');
   });
 
+  it('decodes HTML entities in the deterministic lead summary (ADR-0047)', async () => {
+    const db = await createTestDb();
+    const rawItemRepo = new DrizzleRawItemRepo(db);
+    const storyRepo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const withEntities: RawItem = {
+      source: 'guardian',
+      externalId: 'g1',
+      title: 'Report on AT&amp;T and I&#x2F;O',
+      url: null,
+      // Hex (&#x2F; → /), named (&amp; → &), and decimal (&#39; → ') entities.
+      text: 'The firm&#39;s AT&amp;T unit reported I&#x2F;O gains today.',
+      publishedAt: 0,
+      metadata: { topic: 'Business' },
+    };
+    const runner = new TickRunner({
+      sources: [new FakeSource('guardian', { items: [withEntities] })],
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM(),
+      embedder: new FakeEmbedder({ 'Report on AT&amp;T and I&#x2F;O': [1, 0, 0] }),
+      clock: new FakeClock(100 * 3_600_000),
+      config: { ...config, deepAnalysisTopN: 0, maxSignalAdjustment: 0 },
+    });
+
+    await runner.run();
+
+    const [story] = await storyRepo.all();
+    expect(story?.summary).toBe("The firm's AT&T unit reported I/O gains today.");
+  });
+
   it('reports skipped and failed sources without crashing the tick', async () => {
     const { runner, storyRepo } = await build({
       sources: [
@@ -323,6 +353,55 @@ describe('TickRunner', () => {
     expect(pruneSpy).toHaveBeenCalledTimes(1); // orphan sweep runs each tick
     // And a normal tick never leaves a member-less story behind.
     for (const s of await storyRepo.all()) expect(s.memberRefs.length).toBeGreaterThan(0);
+  });
+
+  it('preserves a prior deep summary/why when a later tick does not re-analyze it (ADR-0047)', async () => {
+    const db = await createTestDb();
+    const rawItemRepo = new DrizzleRawItemRepo(db);
+    const clock = new FakeClock(1000 * 3_600_000);
+    const storyRepo = new DrizzleStoryRepo(db, clock);
+    const embedder = new FakeEmbedder({ 'Deep story': [1, 0, 0] });
+
+    // Tick 1: the story is in top-N, so the deep tier writes a real summary + why.
+    await new TickRunner({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Deep story', { topic: 'AI' })],
+        }),
+      ],
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM({
+        analyze: { summary: 'The deep summary.', whyItMatters: 'The deep why.' },
+      }),
+      embedder,
+      clock,
+      config: { ...config, deepAnalysisTopN: 5, maxSignalAdjustment: 0 },
+    }).run();
+
+    const [afterFirst] = await storyRepo.all();
+    expect(afterFirst?.summary).toBe('The deep summary.');
+    expect(afterFirst?.whyItMatters).toBe('The deep why.');
+
+    // Tick 2: same story, but NOT deep-analyzed this time (topN = 0). The cheap
+    // re-upsert must not clobber the prior deep summary/why with a fallback/null.
+    await new TickRunner({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Deep story', { topic: 'AI' })],
+        }),
+      ],
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM(),
+      embedder,
+      clock,
+      config: { ...config, deepAnalysisTopN: 0, maxSignalAdjustment: 0 },
+    }).run();
+
+    const [afterSecond] = await storyRepo.all();
+    expect(afterSecond?.summary).toBe('The deep summary.'); // preserved
+    expect(afterSecond?.whyItMatters).toBe('The deep why.'); // preserved
   });
 
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {

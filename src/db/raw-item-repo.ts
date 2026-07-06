@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { rawItems } from './schema.js';
 import type { RawItem, RawItemRef } from '../domain/types.js';
@@ -12,6 +12,14 @@ export interface RawItemRepo {
   upsert(items: readonly RawItem[]): Promise<void>;
   get(ref: RawItemRef): Promise<RawItem | null>;
   all(): Promise<RawItem[]>;
+  /**
+   * Delete raw_items that no Story references via `membership` (ADR-0047). An
+   * item is only ever processed the tick it's extracted; if it never joined a
+   * surviving Story it is dead provenance that would otherwise accumulate
+   * forever. Safe to run after the tick's membership writes are complete.
+   * Returns the number of rows removed.
+   */
+  pruneUnreferenced(): Promise<number>;
 }
 
 type Row = typeof rawItems.$inferSelect;
@@ -74,5 +82,17 @@ export class DrizzleRawItemRepo implements RawItemRepo {
   async all(): Promise<RawItem[]> {
     const rows = await this.db.select().from(rawItems);
     return rows.map(toDomain);
+  }
+
+  async pruneUnreferenced(): Promise<number> {
+    // NOT EXISTS against membership on the shared (source, external_id) key.
+    const res = await this.db.run(sql`
+      DELETE FROM raw_items
+      WHERE NOT EXISTS (
+        SELECT 1 FROM membership
+        WHERE membership.source = raw_items.source
+          AND membership.external_id = raw_items.external_id
+      )`);
+    return res.rowsAffected ?? 0;
   }
 }

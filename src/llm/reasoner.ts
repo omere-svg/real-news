@@ -112,14 +112,23 @@ function storyContextBlock(stories: readonly StoryContext[]): string {
   if (stories.length === 0) return '(no relevant stories in the cache)';
   return stories
     .map((s, i) => {
+      const summary = s.summary?.trim();
       const why = s.whyItMatters?.trim();
       return (
         `${i + 1}. [${s.topic}, significance ${s.significance.toFixed(1)}] ${s.title}` +
+        // The factual "what happened" line grounds "what/when/where" questions (ADR-0047).
+        (summary ? `\n   ${summary}` : '') +
         (why ? `\n   ${why}` : '') +
         (s.url ? `\n   ${s.url}` : '')
       );
     })
     .join('\n');
+}
+
+/** A candidate item for the same-story confirm prompt: title + a short body snippet. */
+function stubBlock(s: StoryStub): string {
+  const text = s.text?.replace(/\s+/g, ' ').trim();
+  return text ? `${s.title}\n   ${text.slice(0, 240)}` : s.title;
 }
 
 /** Render web search hits as numbered grounding context (ADR-0029). */
@@ -159,9 +168,13 @@ export class Reasoner implements LLMClient {
   }
 
   async confirmSameStory(a: StoryStub, b: StoryStub): Promise<boolean> {
+    // Include a short body snippet when a side has one (ADR-0047): title-only
+    // wire/RSS items dedup poorly on headlines alone, both false-merging distinct
+    // events and missing genuine matches with differently-worded headlines.
     const json = await this.transport.completeJson(
-      `Do these two headlines describe the SAME real-world news event? ` +
-        `Respond with a JSON object {"same": true|false}.\n\nA: ${a.title}\nB: ${b.title}`,
+      `Do these two news items describe the SAME real-world news event? ` +
+        `Respond with a JSON object {"same": true|false}.\n\n` +
+        `A: ${stubBlock(a)}\nB: ${stubBlock(b)}`,
       { tier: 'cheap', maxTokens: 64 },
     );
     return sameStorySchema.parse(json).same;
@@ -197,7 +210,13 @@ export class Reasoner implements LLMClient {
         `Title: ${input.title}\n${input.text ? `Body: ${input.text}\n` : ''}`,
       { tier: 'deep', maxTokens: 400 },
     );
-    return analysisSchema.parse(json);
+    // A blank field means "no analysis": return null so a later upsert preserves
+    // any existing value instead of clobbering it with '' (ADR-0047).
+    const parsed = analysisSchema.parse(json);
+    return {
+      summary: parsed.summary.trim() || null,
+      whyItMatters: parsed.whyItMatters.trim() || null,
+    };
   }
 
   async narrate(input: NarrateInput): Promise<string> {

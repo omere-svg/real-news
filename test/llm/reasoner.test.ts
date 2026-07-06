@@ -112,6 +112,7 @@ describe('Reasoner', () => {
       stories: [
         {
           title: 'Bank of Israel holds rates',
+          summary: 'The Bank of Israel left its key rate unchanged.',
           whyItMatters: 'Signals caution on inflation.',
           topic: 'Business',
           significance: 7,
@@ -124,6 +125,7 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.kind).toBe('json');
     expect(t.calls[0]?.opts.tier).toBe('deep');
     expect(t.calls[0]?.prompt).toContain('Bank of Israel holds rates');
+    expect(t.calls[0]?.prompt).toContain('The Bank of Israel left its key rate unchanged.');
     expect(t.calls[0]?.prompt).toContain('What did the central bank do?');
     expect(t.calls[0]?.prompt).not.toContain('WEB RESULTS'); // no web block on the first pass
   });

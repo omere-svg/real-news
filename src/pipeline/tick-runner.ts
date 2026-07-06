@@ -117,7 +117,7 @@ export class TickRunner {
       }
     }
 
-    const classified = await classify(extraction.items, llm);
+    const classified = await classify(extraction.items, llm, config.confirmConcurrency);
     const embedded = await embed(classified, embedder);
     const clusters = await cluster(embedded, llm, {
       candidateThreshold: config.candidateThreshold,
@@ -138,19 +138,30 @@ export class TickRunner {
       sourceWeights: config.sourceWeights,
       signalContext,
       maxSignalAdjustment: config.maxSignalAdjustment ?? 0,
+      ...(config.confirmConcurrency ? { concurrency: config.confirmConcurrency } : {}),
     });
     const analyzed = await analyze(scored, llm, config.deepAnalysisTopN);
 
-    // score/analyze/resolve all preserve order, so index i lines up across them.
-    for (let i = 0; i < analyzed.length; i += 1) {
-      const { id, vector } = identified[i] as IdentifiedCluster;
-      await storyRepo.upsert(toStoryUpsert(analyzed[i] as AnalyzedCluster, id));
-      await storyRepo.putVector(id, vector);
-    }
+    // The deep tier only analyzes the top-N this tick; every other Story re-upserts
+    // with null analysis. Read the current analysis first so a cheap re-run keeps
+    // the summary/why a prior tick (or the backfill) already wrote (ADR-0047).
+    const prior = await storyRepo.existingAnalysis(identified.map((i) => i.id));
 
-    // Reassigning members across ticks can leave a prior Story empty; sweep the
-    // orphans (and their vectors) so the read-model stays clean (ADR-0038).
-    await storyRepo.pruneOrphans();
+    try {
+      // score/analyze/resolve all preserve order, so index i lines up across them.
+      for (let i = 0; i < analyzed.length; i += 1) {
+        const { id, vector } = identified[i] as IdentifiedCluster;
+        await storyRepo.upsert(
+          toStoryUpsert(analyzed[i] as AnalyzedCluster, id, prior.get(id)),
+        );
+        await storyRepo.putVector(id, vector);
+      }
+    } finally {
+      // Reassigning members across ticks can leave a prior Story empty; sweep the
+      // orphans even if an upsert threw, so a partial tick can't leave the
+      // read-model dirty (ADR-0038/0047).
+      await storyRepo.pruneOrphans();
+    }
 
     return {
       extracted: extraction.items.length,
@@ -164,8 +175,20 @@ export class TickRunner {
   }
 }
 
-/** Build a StoryUpsert from an analyzed Cluster under its resolved Story id (ADR-0017). */
-function toStoryUpsert(analyzed: AnalyzedCluster, id: string): StoryUpsert {
+/**
+ * Build a StoryUpsert from an analyzed Cluster under its resolved Story id
+ * (ADR-0017). `prior` is the Story's current analysis (if it already exists), so
+ * a cheap re-upsert never downgrades a good summary/why (ADR-0047):
+ *  - whyItMatters: this tick's deep value → else the prior value → else null.
+ *  - summary: this tick's deep value → else the prior value → else a
+ *    deterministic lead from the source text (the readability floor for a
+ *    brand-new, not-yet-analyzed Story, ADR-0006/0024).
+ */
+function toStoryUpsert(
+  analyzed: AnalyzedCluster,
+  id: string,
+  prior?: { summary: string | null; whyItMatters: string | null },
+): StoryUpsert {
   const { cluster, significance, summary, whyItMatters, breakdown } = analyzed;
   const rep = representativeOf(cluster);
   return {
@@ -177,12 +200,8 @@ function toStoryUpsert(analyzed: AnalyzedCluster, id: string): StoryUpsert {
     url: rep.url ?? cluster.items.find((i) => i.url)?.url ?? null,
     topic: cluster.topic,
     significance,
-    // The deep tier writes a polished factual summary only for top-N Clusters;
-    // for the rest, fall back to the source's own text so every Story still has a
-    // "what happened" line (ADR-0006/0024). Title-only items (no text) stay null
-    // and are healed later by the LLM backfill.
-    summary: summary ?? leadSummary(rep.text),
-    whyItMatters,
+    summary: summary ?? prior?.summary ?? leadSummary(rep.text),
+    whyItMatters: whyItMatters ?? prior?.whyItMatters ?? null,
     memberRefs: cluster.items.map((i) => ({
       source: i.source,
       externalId: i.externalId,
@@ -200,9 +219,7 @@ const SUMMARY_MAX_CHARS = 280;
  */
 function leadSummary(text: string | null): string | null {
   if (!text) return null;
-  const clean = text
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&(?:#\d+|[a-z]+);/gi, ' ')
+  const clean = decodeEntities(text.replace(/<[^>]*>/g, ' '))
     .replace(/\s+/g, ' ')
     .trim();
   if (!clean) return null;
@@ -212,4 +229,49 @@ function leadSummary(text: string | null): string | null {
   return lead.length > SUMMARY_MAX_CHARS
     ? `${lead.slice(0, SUMMARY_MAX_CHARS).trimEnd()}…`
     : lead;
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  rsquo: '\u2019',
+  lsquo: '\u2018',
+  rdquo: '\u201d',
+  ldquo: '\u201c',
+  ndash: '\u2013',
+  mdash: '\u2014',
+  hellip: '\u2026',
+};
+
+/**
+ * Decode the HTML entities that show up in RSS/API snippets — numeric (`&#47;`),
+ * hexadecimal (`&#x2F;`), and the common named ones — into their characters, so
+ * a summary never surfaces raw `&#x2F;` to a reader (ADR-0047). Unknown entities
+ * are dropped. Kept here (not a regex-replace-with-space) because these snippets
+ * are frequently HTML-escaped by the source.
+ */
+function decodeEntities(input: string): string {
+  return input.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, body: string) => {
+    if (body[0] === '#') {
+      const code =
+        body[1] === 'x' || body[1] === 'X'
+          ? parseInt(body.slice(2), 16)
+          : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) && code > 0 ? safeFromCodePoint(code) : '';
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? '';
+  });
+}
+
+/** String.fromCodePoint that never throws on an out-of-range code point. */
+function safeFromCodePoint(code: number): string {
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return '';
+  }
 }

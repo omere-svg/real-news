@@ -84,12 +84,23 @@ export async function backfillSummaries(
       const ref = representativeRef(story);
       const lead = ref ? await deps.rawItemRepo.get(ref) : null;
 
-      const { summary, whyItMatters } = await deps.llm.analyze({
+      const analysis = await deps.llm.analyze({
         title: lead?.title ?? story.title,
         text: lead?.text ?? null,
         topic: story.topic,
         significance: story.significance,
       });
+
+      // A degraded/blank analyze returns nulls (ADR-0047): keep the existing text
+      // rather than wiping it, and skip the write entirely when nothing improved
+      // (so a persistent LLM outage can't churn the store with no-op upserts).
+      const summary = analysis.summary ?? story.summary;
+      const whyItMatters = analysis.whyItMatters ?? story.whyItMatters;
+      if (summary === story.summary && whyItMatters === story.whyItMatters) {
+        done += 1;
+        opts.onProgress?.(done, targets.length, story);
+        return;
+      }
 
       await deps.storyRepo.upsert({
         id: story.id,

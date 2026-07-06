@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createTestDb } from '../helpers/test-db.js';
 import { DrizzleRawItemRepo } from '../../src/db/raw-item-repo.js';
+import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
+import { FakeClock } from '../helpers/fake-clock.js';
 import type { RawItem } from '../../src/domain/types.js';
 
 function rawItem(overrides: Partial<RawItem> = {}): RawItem {
@@ -67,5 +69,31 @@ describe('RawItemRepo', () => {
     expect(await repo.all()).toHaveLength(2);
     expect(await repo.get({ source: 'hackernews', externalId: 'X' })).not.toBeNull();
     expect(await repo.get({ source: 'arxiv', externalId: 'X' })).not.toBeNull();
+  });
+
+  it('pruneUnreferenced deletes only raw_items no story references (ADR-0047)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleRawItemRepo(db);
+    const storyRepo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+    await repo.upsert([
+      rawItem({ source: 'hackernews', externalId: 'kept' }),
+      rawItem({ source: 'hackernews', externalId: 'orphan' }),
+    ]);
+    // A story references only the 'kept' item.
+    await storyRepo.upsert({
+      id: 's1',
+      title: 'Kept',
+      url: null,
+      topic: 'AI',
+      significance: 5,
+      whyItMatters: null,
+      memberRefs: [{ source: 'hackernews', externalId: 'kept' }],
+    });
+
+    const removed = await repo.pruneUnreferenced();
+    expect(removed).toBe(1);
+    expect(await repo.get({ source: 'hackernews', externalId: 'kept' })).not.toBeNull();
+    expect(await repo.get({ source: 'hackernews', externalId: 'orphan' })).toBeNull();
   });
 });
