@@ -65,6 +65,28 @@ describe('resolve', () => {
     expect(out[0]?.cluster.items).toHaveLength(1);
   });
 
+  it('fetches recent vectors once per tick, not once per cluster (ADR-0049)', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    let calls = 0;
+    const orig = storyRepo.recentVectors.bind(storyRepo);
+    storyRepo.recentVectors = (q) => {
+      calls += 1;
+      return orig(q);
+    };
+
+    const clusters: Cluster[] = Array.from({ length: 5 }, (_, i) => ({
+      items: [rawItem('hackernews', String(i), `Item ${i}`)],
+      topic: 'AI',
+    }));
+    const embeds = clusters.map((c, i) => embedded(c.items[0]!, [1, i, 0]));
+
+    await resolve(clusters, embeds, { storyRepo, rawItemRepo, llm: new FakeLLM(), clock }, {
+      ...opts,
+      crossTopic: true,
+    });
+    expect(calls).toBe(1); // memoized, not 5
+  });
+
   it('adopts an existing story id and merges prior members on a confirmed match', async () => {
     const { storyRepo, rawItemRepo, clock } = await fixtures();
 

@@ -1,7 +1,7 @@
 import { representativeOf, storyIdOf } from '../domain/cluster.js';
 import { cosine } from '../embedding/cosine.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
-import type { Cluster, RawItem, RawItemRef } from '../domain/types.js';
+import type { Cluster, RawItem, RawItemRef, Topic } from '../domain/types.js';
 import type { StoredVector, StoryRepo } from '../db/story-repo.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { LLMClient } from '../llm/llm-client.js';
@@ -82,6 +82,22 @@ export async function resolve(
   const vectorByItem = new Map(embedded.map((e) => [refKey(e.item), e.vector]));
   const sinceMs = deps.clock.now() - opts.recentWindowHours * HOUR_MS;
 
+  // Fetch recent stored vectors ONCE, not once per cluster (ADR-0049). The old
+  // per-cluster fetch issued ~one identical large Turso read per cluster (~200/
+  // tick) — the dominant cause of multi-minute ticks. Memoize by the query key:
+  // a single fetch when crossTopic, else one per distinct Topic. The Promise is
+  // stored synchronously before any await, so concurrent callers share one query.
+  const candidatesByKey = new Map<string, Promise<StoredVector[]>>();
+  const candidatesFor = (topic: Topic): Promise<StoredVector[]> => {
+    const key = opts.crossTopic ? '' : topic;
+    let p = candidatesByKey.get(key);
+    if (!p) {
+      p = deps.storyRepo.recentVectors({ ...(opts.crossTopic ? {} : { topic }), sinceMs });
+      candidatesByKey.set(key, p);
+    }
+    return p;
+  };
+
   // Resolve each Cluster independently and concurrently — this pass only READS
   // the store (writes happen later in the upsert loop), so bounded-parallel
   // matching is safe and keeps a tick's wall-time under the interval (ADR-0038).
@@ -92,10 +108,7 @@ export async function resolve(
       const rep = representativeOf(cluster);
       const vector = vectorByItem.get(refKey(rep)) ?? [];
 
-      const candidates = await deps.storyRepo.recentVectors({
-        ...(opts.crossTopic ? {} : { topic: cluster.topic }),
-        sinceMs,
-      });
+      const candidates = await candidatesFor(cluster.topic);
       const matchId = bestMatch(vector, candidates, opts.candidateThreshold);
 
       if (matchId) {

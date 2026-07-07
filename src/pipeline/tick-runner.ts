@@ -154,7 +154,10 @@ export class TickRunner {
         await storyRepo.upsert(
           toStoryUpsert(analyzed[i] as AnalyzedCluster, id, prior.get(id)),
         );
-        await storyRepo.putVector(id, vector);
+        // Skip persisting an empty vector (a missing embedding): a stored `[]`
+        // has cosine 0 against everything, so the Story would silently never
+        // cross-tick-merge and never surface in semantic search (ADR-0049).
+        if (vector.length > 0) await storyRepo.putVector(id, vector);
       }
     } finally {
       // Reassigning members across ticks can leave a prior Story empty; sweep the
