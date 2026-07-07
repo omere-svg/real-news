@@ -71,14 +71,23 @@ npm start
 **Just talk to it (ADR-0030).** Plain English and tap-to-run buttons are the primary UX — the
 Reasoner routes free text ("what's new in AI?", "make it shorter") to the right action, and
 `/start` surfaces inline menus. Slash commands still work as aliases: `/brief 3`, `/outline AI`,
-`/podcast 1`, `/chat <question>`, `/prefs topics AI,Geopolitics`, `/remember <note>`, `/forget`.
+`/podcast 1`, `/chat <question>`, `/prefs topics AI,Geopolitics`, `/remember <note>`, `/forget`,
+`/subscribe 08:00`.
 Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as text. Restrict who
 can use the bot with `telegram.allowedChatIds`.
 
-**Chat about the news (ADR-0029):** ask a question and the bot answers from the cached Stories,
-telling you when it couldn't. An optional **web-search fallback** (Tavily) kicks in only when the
-cache can't answer and only when configured — `telegram.chat.webSearch.provider: tavily` plus a
-`TAVILY_API_KEY`; it's `none` (cache-only) by default.
+**Chat about the news (ADR-0029/0054):** ask a question and the bot runs a bounded **agent
+loop** — the model itself chooses tools (semantic cache search, story detail, numeric signal
+trends, live web search, saving your context) and iterates until it can answer, telling you
+honestly when it can't. Every answer's tool trajectory is persisted and inspectable at
+`/api/chat-traces`. Web search (Tavily) is offered as a tool only when configured —
+`telegram.chat.webSearch.provider: tavily` plus a `TAVILY_API_KEY`; `none` (cache-only) by
+default. On any agent failure the bot degrades to the fixed retrieve-then-answer path.
+Conversations survive restarts (durable sessions, ADR-0054).
+
+**Scheduled daily brief (ADR-0054):** `/subscribe 08:00` (UTC) delivers your personalized,
+preference-weighted brief every morning — deterministic cache reads, zero model spend;
+`/subscribe off` stops it.
 
 **Personal memory (ADR-0028):** `/remember I'm a backend dev in Tel Aviv` keeps a free-text note
 that colors narration and chat phrasing; `/forget` clears it. Memory shapes *wording*; preference
@@ -135,9 +144,12 @@ boot). Secrets and deploy knobs come from the environment:
 - `GET /api/stories?topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
 - `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
 - `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
-- `GET /api/podcast?minutes=3` → `{ script }` — on (`presentation.webPodcastEnabled`, ADR-0050); script-only, `maxPodcastMinutes`-capped
+- `GET /api/podcast?minutes=3` → `{ script }` — on (`presentation.webPodcastEnabled`, ADR-0050); script-only, `maxPodcastMinutes`-capped, shares the global podcast budget (ADR-0052)
 - `GET /api/ticks?limit=50` → `{ ticks: [...] }` — recent tick outcomes (ADR-0033)
-- `GET /dashboard` → HTML ops dashboard: tick health, throughput, failing sources (ADR-0033)
+- `GET /api/reflection` → `{ reflections: [...] }` — LLM advisories + the actions they imposed (ADR-0042/0054)
+- `GET /api/chat-traces` → `{ traces: [...] }` — the chat agent's tool-loop trajectories (ADR-0054)
+- `GET /api/stats` → accumulation evidence: stories, multi-source stories, cross-tick developments, signal-history depth (ADR-0054)
+- `GET /dashboard` → HTML ops dashboard: tick health, throughput, failing sources, reflections, accumulation strip (ADR-0033)
 - `GET /health` → `{ ok: true }`
 
 ## Deploy (public URL)
@@ -202,6 +214,14 @@ source (ADR-0041); a retention prune of `tick_reports` plus an LLM "reflection" 
 reads the last few ticks as a group (ADR-0042); semantic retrieval over `story_vectors` for
 chat grounding (ADR-0045); entity-linked Wikipedia Pageviews attention down to the individual
 story (ADR-0043); and persisted Signal history for trend-aware scoring (ADR-0044).
+
+**Agentic pass (ADR-0053/0054).** The chat surface became a real bounded agent (model-driven
+tool loop with persisted, public trajectories); the reflection advisor now *acts* — structured
+proposals screened by a deterministic policy guard become forced source cooldowns and a
+persisted deep-analysis budget the next tick consumes; adaptation state (backoff streaks,
+policy, conversations) survives deploys; every untrusted prompt input is fenced with delimiter
+escaping and model outputs pass grounding guards; scheduled personalized briefs ship via
+`/subscribe`.
 
 **Second integrity & resilience pass (ADR-0047).** A fresh-start run (wipe → three ticks →
 use every surface → inspect all collections) drove a correctness/cost/resilience sweep: deep
