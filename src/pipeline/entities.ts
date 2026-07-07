@@ -31,7 +31,7 @@ export function extractEntities(text: string): Set<string> {
   const hasLowercase = /[a-zà-ÿ]/.test(text);
 
   // Capitalized proper-noun phrases (one or more capitalized words in a row).
-  const proper = text.match(/[A-ZÀ-Þ][\wÀ-ÿ’’-]+(?:\s+[A-ZÀ-Þ][\wÀ-ÿ’’-]+)*/g) ?? [];
+  const proper = text.match(/[A-ZÀ-Þ][\wÀ-ÿ'’-]+(?:\s+[A-ZÀ-Þ][\wÀ-ÿ'’-]+)*/g) ?? [];
   for (const m of proper) {
     const norm = m.toLowerCase().trim();
     // Exempt all-uppercase acronyms (e.g. "US", "WHO") from stopword filter —
