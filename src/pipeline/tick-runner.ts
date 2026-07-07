@@ -8,6 +8,7 @@ import { analyze } from './analyze.js';
 import { observeSignals } from './observe-signals.js';
 import { assembleSignalContext, type SaturationRefs } from '../scoring/signal-context.js';
 import { representativeOf } from '../domain/cluster.js';
+import { decodeEntities, stripHtml, collapseWhitespace } from '../text/clean.js';
 import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { SignalSource } from '../sources/signal-source.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
@@ -222,9 +223,7 @@ const SUMMARY_MAX_CHARS = 280;
  */
 function leadSummary(text: string | null): string | null {
   if (!text) return null;
-  const clean = decodeEntities(text.replace(/<[^>]*>/g, ' '))
-    .replace(/\s+/g, ' ')
-    .trim();
+  const clean = collapseWhitespace(decodeEntities(stripHtml(text)));
   if (!clean) return null;
 
   const sentences = clean.match(/[^.!?]*[.!?](?:\s|$)/g);
@@ -234,47 +233,3 @@ function leadSummary(text: string | null): string | null {
     : lead;
 }
 
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-  rsquo: '\u2019',
-  lsquo: '\u2018',
-  rdquo: '\u201d',
-  ldquo: '\u201c',
-  ndash: '\u2013',
-  mdash: '\u2014',
-  hellip: '\u2026',
-};
-
-/**
- * Decode the HTML entities that show up in RSS/API snippets — numeric (`&#47;`),
- * hexadecimal (`&#x2F;`), and the common named ones — into their characters, so
- * a summary never surfaces raw `&#x2F;` to a reader (ADR-0047). Unknown entities
- * are dropped. Kept here (not a regex-replace-with-space) because these snippets
- * are frequently HTML-escaped by the source.
- */
-function decodeEntities(input: string): string {
-  return input.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, body: string) => {
-    if (body[0] === '#') {
-      const code =
-        body[1] === 'x' || body[1] === 'X'
-          ? parseInt(body.slice(2), 16)
-          : parseInt(body.slice(1), 10);
-      return Number.isFinite(code) && code > 0 ? safeFromCodePoint(code) : '';
-    }
-    return NAMED_ENTITIES[body.toLowerCase()] ?? '';
-  });
-}
-
-/** String.fromCodePoint that never throws on an out-of-range code point. */
-function safeFromCodePoint(code: number): string {
-  try {
-    return String.fromCodePoint(code);
-  } catch {
-    return '';
-  }
-}

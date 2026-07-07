@@ -3,6 +3,7 @@ import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { LLMClient } from '../llm/llm-client.js';
 import type { RawItemRef, Story } from '../domain/types.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
+import { representativeRefOf } from '../domain/cluster.js';
 
 /**
  * Backfill a Story's factual `summary` + concise `whyItMatters` via the deep tier
@@ -39,14 +40,11 @@ export interface BackfillResult {
   readonly total: number;
 }
 
-/** A Story's representative ref: the lowest (source, externalId) — matches the pipeline. */
+/** A Story's representative ref — delegates to the single owner of the tie-break
+ * (`representativeRefOf`) so the backfill never picks a different lead than the
+ * live pipeline (ADR-0051). */
 function representativeRef(story: Story): RawItemRef | null {
-  const [ref] = [...story.memberRefs].sort((a, b) =>
-    a.source === b.source
-      ? a.externalId.localeCompare(b.externalId)
-      : a.source.localeCompare(b.source),
-  );
-  return ref ?? null;
+  return story.memberRefs.length ? representativeRefOf(story.memberRefs) : null;
 }
 
 /** True when a Story has no usable factual summary yet (null or blank). */

@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { xmlText as text, asArray } from './xml.js';
+import { decodeEntities, stripHtml, collapseWhitespace as collapse } from '../text/clean.js';
 
 /**
  * Shared RSS/Atom-RDF parsing for the media + thematic Source adapters
@@ -28,28 +29,9 @@ const parser = new XMLParser({
   processEntities: false,
 });
 
-/** Decode the standard XML/HTML entities (numeric + named) left intact by the parser. */
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&#(\d+);/g, (_, n) => safeCodePoint(Number(n)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => safeCodePoint(parseInt(h, 16)))
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&'); // ampersand last, so it doesn't re-open a decoded entity
-}
-
-function safeCodePoint(n: number): string {
-  try {
-    return String.fromCodePoint(n);
-  } catch {
-    return '';
-  }
-}
-
-const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
-const stripHtml = (s: string): string => s.replace(/<[^>]+>/g, ' ');
+// Entity decoding, HTML strip, and whitespace collapse are the shared canonical
+// helpers (ADR-0051) — previously rss.ts had its own decoder that handled fewer
+// named entities than the pipeline's, so the same entity rendered two ways.
 
 /** Parse a feed (RSS 2.0 or RDF/1.0) into normalized items. Never throws. */
 export function parseRssItems(xml: string): RssItem[] {
