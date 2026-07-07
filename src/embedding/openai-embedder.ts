@@ -25,9 +25,10 @@ export class OpenAIEmbedder implements Embedder {
     this.dimensions = deps.dimensions;
     // Placeholder key so a missing key degrades at call time (via the resilient
     // embedder) instead of throwing at construction.
+    // maxRetries: 0 — retry lives in withRetry (ADR-0049), not stacked on the SDK's.
     this.client =
       deps.client ??
-      new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? 'missing' });
+      new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? 'missing', maxRetries: 0 });
   }
 
   async embed(texts: readonly string[]): Promise<number[][]> {

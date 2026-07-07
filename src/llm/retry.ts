@@ -18,6 +18,20 @@ export interface RetryOptions {
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Whether an error is worth retrying: transient network drops and the transient
+ * HTTP statuses (429 rate-limit, 5xx). A permanent 4xx (401 bad key, 400 invalid
+ * request, content filter) will fail again identically, so retrying it only
+ * triples latency before the resilient client degrades (ADR-0049). Errors with
+ * no status (fetch/DNS/timeout) are treated as transient.
+ */
+export function isRetryable(err: unknown): boolean {
+  const status = (err as { status?: number; statusCode?: number })?.status
+    ?? (err as { statusCode?: number })?.statusCode;
+  if (typeof status !== 'number') return true; // network/timeout — worth a retry
+  return status === 429 || status >= 500;
+}
+
 export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
   const attempts = Math.max(1, opts.attempts ?? 3);
   const baseDelayMs = opts.baseDelayMs ?? 250;
@@ -29,6 +43,9 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
       return await fn();
     } catch (err) {
       lastErr = err;
+      // A permanent error won't get better by retrying — fail fast so the
+      // resilient client degrades immediately instead of after 9 doomed calls.
+      if (!isRetryable(err)) break;
       if (attempt < attempts - 1) await sleep(baseDelayMs * 2 ** attempt);
     }
   }

@@ -22,9 +22,12 @@ export class OpenAITransport implements ChatTransport {
   constructor(private readonly deps: OpenAITransportDeps) {
     // Placeholder key so a missing key degrades at call time (via the resilient
     // client) instead of throwing at construction.
+    // maxRetries: 0 — retry lives in one layer (withRetry, ADR-0049). Leaving the
+    // SDK's default (2) on top would stack to up to 9 attempts per logical call
+    // and amplify a real 429 across a tick's fan-out.
     this.client =
       deps.client ??
-      new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? 'missing' });
+      new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? 'missing', maxRetries: 0 });
   }
 
   private model(tier: CompletionOptions['tier']): string {
