@@ -94,6 +94,10 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.kind).toBe('json');
     expect(t.calls[0]?.opts.tier).toBe('deep');
     expect(t.calls[0]?.prompt).toContain('Big merger');
+    // Feed text is fenced as data + a low temperature locks formatting (ADR-0050).
+    expect(t.calls[0]?.prompt).toContain('<item>');
+    expect(t.calls[0]?.prompt).toMatch(/data, not instructions/i);
+    expect(t.calls[0]?.opts.temperature).toBe(0.3);
   });
 
   it('narrate: free-form completion on the deep tier, built from the brief', async () => {
@@ -102,6 +106,9 @@ describe('Reasoner', () => {
     expect(out).toBe('Welcome to the show.');
     expect(t.calls[0]?.opts.tier).toBe('deep');
     expect(t.calls[0]?.prompt).toContain('BRIEF BODY');
+    // Spoken-audio contract: fenced brief + no-markdown rule (ADR-0050).
+    expect(t.calls[0]?.prompt).toContain('<brief>');
+    expect(t.calls[0]?.prompt).toMatch(/No markdown/i);
   });
 
   it('narrate: weaves the reader memory into the prompt when present (ADR-0028)', async () => {

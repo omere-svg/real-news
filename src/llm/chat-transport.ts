@@ -16,4 +16,7 @@ export interface CompletionOptions {
   readonly tier: 'cheap' | 'deep';
   /** Upper bound on reply tokens. */
   readonly maxTokens: number;
+  /** Sampling temperature; omit for the provider default. Low (≈0.3) locks
+   * formatting consistency on the generation prompts (ADR-0050). */
+  readonly temperature?: number;
 }

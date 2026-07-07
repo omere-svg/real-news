@@ -40,6 +40,7 @@ export class OpenAITransport implements ChatTransport {
       this.client.chat.completions.create({
         model: this.model(opts.tier),
         max_tokens: opts.maxTokens,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         messages: [{ role: 'user', content: prompt }],
       }),
     );
@@ -51,6 +52,7 @@ export class OpenAITransport implements ChatTransport {
       this.client.chat.completions.create({
         model: this.model(opts.tier),
         max_tokens: opts.maxTokens,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: prompt }],
       }),
