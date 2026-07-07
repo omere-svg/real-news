@@ -1,8 +1,8 @@
 # Evidence index — Project Horizon
 
 Curated, highest-value proof. Everything here is reproducible from a clean clone;
-the live URLs prove it runs unattended. Pinned to commit `5cc47be` (see
-`PINNED-COMMIT.md`).
+the live URLs prove it runs unattended. The judged tree is `main` as pushed
+(see `PINNED-COMMIT.md` for how to pin and archive it).
 
 ## Demonstrated (run it / hit it)
 - **The test suite — strongest evidence.** From the repo root:
