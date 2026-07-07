@@ -100,6 +100,19 @@ describe('TickRunner', () => {
     expect(story?.memberRefs).toHaveLength(1);
   });
 
+  it('skips sources in the adaptive-backoff set (ADR-0052)', async () => {
+    const { runner } = await build({
+      sources: [
+        new FakeSource('hackernews', { items: [item('hackernews', '1', 'Kept', { topic: 'AI' })] }),
+        new FakeSource('gdelt', { items: [item('gdelt', '2', 'Skipped', { topic: 'Geopolitics' })] }),
+      ],
+      embedder: new FakeEmbedder({ Kept: [1, 0, 0], Skipped: [0, 1, 0] }),
+    });
+
+    const report = await runner.run({ skipSources: new Set(['gdelt']) });
+    expect(report.extracted).toBe(1); // only hackernews ran; gdelt was backed off
+  });
+
   it('falls back to the source text for a Story the deep tier skipped (ADR-0024)', async () => {
     const db = await createTestDb();
     const rawItemRepo = new DrizzleRawItemRepo(db);

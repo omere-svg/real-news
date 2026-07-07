@@ -80,10 +80,14 @@ export interface TickReport {
 export class TickRunner {
   constructor(private readonly deps: TickRunnerDeps) {}
 
-  async run(): Promise<TickReport> {
+  async run(opts: { skipSources?: ReadonlySet<SourceId> } = {}): Promise<TickReport> {
     const { rawItemRepo, storyRepo, llm, embedder, clock, config } = this.deps;
 
-    const extraction = await extract(this.deps.sources);
+    // Adaptive backoff (ADR-0052): the loop may ask us to skip Sources that have
+    // failed repeatedly, so we don't spend a rate-limited fetch on a known-bad one.
+    const skip = opts.skipSources;
+    const sources = skip && skip.size ? this.deps.sources.filter((s) => !skip.has(s.id)) : this.deps.sources;
+    const extraction = await extract(sources);
     await rawItemRepo.upsert(extraction.items);
 
     // Numeric Signal context for this tick (ADR-0025): observed fresh, used in-tick.

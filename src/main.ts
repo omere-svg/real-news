@@ -52,6 +52,7 @@ import { ResilientEmbedder } from './embedding/resilient-embedder.js';
 import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
 import { TickRunner } from './pipeline/tick-runner.js';
+import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
 import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
@@ -256,8 +257,10 @@ async function main(): Promise<void> {
   // One embedder, shared by the tick pipeline (dedup) and — when semantic chat is
   // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
   const embedder = buildEmbedder(config);
+  const storySources = buildSources(config, fetchJson);
+  const storySourceIds = storySources.map((s) => s.id);
   const runner = new TickRunner({
-    sources: buildSources(config, fetchJson),
+    sources: storySources,
     signalSources: buildSignalSources(config, fetchJson),
     rawItemRepo,
     storyRepo,
@@ -315,6 +318,11 @@ async function main(): Promise<void> {
   const lockEnabled = config.lock.enabled;
   const lockTtlMs = config.lock.ttlMinutes * 60_000;
 
+  // Adaptive per-source backoff (ADR-0052): after 3 consecutive failing ticks a
+  // Source cools down for 3 ticks, then auto-retries. Closes the observe→adapt loop.
+  const backoff = new AdaptiveBackoff({ threshold: 3, cooldownTicks: 3 });
+  let tickIndex = 0;
+
   // Release the advisory lock on shutdown (ADR-0048). systemd restarts (every
   // deploy) land mid-tick about half the time; without this the dying process
   // leaves a stale lease that stalls ticking for up to lock.ttlMinutes.
@@ -346,9 +354,20 @@ async function main(): Promise<void> {
       return;
     }
     const ranAt = systemClock.now();
+    // Observe→adapt (ADR-0052): skip Sources currently cooling down after repeated
+    // failures, so a known-bad, rate-limited feed (e.g. GDELT 429) doesn't waste a
+    // fetch this tick. They auto-retry when the cooldown lapses.
+    const backedOff = backoff.activeBackoffs(tickIndex);
+    if (backedOff.size) console.log(`[backoff] skipping cooling-down sources: [${[...backedOff]}]`);
     try {
-      const report = await runner.run();
+      const report = await runner.run({ skipSources: backedOff });
       recordTick({ ...report, ranAt, durationMs: systemClock.now() - ranAt, ok: true, error: null });
+      // Feed the outcome back into the loop: sources attempted this tick that
+      // failed or were health-skipped advance toward backoff; successes reset.
+      const attempted = storySourceIds.filter((id) => !backedOff.has(id));
+      const bad = [...report.skipped, ...report.failed.map((f) => f.source)];
+      const newly = backoff.record(tickIndex, attempted, bad);
+      if (newly.length) console.log(`[backoff] backing off after repeated failures: [${newly}]`);
       console.log(
         `[tick] extracted=${report.extracted} stories=${report.storiesUpserted} ` +
           `signals=${report.signalsObserved} ` +
@@ -386,6 +405,7 @@ async function main(): Promise<void> {
       // failing tick is still counted, pruned, and reflected on (ADR-0042).
       await maintain().catch((err) => console.error('[maintain] failed:', err));
       if (lockEnabled) await tickLock.release().catch((err) => console.error('[tick] lock release failed:', err));
+      tickIndex += 1; // advance the backoff clock once per attempted (non-lock-skipped) tick
     }
   };
 
