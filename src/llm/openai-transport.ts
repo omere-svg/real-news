@@ -3,7 +3,6 @@ import type {
   AgentMessage,
   ChatTransport,
   CompletionOptions,
-  ToolCall,
   ToolCapableTransport,
   ToolCompletion,
   ToolSpec,
@@ -18,9 +17,9 @@ export interface TokenUsageReport {
 }
 
 export interface OpenAITransportDeps {
-  /** Cheap high-volume tier (ADR-0006/0012), e.g. gpt-4o-mini. */
+  /** Cheap high-volume tier (ADR-0006/0012). */
   readonly cheapModel: string;
-  /** Deep analysis tier, e.g. gpt-4o. */
+  /** Deep analysis tier. */
   readonly deepModel: string;
   /** Injectable for testing; defaults to a real client reading OPENAI_API_KEY. */
   readonly client?: OpenAI;
@@ -71,7 +70,12 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
     const res = await withRetry(() =>
       this.client.chat.completions.create({
         model: this.model(opts.tier),
-        max_tokens: opts.maxTokens,
+        // Reasoning models spend "thinking" tokens out of the completion budget;
+        // our per-call budgets (64–700 tokens) assume every token is output, so
+        // reasoning stays off or a call could burn its whole cap before emitting
+        // any content.
+        reasoning_effort: 'none',
+        max_completion_tokens: opts.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -91,7 +95,8 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
     const { res, parsed } = await withRetry(async () => {
       const r = await this.client.chat.completions.create({
         model: this.model(opts.tier),
-        max_tokens: opts.maxTokens,
+        reasoning_effort: 'none',
+        max_completion_tokens: opts.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: prompt }],
@@ -108,62 +113,77 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
     return parsed;
   }
 
-  /** Tool-selection completion for the chat agent loop (ADR-0053). */
+  /**
+   * Tool-selection completion for the chat agent loop (ADR-0053).
+   *
+   * Uses the Responses API: Chat Completions rejects function tools combined
+   * with `reasoning_effort` on current models ("use /v1/responses instead"),
+   * and reasoning must stay off here for the same budget reason as above.
+   */
   async completeWithTools(
     messages: readonly AgentMessage[],
     tools: readonly ToolSpec[],
     opts: CompletionOptions,
   ): Promise<ToolCompletion> {
     const res = await withRetry(() =>
-      this.client.chat.completions.create({
+      this.client.responses.create({
         model: this.model(opts.tier),
-        max_tokens: opts.maxTokens,
+        reasoning: { effort: 'none' },
+        max_output_tokens: opts.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-        messages: messages.map(toOpenAIMessage),
+        input: messages.flatMap(toResponseItems),
         ...(tools.length
           ? {
               tools: tools.map((t) => ({
                 type: 'function' as const,
-                function: { name: t.name, description: t.description, parameters: t.parameters },
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+                strict: false,
               })),
             }
           : {}),
       }),
     );
-    this.reportUsage(opts.tier, res);
-    const msg = res.choices[0]?.message;
-    return {
-      text: msg?.content?.trim() || null,
-      toolCalls: (msg?.tool_calls ?? []).map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        args: parseArgs(tc.function.arguments),
-      })),
-    };
+    if (res.usage && this.deps.onUsage) {
+      this.deps.onUsage({
+        tier: opts.tier,
+        promptTokens: res.usage.input_tokens ?? 0,
+        completionTokens: res.usage.output_tokens ?? 0,
+      });
+    }
+    const toolCalls = res.output
+      .filter((item) => item.type === 'function_call')
+      .map((item) => ({
+        id: item.call_id,
+        name: item.name,
+        args: parseArgs(item.arguments),
+      }));
+    return { text: res.output_text.trim() || null, toolCalls };
   }
 }
 
-/** Map the provider-neutral message shape onto OpenAI's wire format. */
-function toOpenAIMessage(m: AgentMessage): OpenAI.ChatCompletionMessageParam {
+/** Map one provider-neutral message onto Responses API input items. */
+function toResponseItems(m: AgentMessage): OpenAI.Responses.ResponseInputItem[] {
   if (m.role === 'assistant') {
-    return {
-      role: 'assistant',
-      content: m.content,
-      ...(m.toolCalls?.length
-        ? {
-            tool_calls: m.toolCalls.map((tc: ToolCall) => ({
-              id: tc.id,
-              type: 'function' as const,
-              function: { name: tc.name, arguments: JSON.stringify(tc.args) },
-            })),
-          }
-        : {}),
-    };
+    // An assistant turn fans out: its text (if any) is a message item, and each
+    // tool call it made is its own function_call item.
+    const items: OpenAI.Responses.ResponseInputItem[] = [];
+    if (m.content) items.push({ role: 'assistant', content: m.content });
+    for (const tc of m.toolCalls ?? []) {
+      items.push({
+        type: 'function_call',
+        call_id: tc.id,
+        name: tc.name,
+        arguments: JSON.stringify(tc.args),
+      });
+    }
+    return items;
   }
   if (m.role === 'tool') {
-    return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+    return [{ type: 'function_call_output', call_id: m.toolCallId, output: m.content }];
   }
-  return { role: m.role, content: m.content };
+  return [{ role: m.role, content: m.content }];
 }
 
 /** Model-emitted argument strings are untrusted JSON — degrade to {} on garbage. */

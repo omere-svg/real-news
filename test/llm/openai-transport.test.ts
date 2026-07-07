@@ -6,21 +6,40 @@ import { OpenAITransport } from '../../src/llm/openai-transport.js';
 function fakeClient(
   content: string | null,
   usage?: { prompt_tokens: number; completion_tokens: number },
-): { client: OpenAI; create: ReturnType<typeof vi.fn> } {
+): { client: OpenAI; create: ReturnType<typeof vi.fn>; responsesCreate: ReturnType<typeof vi.fn> } {
   const create = vi.fn().mockResolvedValue({ choices: [{ message: { content } }], usage });
-  return { client: { chat: { completions: { create } } } as unknown as OpenAI, create };
+  // completeWithTools rides the Responses API (its usage keys differ).
+  const responsesCreate = vi.fn().mockResolvedValue({
+    output: [],
+    output_text: content ?? '',
+    usage: usage
+      ? { input_tokens: usage.prompt_tokens, output_tokens: usage.completion_tokens }
+      : undefined,
+  });
+  return {
+    client: {
+      chat: { completions: { create } },
+      responses: { create: responsesCreate },
+    } as unknown as OpenAI,
+    create,
+    responsesCreate,
+  };
 }
 
-const deps = (client: OpenAI) => ({ cheapModel: 'gpt-4o-mini', deepModel: 'gpt-4o', client });
+const deps = (client: OpenAI) => ({ cheapModel: 'cheap-test-model', deepModel: 'deep-test-model', client });
 
 describe('OpenAITransport', () => {
   it('routes the cheap tier to the cheap model and the deep tier to the deep model', async () => {
     const { client, create } = fakeClient('hi');
     const t = new OpenAITransport(deps(client));
     await t.complete('p', { tier: 'cheap', maxTokens: 10 });
-    expect(create.mock.calls[0]?.[0].model).toBe('gpt-4o-mini');
+    expect(create.mock.calls[0]?.[0].model).toBe('cheap-test-model');
     await t.complete('p', { tier: 'deep', maxTokens: 10 });
-    expect(create.mock.calls[1]?.[0].model).toBe('gpt-4o'); // a regression here silently bills deep-tier
+    expect(create.mock.calls[1]?.[0].model).toBe('deep-test-model'); // a regression here silently bills deep-tier
+    // Reasoning-model wire contract: budget via max_completion_tokens, reasoning off.
+    expect(create.mock.calls[0]?.[0].max_completion_tokens).toBe(10);
+    expect(create.mock.calls[0]?.[0].reasoning_effort).toBe('none');
+    expect('max_tokens' in create.mock.calls[0]?.[0]).toBe(false);
   });
 
   it('passes temperature through when set, omits it otherwise', async () => {
@@ -80,6 +99,31 @@ describe('OpenAITransport', () => {
     await expect(
       new OpenAITransport(deps(unwired.client)).complete('p', { tier: 'cheap', maxTokens: 10 }),
     ).resolves.toBe('hi'); // no onUsage dep — must not throw
+  });
+
+  it('completeWithTools rides the Responses API and maps function_call items back', async () => {
+    const { client, responsesCreate } = fakeClient(null);
+    responsesCreate.mockResolvedValue({
+      output: [
+        { type: 'function_call', call_id: 'c1', name: 'top_stories', arguments: '{"n":3}' },
+        { type: 'reasoning' }, // non-function items must be ignored
+      ],
+      output_text: '',
+    });
+    const t = new OpenAITransport(deps(client));
+    const res = await t.completeWithTools(
+      [{ role: 'user', content: 'q' }],
+      [{ name: 'top_stories', description: 'd', parameters: { type: 'object' } }],
+      { tier: 'deep', maxTokens: 700 },
+    );
+
+    const sent = responsesCreate.mock.calls[0]?.[0];
+    expect(sent.model).toBe('deep-test-model');
+    expect(sent.reasoning).toEqual({ effort: 'none' });
+    expect(sent.max_output_tokens).toBe(700);
+    expect(sent.tools[0]).toMatchObject({ type: 'function', name: 'top_stories' });
+    expect(res.toolCalls).toEqual([{ id: 'c1', name: 'top_stories', args: { n: 3 } }]);
+    expect(res.text).toBeNull();
   });
 
   it('retries a truncated-JSON transport response instead of throwing straight through', async () => {
