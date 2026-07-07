@@ -362,7 +362,7 @@ describe('HorizonBot', () => {
     });
 
     it('feeds the saved weights into the next brief request', async () => {
-      const { bot, query, prefs } = await build({ feedback: fakeInterpreter(intent) });
+      const { bot, query } = await build({ feedback: fakeInterpreter(intent) });
       await bot.handle(update(5, '/feedback more ai, mute sports'));
 
       await bot.handle(update(5, '/brief'));

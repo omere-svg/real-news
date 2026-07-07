@@ -141,6 +141,12 @@ dedup:
   # Entity-aware blocking (ADR-0036): pairs sharing >= minSharedEntities named
   # entities only need to clear relaxedThreshold. Set enabled:false to revert to
   # pure cosine; tune the knobs if it over-merges or adds too many confirm calls.
+  # Tiered relaxation: pairs sharing minSharedEntities+1 entities (place AND
+  # figures, e.g. "venezuela" + "3500") clear an even lower bar
+  # (relaxedThreshold - 0.06) — cross-outlet phrasings of one event often land
+  # at cosine 0.60-0.66. resolve applies the same 0.60 @ >=2-entities band when
+  # matching a Cluster against stored Stories, so cross-SOURCE corroboration can
+  # accrete across ticks. The LLM confirm stays the precision guard on every pair.
   entityBlocking:
     enabled: true
     relaxedThreshold: 0.66

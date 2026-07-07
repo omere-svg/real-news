@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { bestMatch, resolve } from '../../src/pipeline/resolve.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
@@ -222,6 +222,134 @@ describe('resolve', () => {
     expect(out[0]?.id).toBe('hackernews:1');
     const sources = new Set(out[0]?.cluster.items.map((i) => i.source));
     expect(sources).toEqual(new Set(['hackernews', 'gdelt', 'guardian']));
+  });
+
+  it('merges a cross-outlet phrasing below the strict bar when >= 2 entities are shared (relaxed band)', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+
+    // Prior tick: the Wikipedia phrasing of the disaster.
+    const prior = rawItem('wikipedia', 'w1', 'Two earthquakes strike Venezuela, leaving more than 3,500 dead');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'wikipedia:w1', title: prior.title, url: null, topic: 'Geopolitics',
+      significance: 8, whyItMatters: null, memberRefs: [{ source: 'wikipedia', externalId: 'w1' }],
+    });
+    await storyRepo.putVector('wikipedia:w1', [1, 0, 0]);
+
+    // This tick: the Guardian phrasing — cosine 0.70, below strict 0.8 but the
+    // pair shares "venezuela" + "3500", so the relaxed band escalates to the LLM.
+    const fresh = rawItem('guardian', 'g1', 'Venezuela earthquake: death toll passes 3,500');
+    const out = await resolve(
+      [{ items: [fresh], topic: 'Geopolitics' }],
+      [{ item: fresh, topic: 'Geopolitics', vector: [0.7, 0.7141, 0] }],
+      { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: true }), clock },
+      opts,
+    );
+
+    expect(out[0]?.id).toBe('wikipedia:w1'); // corroboration accretes cross-source
+    const sources = new Set(out[0]?.cluster.items.map((i) => i.source));
+    expect(sources).toEqual(new Set(['wikipedia', 'guardian']));
+  });
+
+  it('does NOT escalate a below-strict match that shares fewer than 2 entities', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('wikipedia', 'w1', 'Venezuela signs oil deal with partners');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'wikipedia:w1', title: prior.title, url: null, topic: 'Geopolitics',
+      significance: 5, whyItMatters: null, memberRefs: [{ source: 'wikipedia', externalId: 'w1' }],
+    });
+    await storyRepo.putVector('wikipedia:w1', [1, 0, 0]);
+
+    const llm = new FakeLLM({ confirm: true });
+    const fresh = rawItem('guardian', 'g1', 'Venezuela earthquake: death toll passes 3,500');
+    const out = await resolve(
+      [{ items: [fresh], topic: 'Geopolitics' }],
+      [{ item: fresh, topic: 'Geopolitics', vector: [0.7, 0.7141, 0] }],
+      { storyRepo, rawItemRepo, llm, clock },
+      opts,
+    );
+
+    expect(out[0]?.id).toBe('guardian:g1'); // only "venezuela" shared → precision holds
+    expect(llm.confirmCalls).toBe(0); // never even escalated
+  });
+
+  it('never escalates below the relaxed floor, entities or not', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('wikipedia', 'w1', 'Two earthquakes strike Venezuela, leaving more than 3,500 dead');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'wikipedia:w1', title: prior.title, url: null, topic: 'Geopolitics',
+      significance: 8, whyItMatters: null, memberRefs: [{ source: 'wikipedia', externalId: 'w1' }],
+    });
+    await storyRepo.putVector('wikipedia:w1', [1, 0, 0]);
+
+    const llm = new FakeLLM({ confirm: true });
+    const fresh = rawItem('guardian', 'g1', 'Venezuela earthquake: death toll passes 3,500');
+    const out = await resolve(
+      [{ items: [fresh], topic: 'Geopolitics' }],
+      [{ item: fresh, topic: 'Geopolitics', vector: [0.4, 0.9165, 0] }], // cosine 0.4
+      { storyRepo, rawItemRepo, llm, clock },
+      opts,
+    );
+
+    expect(out[0]?.id).toBe('guardian:g1');
+    expect(llm.confirmCalls).toBe(0);
+  });
+
+  it('passes the stored story summary as the confirm body snippet (not title-only)', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('wikipedia', 'w1', 'Quake hits region');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'wikipedia:w1', title: prior.title, url: null, topic: 'AI',
+      significance: 5, whyItMatters: null,
+      summary: 'A magnitude 7.1 earthquake struck western Venezuela on Sunday.',
+      memberRefs: [{ source: 'wikipedia', externalId: 'w1' }],
+    });
+    await storyRepo.putVector('wikipedia:w1', [1, 0, 0]);
+
+    let seenText: string | null | undefined;
+    const llm = new FakeLLM({
+      confirm: (_a, b) => {
+        seenText = b.text;
+        return true;
+      },
+    });
+    const fresh = rawItem('gdelt', '2', 'Earthquake strikes area');
+    await resolve(
+      [{ items: [fresh], topic: 'AI' }],
+      [embedded(fresh, [0.99, 0.02, 0])],
+      { storyRepo, rawItemRepo, llm, clock },
+      opts,
+    );
+
+    expect(seenText).toBe('A magnitude 7.1 earthquake struck western Venezuela on Sunday.');
+  });
+
+  it('logs resolve confirm accept/veto counts when matches were escalated', async () => {
+    const { storyRepo, rawItemRepo, clock } = await fixtures();
+    const prior = rawItem('hackernews', '1', 'Quake hits region');
+    await rawItemRepo.upsert([prior]);
+    await storyRepo.upsert({
+      id: 'hackernews:1', title: prior.title, url: null, topic: 'AI',
+      significance: 5, whyItMatters: null, memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    await storyRepo.putVector('hackernews:1', [1, 0, 0]);
+
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const fresh = rawItem('gdelt', '2', 'Earthquake strikes area');
+      await resolve(
+        [{ items: [fresh], topic: 'AI' }],
+        [embedded(fresh, [0.99, 0.02, 0])],
+        { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: false }), clock },
+        opts,
+      );
+      expect(log).toHaveBeenCalledWith('[dedup] resolve confirmed=0 vetoed=1');
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('ignores stored stories outside the recency window', async () => {

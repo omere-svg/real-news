@@ -36,6 +36,7 @@ import { applyFeedback, type PreferenceProfile } from '../preferences/feedback.j
 import { normalizeMinutes } from '../presentation/minutes.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import { canonical } from '../domain/vocab.js';
+import { ConsoleLogger, type Logger } from '../log/logger.js';
 
 /** 'H:MM'/'HH:MM' (24h) → canonical 'HH:MM', or null when unparseable. */
 function normalizeHHMM(raw: string): string | null {
@@ -139,6 +140,8 @@ export interface HorizonBotDeps {
   readonly allowedChatIds?: readonly number[];
   /** Answer everyone when the allowlist is empty. Default-deny when false. */
   readonly openAccess: boolean;
+  /** Structured log sink; the composition root injects the shared one. */
+  readonly log?: Logger;
 }
 
 
@@ -175,6 +178,7 @@ export class HorizonBot {
   /** Per-chat conversational state (ADR-0028/0029); durable when a session
    * repo is wired, so a deploy mid-conversation keeps the context (ADR-0053). */
   private readonly sessions: SessionStore;
+  private readonly log: Logger;
 
   /** Cost/rate policy, extracted from the dispatcher (ADR-0052). */
   private readonly quota: QuotaGuard;
@@ -182,7 +186,8 @@ export class HorizonBot {
   private readonly grounding: ChatGrounding | undefined;
 
   constructor(private readonly deps: HorizonBotDeps) {
-    this.sessions = new SessionStore(undefined, undefined, deps.sessionRepo);
+    this.log = deps.log ?? new ConsoleLogger();
+    this.sessions = new SessionStore(undefined, undefined, deps.sessionRepo, this.log);
     this.quota = new QuotaGuard(deps.usage, deps.limits, deps.transport);
     this.grounding = deps.storyRepo
       ? new ChatGrounding(deps.storyRepo, deps.embedder, deps.defaults.topics as readonly Topic[] | undefined)
@@ -486,7 +491,7 @@ export class HorizonBot {
         await this.sendContent(chatId, `☀️ Your scheduled brief\n\n${brief}`);
         sent += 1;
       } catch (err) {
-        console.warn(`[telegram] scheduled brief for ${chatId} failed:`, err);
+        this.log.warn('telegram.scheduled_brief_failed', { chatId, err });
       }
     }
     return sent;
@@ -550,7 +555,7 @@ export class HorizonBot {
     let usedWeb = false;
     if (this.deps.agentTransport) {
       const agentResult = await this.runChatAgent(chatId, q, history, prefs).catch((err) => {
-        console.warn('[telegram] chat agent failed, degrading to discuss:', err);
+        this.log.warn('telegram.chat_agent_degraded', { err });
         return null;
       });
       if (agentResult) {
@@ -618,7 +623,7 @@ export class HorizonBot {
           steps: out.steps,
           answeredFromNews: out.answeredFromNews,
         })
-        .catch((err) => console.warn('[telegram] trace record failed:', err));
+        .catch((err) => this.log.warn('telegram.trace_record_failed', { err }));
     }
     return out;
   }

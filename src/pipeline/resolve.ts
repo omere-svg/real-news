@@ -1,5 +1,7 @@
 import { representativeOf, storyIdOf } from '../domain/cluster.js';
 import { cosine } from '../embedding/cosine.js';
+import { dedupText } from './embed.js';
+import { extractEntities, sharedEntityCount } from './entities.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import type { Cluster, RawItem, RawItemRef, Topic } from '../domain/types.js';
 import type { StoredVector, StoryRepo } from '../db/story-repo.js';
@@ -48,7 +50,26 @@ export interface ResolveOptions {
   readonly crossTopic?: boolean;
   /** Max concurrent confirm calls; defaults to DEFAULT_CONFIRM_CONCURRENCY. */
   readonly confirmConcurrency?: number;
+  /**
+   * Entity-relaxed matching band (ADR-0036, extended cross-tick). Different
+   * Sources cover one event on different ticks with very different phrasings (a
+   * Wikipedia sentence vs a GDACS alert title vs a Guardian headline), so most
+   * cross-SOURCE corroboration must accrete HERE — yet the strict cosine bar
+   * alone rarely proposes those pairs, which is why major events sat at
+   * corroboration 0. A candidate whose similarity lands in
+   * [relaxedThreshold, candidateThreshold) is still escalated to the Reasoner
+   * when it shares >= relaxedMinSharedEntities named entities/figures with the
+   * stored Story. Precision holds: more shared evidence is demanded exactly
+   * where the cosine is trusted less, and the confirm remains the final guard.
+   * Set relaxedThreshold >= candidateThreshold to disable.
+   */
+  readonly relaxedThreshold?: number;
+  readonly relaxedMinSharedEntities?: number;
 }
+
+/** Defaults for the entity-relaxed band (mirror cluster's strong band: 0.60 @ >=2). */
+const DEFAULT_RELAXED_THRESHOLD = 0.6;
+const DEFAULT_RELAXED_MIN_SHARED = 2;
 
 /**
  * The closest stored vector above `threshold`, or null. Pure: the matching heart
@@ -59,6 +80,15 @@ export function bestMatch(
   candidates: readonly StoredVector[],
   threshold: number,
 ): string | null {
+  const closest = closestCandidate(vector, candidates);
+  return closest && closest.similarity >= threshold ? closest.storyId : null;
+}
+
+/** The single closest stored vector with its similarity, or null when empty. */
+function closestCandidate(
+  vector: readonly number[],
+  candidates: readonly StoredVector[],
+): { storyId: string; similarity: number } | null {
   let bestId: string | null = null;
   let best = -Infinity;
   for (const candidate of candidates) {
@@ -68,7 +98,7 @@ export function bestMatch(
       bestId = candidate.storyId;
     }
   }
-  return best >= threshold ? bestId : null;
+  return bestId === null ? null : { storyId: bestId, similarity: best };
 }
 
 const refKey = (ref: RawItemRef): string => `${ref.source}:${ref.externalId}`;
@@ -98,6 +128,18 @@ export async function resolve(
     return p;
   };
 
+  // The entity-relaxed band's knobs (see ResolveOptions). The floor never sits
+  // above the strict bar, so a stricter-than-default candidateThreshold config
+  // cannot accidentally widen the relaxed band.
+  const relaxedBar = Math.min(
+    opts.relaxedThreshold ?? DEFAULT_RELAXED_THRESHOLD,
+    opts.candidateThreshold,
+  );
+  const relaxedMinShared = opts.relaxedMinSharedEntities ?? DEFAULT_RELAXED_MIN_SHARED;
+
+  // Confirm-veto counters — cheap precision evidence for the matching bands.
+  const confirms = { accepted: 0, vetoed: 0 };
+
   // Resolve each Cluster independently and concurrently — this pass only READS
   // the store (writes happen later in the upsert loop), so bounded-parallel
   // matching is safe and keeps a tick's wall-time under the interval (ADR-0038).
@@ -109,31 +151,48 @@ export async function resolve(
       const vector = vectorByItem.get(refKey(rep)) ?? [];
 
       const candidates = await candidatesFor(cluster.topic);
-      const matchId = bestMatch(vector, candidates, opts.candidateThreshold);
+      const closest = closestCandidate(vector, candidates);
 
-      if (matchId) {
-        const existing = await deps.storyRepo.get(matchId);
-        const confirmed =
+      if (closest && closest.similarity >= relaxedBar) {
+        const existing = await deps.storyRepo.get(closest.storyId);
+        // Below the strict bar the cosine alone isn't trusted: demand shared
+        // named entities/figures with the stored Story before spending a confirm.
+        const escalate =
           existing !== null &&
-          (await deps.llm.confirmSameStory(
+          (closest.similarity >= opts.candidateThreshold ||
+            sharedEntityCount(
+              extractEntities(dedupText(rep)),
+              extractEntities(`${existing.title} ${existing.summary ?? ''}`),
+            ) >= relaxedMinShared);
+        if (existing && escalate) {
+          // Give the confirm the stored Story's summary as its body snippet —
+          // title-only comparisons veto legitimate cross-outlet matches.
+          const confirmed = await deps.llm.confirmSameStory(
             { title: rep.title, text: rep.text },
-            { title: existing.title, text: null },
-          ));
-        if (existing && confirmed) {
-          const priorItems = await loadItems(existing.memberRefs, deps.rawItemRepo);
-          // Keep the accreting Story's own Topic so it doesn't flap tick-to-tick
-          // when a later member was classified differently (ADR-0038).
-          return {
-            id: matchId,
-            cluster: { topic: existing.topic, items: mergeItems(cluster.items, priorItems) },
-            vector,
-          };
+            { title: existing.title, text: existing.summary },
+          );
+          if (confirmed) {
+            confirms.accepted += 1;
+            const priorItems = await loadItems(existing.memberRefs, deps.rawItemRepo);
+            // Keep the accreting Story's own Topic so it doesn't flap tick-to-tick
+            // when a later member was classified differently (ADR-0038).
+            return {
+              id: closest.storyId,
+              cluster: { topic: existing.topic, items: mergeItems(cluster.items, priorItems) },
+              vector,
+            };
+          }
+          confirms.vetoed += 1;
         }
       }
 
       return { id: storyIdOf(cluster), cluster, vector };
     },
   );
+
+  if (confirms.accepted + confirms.vetoed > 0) {
+    console.log(`[dedup] resolve confirmed=${confirms.accepted} vetoed=${confirms.vetoed}`);
+  }
 
   // Two distinct Clusters can resolve to the SAME Story id (both matched one
   // prior Story, or two fresh clusters share a representative). The upsert loop

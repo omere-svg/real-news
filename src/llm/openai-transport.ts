@@ -10,6 +10,13 @@ import type {
 } from './chat-transport.js';
 import { withRetry } from './retry.js';
 
+/** One completion's token usage, reported per call for accounting (TokenLedger). */
+export interface TokenUsageReport {
+  readonly tier: CompletionOptions['tier'];
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+}
+
 export interface OpenAITransportDeps {
   /** Cheap high-volume tier (ADR-0006/0012), e.g. gpt-4o-mini. */
   readonly cheapModel: string;
@@ -17,6 +24,12 @@ export interface OpenAITransportDeps {
   readonly deepModel: string;
   /** Injectable for testing; defaults to a real client reading OPENAI_API_KEY. */
   readonly client?: OpenAI;
+  /**
+   * Fires once per completion with the provider-reported token usage, so the
+   * composition root can account spend without this transport knowing about
+   * ledgers. Must not throw; omitted ⇒ no accounting.
+   */
+  readonly onUsage?: (usage: TokenUsageReport) => void;
 }
 
 /**
@@ -42,6 +55,17 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
     return tier === 'deep' ? this.deps.deepModel : this.deps.cheapModel;
   }
 
+  /** Report the completion's token usage to the accounting seam (when wired). */
+  private reportUsage(tier: CompletionOptions['tier'], res: OpenAI.ChatCompletion): void {
+    const u = res.usage;
+    if (!u || !this.deps.onUsage) return;
+    this.deps.onUsage({
+      tier,
+      promptTokens: u.prompt_tokens ?? 0,
+      completionTokens: u.completion_tokens ?? 0,
+    });
+  }
+
   async complete(prompt: string, opts: CompletionOptions): Promise<string> {
     // Retry transient API blips before the caller degrades the tick (ADR-0047).
     const res = await withRetry(() =>
@@ -52,6 +76,7 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
         messages: [{ role: 'user', content: prompt }],
       }),
     );
+    this.reportUsage(opts.tier, res);
     return (res.choices[0]?.message?.content ?? '').trim();
   }
 
@@ -65,6 +90,7 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
         messages: [{ role: 'user', content: prompt }],
       }),
     );
+    this.reportUsage(opts.tier, res);
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error('openai: empty response');
     return JSON.parse(content);
@@ -92,6 +118,7 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
           : {}),
       }),
     );
+    this.reportUsage(opts.tier, res);
     const msg = res.choices[0]?.message;
     return {
       text: msg?.content?.trim() || null,

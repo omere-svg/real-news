@@ -49,4 +49,20 @@ export class DrizzleUsageRepo implements UsageRepo {
       .where(and(eq(usage.key, key), eq(usage.day, day)));
     return rows[0]?.count ?? 0;
   }
+
+  /**
+   * Atomically add `amount` to `(key, day)` — the token-accounting counters
+   * (`global:tokens:<tier>`), which grow by hundreds per completion rather than
+   * by 1 per request. Not on `UsageRepo`: quota call sites only ever charge 1.
+   */
+  async add(key: string, day: string, amount: number): Promise<void> {
+    if (amount <= 0) return;
+    await this.db
+      .insert(usage)
+      .values({ key, day, count: amount })
+      .onConflictDoUpdate({
+        target: [usage.key, usage.day],
+        set: { count: sql`${usage.count} + ${amount}` },
+      });
+  }
 }

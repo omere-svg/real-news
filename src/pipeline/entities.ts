@@ -27,6 +27,17 @@ export function extractEntities(text: string): Set<string> {
   for (const m of proper) {
     const norm = m.toLowerCase().trim();
     if (norm.length >= 3 && !STOPWORDS.has(norm)) out.add(norm);
+    // Also index each constituent word: cross-outlet phrasings rarely agree on
+    // phrase boundaries ("Western Venezuela" vs "Venezuela", or a Title-Case
+    // headline that greedily matches as ONE long phrase), and a phrase-only set
+    // then shares nothing. Recall is what matters here — the Reasoner confirm
+    // stays the precision guard (ADR-0036).
+    const words = norm.split(/\s+/);
+    if (words.length > 1) {
+      for (const w of words) {
+        if (w.length >= 3 && !STOPWORDS.has(w)) out.add(w);
+      }
+    }
   }
 
   // Short all-caps acronyms (AI, WHO, SEC, NASA, GLM).
@@ -34,6 +45,17 @@ export function extractEntities(text: string): Set<string> {
   for (const m of acronyms) {
     const norm = m.toLowerCase();
     if (!STOPWORDS.has(norm)) out.add(norm);
+  }
+
+  // Salient numbers — death tolls ("3,500"), magnitudes ("7.1"), quantities.
+  // Two outlets phrasing one event differently still quote the same figures, so
+  // a shared number is a strong same-event signal. Bare years and small counts
+  // are too ubiquitous to discriminate, so they are skipped.
+  const numbers = text.match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
+  for (const m of numbers) {
+    const norm = m.replace(/,/g, '').replace(/\.$/, '');
+    if (/^(19|20)\d{2}$/.test(norm)) continue; // a bare year
+    if (norm.includes('.') || Number(norm) >= 100) out.add(norm);
   }
 
   return out;

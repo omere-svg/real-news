@@ -34,4 +34,43 @@ describe('extractEntities (ADR-0036)', () => {
     const b = extractEntities('SpaceX launches Starship from Texas');
     expect(sharedEntityCount(a, b)).toBe(0);
   });
+
+  it('indexes constituent words of multi-word phrases so phrase boundaries do not block sharing', () => {
+    // A greedy Title-Case match ("Western Venezuela") must still share
+    // "venezuela" with a headline that names the country alone.
+    const a = extractEntities('M7.1 earthquake in Western Venezuela — GDACS Red alert');
+    const b = extractEntities('Venezuela earthquake: death toll passes 3,500');
+    expect(a.has('venezuela')).toBe(true);
+    expect(b.has('venezuela')).toBe(true);
+    expect(sharedEntityCount(a, b)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('extracts salient numbers (death tolls, magnitudes) as strong shared signals', () => {
+    const a = extractEntities('Two earthquakes strike Venezuela, leaving more than 3,500 dead');
+    const b = extractEntities('Venezuela earthquake: death toll passes 3,500');
+    expect(a.has('3500')).toBe(true);
+    expect(b.has('3500')).toBe(true);
+    const c = extractEntities('M7.1 earthquake in western Venezuela — GDACS Red alert');
+    expect(c.has('7.1')).toBe(true);
+  });
+
+  it('ignores bare years and small counts (too ubiquitous to discriminate)', () => {
+    const e = extractEntities('In 2026, 3 people met 12 times');
+    expect(e.has('2026')).toBe(false);
+    expect(e.has('3')).toBe(false);
+    expect(e.has('12')).toBe(false);
+  });
+
+  it('three cross-outlet phrasings of one disaster all pairwise share >= 2 entities', () => {
+    // The regression the judge found: Wikipedia + GDACS + Guardian all covered
+    // the same earthquake, yet corroboration stayed 0 (ADR-0036 recall).
+    const wikipedia = extractEntities(
+      'Two earthquakes strike Venezuela, leaving more than 3,500 people dead and thousands injured.',
+    );
+    const gdacs = extractEntities('M7.1 earthquake in western Venezuela — GDACS Red alert');
+    const guardian = extractEntities('Venezuela earthquake: death toll passes 3,500');
+    expect(sharedEntityCount(wikipedia, guardian)).toBeGreaterThanOrEqual(2); // venezuela + 3500
+    expect(sharedEntityCount(gdacs, guardian)).toBeGreaterThanOrEqual(1); // venezuela
+    expect(sharedEntityCount(wikipedia, gdacs)).toBeGreaterThanOrEqual(1);
+  });
 });

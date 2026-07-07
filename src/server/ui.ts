@@ -838,6 +838,7 @@ export function renderDashboard(
   <div class="stat"><b id="stMulti">–</b><span>multi-source stories</span></div>
   <div class="stat"><b id="stSignals">–</b><span>signal observations</span></div>
   <div class="stat"><b id="stDays">–</b><span>days of signal history</span></div>
+  <div class="stat"><b id="stTokens">–</b><span>LLM tokens today</span></div>
   <div class="stats-note" id="statsNote"></div>
 </section>
 <main>
@@ -862,7 +863,9 @@ export function renderDashboard(
     set('stMulti', s.multiSourceStories);
     set('stSignals', s.signalObservations);
     set('stDays', s.oldestSignalAt ? Math.max(1, Math.ceil((Date.now() - s.oldestSignalAt) / 86400000)) : 0);
-    const tail = s.storiesUpdatedAcrossTicks + ' stories updated across ticks · ' + s.ticksRecorded + ' recent ticks recorded';
+    set('stTokens', s.tokens ? s.tokens.total.toLocaleString() : 0);
+    const tail = s.storiesUpdatedAcrossTicks + ' stories updated across ticks · ' + s.ticksRecorded + ' recent ticks recorded'
+      + (s.tokens ? ' · tokens today: cheap ' + s.tokens.cheap.toLocaleString() + ' / deep ' + s.tokens.deep.toLocaleString() : '');
     set('statsNote', (s.oldestSignalAt ? 'Accumulated since ' + new Date(s.oldestSignalAt).toLocaleDateString() + ' · ' : '') + tail);
     document.getElementById('stats').hidden = false;
   } catch (e) { /* stats strip is optional */ }

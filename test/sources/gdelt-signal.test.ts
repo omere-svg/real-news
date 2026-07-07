@@ -50,6 +50,22 @@ describe('GdeltSignalSource (ADR-0041)', () => {
     await expect(source.observe()).resolves.toEqual([]);
   });
 
+  it('retries once after a 429 so a shared-host collision does not lose the tick signal', async () => {
+    let calls = 0;
+    const source = new GdeltSignalSource({
+      fetchJson: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('GET https://api.gdeltproject.org/... failed: 429 Too Many Requests');
+        return TIMELINE;
+      },
+      maxItems: 1,
+      retryDelayMs: 1,
+    });
+    const obs = await source.observe();
+    expect(calls).toBe(2);
+    expect(obs).toHaveLength(1);
+  });
+
   it('makes no health-check probe (one request per tick, ADR-0039/0041)', async () => {
     let calls = 0;
     const source = new GdeltSignalSource({

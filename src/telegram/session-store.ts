@@ -1,5 +1,6 @@
 import type { ConversationTurn } from '../llm/llm-client.js';
 import type { ChatSessionRepo } from '../db/chat-session-repo.js';
+import { ConsoleLogger, type Logger } from '../log/logger.js';
 
 /**
  * Per-chat conversational state (ADR-0028/0029), held in memory. `idle` is the
@@ -33,6 +34,8 @@ export class SessionStore {
     private readonly maxHistory: number = MAX_HISTORY_TURNS,
     /** Durable backing (ADR-0053): sessions survive restarts when wired. */
     private readonly repo?: ChatSessionRepo,
+    /** Structured log sink; the composition root injects the shared one. */
+    private readonly log: Logger = new ConsoleLogger(),
   ) {}
 
   /** The session for a chat, created idle on first contact; touches `lastSeen`. */
@@ -74,7 +77,7 @@ export class SessionStore {
     // Write-through (best-effort): the durable copy trails the hot path.
     void this.repo
       ?.put(chatId, s.history, now)
-      .catch((err) => console.warn('[telegram] session persist failed:', err));
+      .catch((err) => this.log.warn('telegram.session_persist_failed', { chatId, err }));
   }
 
   /** Whether a chat currently has a live (non-evicted) session. */

@@ -68,28 +68,61 @@ jobs:
           fi
           EOF
 
-      - name: Ship compiled dist/ to the VM
+      - name: Ship compiled dist/ to the VM (keep the previous build for rollback)
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'rm -rf ~/real-news/dist'
+          # Keep exactly one previous build as dist.prev so a failed health check
+          # below can restore the last-known-good code instead of leaving the box dead.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
+          set -euo pipefail
+          cd ~/real-news
+          rm -rf dist.prev
+          if [ -d dist ]; then mv dist dist.prev; fi
+          EOF
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r dist "opc@${{ secrets.DEPLOY_HOST }}:~/real-news/"
 
-      - name: Restart service + health check
+      - name: Restart service + health check (rollback on failure)
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
           set -euo pipefail
+
+          wait_healthy() {
+            for i in $(seq 1 24); do
+              if curl -fsS -m 5 http://127.0.0.1:3000/health >/dev/null 2>&1; then
+                echo "health OK after $((i*3))s"
+                return 0
+              fi
+              sleep 3
+            done
+            return 1
+          }
+
           # Restart applies any pending DB migrations on boot (main.ts calls migrate()).
           sudo systemctl restart horizon
           # Wait for boot + migrations + server to come up (slow 1-core box); fail the
           # deploy only if it never becomes healthy within the window.
-          for i in $(seq 1 24); do
-            if curl -fsS -m 5 http://127.0.0.1:3000/health >/dev/null 2>&1; then
-              echo "health OK after $((i*3))s"
-              exit 0
-            fi
-            sleep 3
-          done
+          if wait_healthy; then
+            exit 0
+          fi
+
           echo "service did not become healthy in time; recent logs:"
           sudo journalctl -u horizon --no-pager -n 40 --output=cat
-          sudo systemctl is-active horizon
+          sudo systemctl is-active horizon || true
+
+          # Roll back to the previous build so a bad deploy never leaves the box dead.
+          # Note: any DB migrations the new build applied on boot are NOT reverted.
+          if [ -d ~/real-news/dist.prev ]; then
+            echo "ROLLBACK: restoring previous dist and restarting"
+            rm -rf ~/real-news/dist
+            mv ~/real-news/dist.prev ~/real-news/dist
+            sudo systemctl restart horizon
+            if wait_healthy; then
+              echo "ROLLBACK SUCCEEDED: previous build is serving again (deploy still failed)"
+            else
+              echo "ROLLBACK FAILED: previous build did not become healthy either; recent logs:"
+              sudo journalctl -u horizon --no-pager -n 40 --output=cat
+            fi
+          else
+            echo "no dist.prev present — nothing to roll back to"
+          fi
           exit 1
           EOF

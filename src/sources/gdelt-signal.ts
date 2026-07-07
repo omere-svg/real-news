@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { gdeltFetch } from './gdelt.js';
 import type { SignalSource } from './signal-source.js';
 import type { JsonFetcher } from './http.js';
 import type { SignalObservation } from '../domain/types.js';
@@ -34,6 +35,8 @@ export interface GdeltSignalDeps {
   /** Timespan window for the tone average (GDELT syntax, e.g. `1d`). */
   readonly timespan?: string;
   readonly timeoutMs?: number;
+  /** Delay before the single 429/transient retry; injectable for tests. */
+  readonly retryDelayMs?: number;
 }
 
 /**
@@ -69,10 +72,16 @@ export class GdeltSignalSource implements SignalSource {
 
   async observe(): Promise<SignalObservation[]> {
     const now = Date.now();
+    // Same single-retry-on-429/transient policy as the story adapter: both hit
+    // api.gdeltproject.org through the shared per-host limiter, but a marginal
+    // request can still trip GDELT's server-side window (see gdeltFetch).
     const parsed = responseSchema.parse(
-      await this.deps.fetchJson(this.url(), {
-        timeoutMs: this.deps.timeoutMs ?? GDELT_TIMEOUT_MS,
-      }),
+      await gdeltFetch(
+        this.deps.fetchJson,
+        this.url(),
+        { timeoutMs: this.deps.timeoutMs ?? GDELT_TIMEOUT_MS },
+        this.deps.retryDelayMs,
+      ),
     );
 
     const points = parsed.timeline?.[0]?.data ?? [];

@@ -1,10 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  BotApiTransport,
   toInlineKeyboard,
   toUpdates,
   maxUpdateId,
   splitForTelegram,
 } from '../../src/telegram/bot-api-transport.js';
+
+/** A fake fetch returning a canned JSON payload, capturing every request. */
+function fakeFetch(payload: unknown = { ok: true, result: [] }) {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify(payload), { status: 200 });
+  });
+  return { impl: impl as unknown as typeof fetch, calls };
+}
 
 describe('splitForTelegram', () => {
   it('keeps a short message as a single chunk', () => {
@@ -104,5 +115,54 @@ describe('maxUpdateId (ADR-0051)', () => {
   it('is null on an empty or malformed batch', () => {
     expect(maxUpdateId({ result: [] })).toBeNull();
     expect(maxUpdateId({})).toBeNull();
+  });
+});
+
+describe('BotApiTransport (fetch contract)', () => {
+  it('getUpdates long-polls with the offset, timeout, and an abort signal outlasting the server wait', async () => {
+    const { impl, calls } = fakeFetch({
+      ok: true,
+      result: [{ update_id: 41, message: { chat: { id: 5 }, text: 'hi' } }],
+    });
+    const t = new BotApiTransport({ token: 'TOK', fetchImpl: impl });
+
+    const batch = await t.getUpdates(42, 30);
+
+    expect(calls[0]?.url).toBe('https://api.telegram.org/botTOK/getUpdates');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      offset: 42,
+      timeout: 30,
+      allowed_updates: ['message', 'callback_query'],
+    });
+    // The client abort must outlast the 30s server-side hold, or every quiet
+    // long-poll would abort early.
+    expect(calls[0]?.init.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[0]?.init.signal?.aborted).toBe(false);
+    expect(batch).toEqual({
+      updates: [{ updateId: 41, chatId: 5, text: 'hi' }],
+      ackOffset: 42,
+    });
+  });
+
+  it('sendMessage posts the chat id and text as JSON, attaching buttons as an inline keyboard', async () => {
+    const { impl, calls } = fakeFetch();
+    const t = new BotApiTransport({ token: 'TOK', fetchImpl: impl });
+
+    await t.sendMessage(7, 'hello', { buttons: [{ text: 'A', data: 'a' }] });
+
+    expect(calls[0]?.url).toBe('https://api.telegram.org/botTOK/sendMessage');
+    expect(calls[0]?.init.method).toBe('POST');
+    expect(new Headers(calls[0]?.init.headers).get('content-type')).toBe('application/json');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      chat_id: 7,
+      text: 'hello',
+      reply_markup: { inline_keyboard: [[{ text: 'A', callback_data: 'a' }]] },
+    });
+  });
+
+  it('throws on a non-OK response, naming the failing method and status', async () => {
+    const impl = (async () => new Response('nope', { status: 403 })) as unknown as typeof fetch;
+    const t = new BotApiTransport({ token: 'TOK', fetchImpl: impl });
+    await expect(t.sendMessage(7, 'hello')).rejects.toThrow('telegram sendMessage 403');
   });
 });

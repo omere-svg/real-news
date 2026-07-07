@@ -11,7 +11,7 @@ import { openDb } from './db/client.js';
 import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
-import { DrizzleTickReportRepo, lockSkipRecord } from './db/tick-report-repo.js';
+import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
 import type { TickRecord } from './db/tick-report-repo.js';
 import { DrizzleSignalObservationRepo, type SignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
@@ -47,6 +47,7 @@ import type { SignalSource } from './sources/signal-source.js';
 import type { JsonFetcher } from './sources/http.js';
 import { Reasoner } from './llm/reasoner.js';
 import { OpenAITransport } from './llm/openai-transport.js';
+import { TokenLedger } from './llm/token-ledger.js';
 import type { ToolCapableTransport } from './llm/chat-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import type { LLMClient } from './llm/llm-client.js';
@@ -55,6 +56,8 @@ import { OpenAIEmbedder } from './embedding/openai-embedder.js';
 import { ResilientEmbedder } from './embedding/resilient-embedder.js';
 import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
+import { TickLoop } from './scheduler/tick-loop.js';
+import { ConsoleLogger, type Logger } from './log/logger.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
 import { screenReflectionActions } from './pipeline/reflection-policy.js';
@@ -205,6 +208,9 @@ function buildSignalSources(config: Config, fetchJson: JsonFetcher): SignalSourc
     .map((s) => buildSignalSource(s.id as SignalSourceId, s, fetchJson));
 }
 
+/** The structured log sink (src/log/logger.ts) — the only console writer. */
+const log: Logger = new ConsoleLogger();
+
 async function main(): Promise<void> {
   const config = loadConfig(CONFIG_PATH);
 
@@ -226,7 +232,7 @@ async function main(): Promise<void> {
     try {
       chmodSync(DB_URL.slice('file:'.length), 0o600);
     } catch (err) {
-      console.warn('[horizon] could not chmod the DB file:', err);
+      log.warn('main.db_chmod_failed', { err });
     }
   }
 
@@ -243,11 +249,23 @@ async function main(): Promise<void> {
   const chatPrefs = new DrizzleChatPreferencesRepo(db);
   const webAuth = new DrizzleWebAuthRepo(db);
 
+  // One usage store shared by the web podcast cap, the bot's quotas, and the
+  // token ledger, so every durable daily counter lives in one table (ADR-0052).
+  const usage = new DrizzleUsageRepo(db);
+  // Token accounting: every completion reports its usage; the ledger keeps
+  // in-memory daily totals and persists durable per-tier counters via `usage`.
+  const tokenLedger = new TokenLedger({
+    now: () => systemClock.now(),
+    store: usage,
+    onError: (err) => log.error('tokens.persist_failed', { err }),
+  });
+
   // One provider transport, shared by the slot-filling Reasoner and the chat
   // agent's tool loop (ADR-0053) — same models, same retry discipline.
   const openaiTransport = new OpenAITransport({
     cheapModel: config.reasoner.cheapModel,
     deepModel: config.reasoner.deepModel,
+    onUsage: (u) => tokenLedger.record(u),
   });
   const llm = new ResilientLLMClient(new Reasoner(openaiTransport));
 
@@ -282,21 +300,18 @@ async function main(): Promise<void> {
     config: toTickConfig(config),
   });
 
-  // Best-effort persist of a tick outcome (ADR-0033); a failed write never breaks the loop.
-  const recordTick = (rec: Parameters<typeof tickReportRepo.record>[0]): void => {
-    void tickReportRepo.record(rec).catch((err) => console.error('[tick] record failed:', err));
-  };
-
   const retention = config.retention;
   if (retention.signalHistoryDays === 0) {
-    console.warn(
-      '[retention] signalHistoryDays=0 keeps every Signal observation forever — ' +
-        'signal_observations will grow unbounded. Set a positive window to prune (ADR-0047).',
-    );
+    log.warn('retention.signal_history_unbounded', {
+      hint: 'signalHistoryDays=0 keeps every Signal observation forever; set a positive window to prune (ADR-0047)',
+    });
   }
 
   // History retention + the LLM reflection advisory (ADR-0042). Best-effort:
-  // an advisory/prune failure must never break the loop.
+  // an advisory/prune failure must never break the loop. `tickLoop` is assigned
+  // below, before the first tick can ever invoke `maintain`.
+  // eslint-disable-next-line prefer-const -- assigned exactly once below; declared early so `maintain` can close over it
+  let tickLoop: TickLoop;
   let tickCount = 0;
   const maintain = async (): Promise<void> => {
     tickCount += 1;
@@ -320,20 +335,21 @@ async function main(): Promise<void> {
         maxBackoffTicks: 10,
       });
       for (const b of accepted.backoffs) {
-        backoff.force(b.source, tickIndex + 1, b.ticks);
-        console.log(`[reflect] action: backing off ${b.source} for ${b.ticks} ticks — ${b.reason}`);
+        backoff.force(b.source, tickLoop.tickIndex() + 1, b.ticks);
+        log.info('reflect.backoff_forced', { source: b.source, ticks: b.ticks, reason: b.reason });
       }
       if (accepted.deepAnalysisTopN) {
         await agentPolicyRepo.set(
           { deepAnalysisTopN: accepted.deepAnalysisTopN.value, reason: accepted.deepAnalysisTopN.reason },
           systemClock.now(),
         );
-        console.log(
-          `[reflect] action: deepAnalysisTopN → ${accepted.deepAnalysisTopN.value} — ${accepted.deepAnalysisTopN.reason}`,
-        );
+        log.info('reflect.deep_analysis_top_n', {
+          value: accepted.deepAnalysisTopN.value,
+          reason: accepted.deepAnalysisTopN.reason,
+        });
       }
       for (const r of accepted.rejected) {
-        console.warn(`[reflect] rejected proposed action (${r.why}):`, r.action);
+        log.warn('reflect.action_rejected', { why: r.why, action: r.action });
       }
       const text = reflection.advisory.trim();
       if (text) {
@@ -357,7 +373,7 @@ async function main(): Promise<void> {
         if (retention.reflections > 0) {
           await tickReflectionRepo.pruneToRecent(retention.reflections);
         }
-        console.log(`[reflect] advisory written over ${recent.length} ticks.`);
+        log.info('reflect.advisory_written', { ticksCovered: recent.length });
       }
     }
   };
@@ -381,16 +397,16 @@ async function main(): Promise<void> {
       storySourceIds,
     );
     const active = backoff.activeBackoffs(tickIndex);
-    if (active.size) console.log(`[backoff] rehydrated from history; cooling down: [${[...active]}]`);
+    if (active.size) log.info('backoff.rehydrated', { coolingDown: [...active] });
   } catch (err) {
-    console.error('[backoff] seed from tick history failed (starting fresh):', err);
+    log.error('backoff.seed_failed', { err, note: 'starting fresh' });
   }
 
   // Release the advisory lock on shutdown (ADR-0048). systemd restarts (every
   // deploy) land mid-tick about half the time; without this the dying process
   // leaves a stale lease that stalls ticking for up to lock.ttlMinutes.
   const shutdown = (signal: string): void => {
-    console.log(`[main] ${signal} — releasing tick lock and exiting`);
+    log.info('main.shutdown', { signal, action: 'releasing tick lock and exiting' });
     void (async () => {
       if (lockEnabled) await tickLock.release().catch(() => undefined);
       process.exit(0);
@@ -399,132 +415,68 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
 
-  // Serialize the pipeline: the boot backfill and every tick share one queue, so
-  // they never overlap and contend for the model / race the store (ADR-0047).
-  let pipelineChain: Promise<unknown> = Promise.resolve();
-  const runExclusive = <T>(fn: () => Promise<T>): Promise<T> => {
-    const result = pipelineChain.then(fn, fn);
-    pipelineChain = result.catch(() => undefined);
-    return result;
-  };
-
-  const tickBody = async (): Promise<void> => {
-    if (lockEnabled && !(await tickLock.acquire(systemClock.now(), lockTtlMs))) {
-      console.warn('[tick] another process holds the tick lock — skipping this interval');
-      // Make the skip visible in tick_reports (ADR-0048): a remote observer must
-      // be able to tell "skipped by lock" from "process dead".
-      recordTick(lockSkipRecord(systemClock.now()));
-      return;
-    }
-    const ranAt = systemClock.now();
-    // Observe→adapt (ADR-0052): skip Sources currently cooling down after repeated
-    // failures, so a known-bad, rate-limited feed (e.g. GDELT 429) doesn't waste a
-    // fetch this tick. They auto-retry when the cooldown lapses.
-    const backedOff = backoff.activeBackoffs(tickIndex);
-    if (backedOff.size) console.log(`[backoff] skipping cooling-down sources: [${[...backedOff]}]`);
-    // The persisted reflection policy (ADR-0053): a screened override the last
-    // reflection imposed — read fresh each tick so it survives restarts.
-    const policy = await agentPolicyRepo.get().catch(() => null);
-    try {
-      const report = await runner.run({
-        skipSources: backedOff,
-        ...(policy?.deepAnalysisTopN ? { deepAnalysisTopN: policy.deepAnalysisTopN } : {}),
-      });
-      recordTick({ ...report, ranAt, durationMs: systemClock.now() - ranAt, ok: true, error: null });
-      // Feed the outcome back into the loop: sources attempted this tick that
-      // failed or were health-skipped advance toward backoff; successes reset.
-      const attempted = storySourceIds.filter((id) => !backedOff.has(id));
-      const bad = [...report.skipped, ...report.failed.map((f) => f.source)];
-      const newly = backoff.record(tickIndex, attempted, bad);
-      if (newly.length) console.log(`[backoff] backing off after repeated failures: [${newly}]`);
-      console.log(
-        `[tick] extracted=${report.extracted} stories=${report.storiesUpserted} ` +
-          `signals=${report.signalsObserved} ` +
-          `skipped=[${report.skipped}] failed=[${report.failed.map((f) => f.source)}]`,
-      );
-      // Steady-state healing (ADR-0038): deep-analyze a few cached Stories still
-      // missing a summary / whyItMatters, so the whole cache converges over time.
-      if (config.reasoner.backfillPerTick > 0) {
-        await backfillSummaries(
-          { storyRepo, rawItemRepo, llm },
-          {
-            max: config.reasoner.backfillPerTick,
-            concurrency: config.dedup.confirmConcurrency,
+  // The scheduler around TickRunner (extracted + tested, src/scheduler/tick-loop.ts):
+  // lock/skip-record semantics, re-entrancy guard, the exclusive pipeline queue,
+  // the backoff feed, the per-tick policy read, and maintain-always-runs.
+  tickLoop = new TickLoop({
+    runner,
+    lock: tickLock,
+    lockEnabled,
+    lockTtlMs,
+    clock: systemClock,
+    reports: tickReportRepo,
+    backoff,
+    sourceIds: storySourceIds,
+    policy: agentPolicyRepo,
+    maintain,
+    // Steady-state healing (ADR-0038): deep-analyze a few cached Stories still
+    // missing a summary / whyItMatters, so the whole cache converges over time.
+    ...(config.reasoner.backfillPerTick > 0
+      ? {
+          afterTick: async (): Promise<void> => {
+            await backfillSummaries(
+              { storyRepo, rawItemRepo, llm },
+              {
+                max: config.reasoner.backfillPerTick,
+                concurrency: config.dedup.confirmConcurrency,
+              },
+            ).catch((err) => log.error('backfill.per_tick_failed', { err }));
           },
-        ).catch((err) => console.error('[backfill] per-tick failed:', err));
-      }
-    } catch (err) {
-      // Record the failed tick too (ADR-0033), then keep the loop alive.
-      recordTick({
-        ranAt,
-        durationMs: systemClock.now() - ranAt,
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        extracted: 0,
-        storiesUpserted: 0,
-        signalsObserved: 0,
-        skipped: [],
-        failed: [],
-        signalsSkipped: [],
-        signalsFailed: [],
-      });
-      console.error('[tick] failed:', err); // never let a bad tick kill the loop
-    } finally {
-      // Retention + reflection run whether or not the tick itself succeeded, so a
-      // failing tick is still counted, pruned, and reflected on (ADR-0042).
-      await maintain().catch((err) => console.error('[maintain] failed:', err));
-      if (lockEnabled) await tickLock.release().catch((err) => console.error('[tick] lock release failed:', err));
-      tickIndex += 1; // advance the backoff clock once per attempted (non-lock-skipped) tick
-    }
-  };
-
-  // A tick can take longer than the interval; without this guard setInterval
-  // would start a second tick over the first and race the same DB (ADR-0038).
-  let ticking = false;
-  const runTick = async (): Promise<void> => {
-    if (ticking) {
-      console.warn('[tick] previous tick still running — skipping this interval');
-      return;
-    }
-    ticking = true;
-    try {
-      await runExclusive(tickBody);
-    } finally {
-      ticking = false;
-    }
-  };
+        }
+      : {}),
+    log,
+    initialTickIndex: tickIndex,
+  });
 
   // First tick on boot, then every X minutes (ADR-0001).
-  void runTick();
-  setInterval(() => void runTick(), config.tickIntervalMinutes * 60_000);
+  tickLoop.start(config.tickIntervalMinutes * 60_000);
 
   // Self-heal cached Stories that lack a factual summary (e.g. created before the
   // field existed, or never top-N) — in the background, most-significant first, so
   // the brief fixes itself after a restart without a manual backfill (ADR-0006).
   // Serialized with ticks (runExclusive) so the two never contend (ADR-0047).
   if (config.reasoner.backfillOnBoot) {
-    void runExclusive(() =>
-      backfillSummaries(
-        { storyRepo, rawItemRepo, llm },
-        {
-          max: config.reasoner.backfillMaxOnBoot,
-          concurrency: config.dedup.confirmConcurrency,
-          onProgress: (done, total) => {
-            if (done === 1) console.log(`[backfill] healing ${total} stories missing a summary…`);
-            if (done === total) console.log(`[backfill] done: ${total} stories updated.`);
+    void tickLoop
+      .runExclusive(() =>
+        backfillSummaries(
+          { storyRepo, rawItemRepo, llm },
+          {
+            max: config.reasoner.backfillMaxOnBoot,
+            concurrency: config.dedup.confirmConcurrency,
+            onProgress: (done, total) => {
+              if (done === 1) log.info('backfill.start', { total });
+              if (done === total) log.info('backfill.done', { total });
+            },
           },
-        },
-      ),
-    ).catch((err) => console.error('[backfill] failed:', err));
+        ),
+      )
+      .catch((err) => log.error('backfill.failed', { err }));
   }
 
   const defaults = toPresentationDefaults(config);
   // Bot username (no `@`) powers the one-tap `t.me/<bot>?start=…` deep link on
   // the web login. Optional: without it the web shows the pairing code to type.
   const botUsername = process.env.TELEGRAM_BOT_USERNAME;
-  // One usage store shared by the web podcast cap and the bot's quotas, so both
-  // surfaces draw down the SAME daily podcast budget (ADR-0052).
-  const usage = new DrizzleUsageRepo(db);
   const app = createApp(
     storyRepo,
     queryEngine,
@@ -553,7 +505,7 @@ async function main(): Promise<void> {
     chatTraceRepo,
   );
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
-  console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
+  log.info('main.viewer_up', { url: `http://${HOST}:${PORT}`, tickEveryMinutes: config.tickIntervalMinutes });
 
   if (config.telegram.enabled) {
     startTelegramBot(
@@ -584,7 +536,9 @@ function buildWebSearch(config: Config): WebSearch | null {
   if (ws.provider !== 'tavily') return null;
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {
-    console.warn('[telegram] chat.webSearch=tavily but TAVILY_API_KEY is missing — staying cache-only.');
+    log.warn('telegram.web_search_unkeyed', {
+      hint: 'chat.webSearch=tavily but TAVILY_API_KEY is missing — staying cache-only',
+    });
     return null;
   }
   return new ResilientWebSearch(
@@ -615,16 +569,15 @@ function startTelegramBot(
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
-    console.warn('[telegram] enabled but TELEGRAM_BOT_TOKEN is missing — skipping.');
+    log.warn('telegram.token_missing', { hint: 'telegram.enabled but TELEGRAM_BOT_TOKEN is missing — skipping' });
     return;
   }
 
   const tg = config.telegram;
   if (tg.allowedChatIds.length === 0 && !tg.openAccess) {
-    console.warn(
-      '[telegram] no allowedChatIds and openAccess=false — the bot will ignore ALL chats. ' +
-        'Add your chat id to telegram.allowedChatIds (ADR-0022).',
-    );
+    log.warn('telegram.no_allowed_chats', {
+      hint: 'no allowedChatIds and openAccess=false — the bot will ignore ALL chats; add your chat id to telegram.allowedChatIds (ADR-0022)',
+    });
   }
 
   const tts = tg.tts;
@@ -667,6 +620,7 @@ function startTelegramBot(
     defaults,
     allowedChatIds: tg.allowedChatIds,
     openAccess: tg.openAccess,
+    log,
   });
 
   const sleep = (ms: number): Promise<void> =>
@@ -678,13 +632,13 @@ function startTelegramBot(
       try {
         offset = await pollOnce(transport, bot, offset, config.telegram.pollTimeoutSeconds);
       } catch (err) {
-        console.error('[telegram] poll failed, retrying:', err); // never kill the loop
+        log.error('telegram.poll_failed', { err, action: 'retrying' }); // never kill the loop
         await sleep(2000);
       }
     }
   };
   void loop();
-  console.log('[telegram] bot polling for updates.');
+  log.info('telegram.polling');
 
   // Scheduled personalized briefs (ADR-0053): a minute-cadence check delivers
   // each subscribed chat its brief at its chosen UTC time — deterministic cache
@@ -693,13 +647,13 @@ function startTelegramBot(
     void bot
       .deliverScheduledBriefs()
       .then((sent) => {
-        if (sent > 0) console.log(`[telegram] delivered ${sent} scheduled brief(s).`);
+        if (sent > 0) log.info('telegram.scheduled_briefs_sent', { sent });
       })
-      .catch((err) => console.error('[telegram] scheduled briefs failed:', err));
+      .catch((err) => log.error('telegram.scheduled_briefs_failed', { err }));
   }, 60_000);
 }
 
 main().catch((err) => {
-  console.error('[horizon] fatal:', err);
+  log.error('main.fatal', { err });
   process.exit(1);
 });

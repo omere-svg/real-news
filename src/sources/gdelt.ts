@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { canonicalizeUrl } from './url.js';
 import type { SourceAdapter } from './source-adapter.js';
-import type { JsonFetcher } from './http.js';
+import type { FetchOptions, JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
 
 const BASE = 'https://api.gdeltproject.org/api/v2/doc/doc';
@@ -39,6 +39,47 @@ function parseSeenDate(s: string | undefined): number | null {
  */
 const GDELT_TIMEOUT_MS = 25_000;
 
+/**
+ * Wait before the single retry after a transient GDELT failure. GDELT enforces
+ * ~1 req / 5s; the shared per-host limiter (rateLimitByHost) spaces the story
+ * feed and the tone signal, but its spacing is measured client-side, so a
+ * marginal request can still land inside GDELT's server-side window and 429 —
+ * on the live tick that lost BOTH the feed and the signal. `JsonFetcher` doesn't
+ * expose response headers, so instead of honoring Retry-After we wait a fixed
+ * interval comfortably over the 5s policy. Ticks are minutes apart; +7s is cheap.
+ */
+export const GDELT_RETRY_DELAY_MS = 7_000;
+
+/**
+ * True for failures worth exactly ONE retry: GDELT's 429 rate-limit response and
+ * a transient network drop (undici's generic `fetch failed`). Anything else
+ * (404/5xx, timeouts, schema errors) surfaces immediately as a failed source.
+ */
+export function isTransientGdeltError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /failed: 429\b/.test(msg) || /\bfetch failed\b/i.test(msg);
+}
+
+/**
+ * One fetch with a single retry on a transient failure. The retry goes back
+ * through the caller's (rate-limited) fetcher, so it is re-spaced against any
+ * other in-flight GDELT call rather than piling on.
+ */
+export async function gdeltFetch(
+  fetchJson: JsonFetcher,
+  url: string,
+  options: FetchOptions,
+  retryDelayMs: number = GDELT_RETRY_DELAY_MS,
+): Promise<unknown> {
+  try {
+    return await fetchJson(url, options);
+  } catch (err) {
+    if (!isTransientGdeltError(err)) throw err;
+    await new Promise((r) => setTimeout(r, retryDelayMs));
+    return fetchJson(url, options);
+  }
+}
+
 export interface GdeltDeps {
   readonly fetchJson: JsonFetcher;
   readonly maxItems: number;
@@ -46,6 +87,8 @@ export interface GdeltDeps {
   readonly query?: string;
   /** Per-request timeout override; GDELT is slow, so default to a generous value. */
   readonly timeoutMs?: number;
+  /** Delay before the single 429/transient retry; injectable for tests. */
+  readonly retryDelayMs?: number;
 }
 
 /**
@@ -78,9 +121,12 @@ export class GdeltSource implements SourceAdapter {
 
   async extract(): Promise<RawItem[]> {
     const parsed = responseSchema.parse(
-      await this.deps.fetchJson(this.url(this.deps.maxItems), {
-        timeoutMs: this.deps.timeoutMs ?? GDELT_TIMEOUT_MS,
-      }),
+      await gdeltFetch(
+        this.deps.fetchJson,
+        this.url(this.deps.maxItems),
+        { timeoutMs: this.deps.timeoutMs ?? GDELT_TIMEOUT_MS },
+        this.deps.retryDelayMs,
+      ),
     );
     return (parsed.articles ?? [])
       .filter((a) => a.title)

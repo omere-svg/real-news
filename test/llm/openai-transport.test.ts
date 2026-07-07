@@ -3,8 +3,11 @@ import type OpenAI from 'openai';
 import { OpenAITransport } from '../../src/llm/openai-transport.js';
 
 /** A fake OpenAI client capturing the create() args and returning canned content. */
-function fakeClient(content: string | null): { client: OpenAI; create: ReturnType<typeof vi.fn> } {
-  const create = vi.fn().mockResolvedValue({ choices: [{ message: { content } }] });
+function fakeClient(
+  content: string | null,
+  usage?: { prompt_tokens: number; completion_tokens: number },
+): { client: OpenAI; create: ReturnType<typeof vi.fn> } {
+  const create = vi.fn().mockResolvedValue({ choices: [{ message: { content } }], usage });
   return { client: { chat: { completions: { create } } } as unknown as OpenAI, create };
 }
 
@@ -46,5 +49,36 @@ describe('OpenAITransport', () => {
     const { client } = fakeClient('  spaced  ');
     const t = new OpenAITransport(deps(client));
     expect(await t.complete('p', { tier: 'deep', maxTokens: 10 })).toBe('spaced');
+  });
+
+  it('reports token usage per completion via onUsage, tagged with the billed tier', async () => {
+    const { client } = fakeClient('{"ok":true}', { prompt_tokens: 120, completion_tokens: 30 });
+    const onUsage = vi.fn();
+    const t = new OpenAITransport({ ...deps(client), onUsage });
+
+    await t.complete('p', { tier: 'cheap', maxTokens: 10 });
+    await t.completeJson('p', { tier: 'deep', maxTokens: 10 });
+    await t.completeWithTools([{ role: 'user', content: 'q' }], [], { tier: 'cheap', maxTokens: 10 });
+
+    expect(onUsage.mock.calls.map(([u]) => u)).toEqual([
+      { tier: 'cheap', promptTokens: 120, completionTokens: 30 },
+      { tier: 'deep', promptTokens: 120, completionTokens: 30 },
+      { tier: 'cheap', promptTokens: 120, completionTokens: 30 },
+    ]);
+  });
+
+  it('stays silent when the response carries no usage or no onUsage is wired', async () => {
+    const onUsage = vi.fn();
+    const noUsage = fakeClient('hi'); // response without a usage block
+    await new OpenAITransport({ ...deps(noUsage.client), onUsage }).complete('p', {
+      tier: 'cheap',
+      maxTokens: 10,
+    });
+    expect(onUsage).not.toHaveBeenCalled();
+
+    const unwired = fakeClient('hi', { prompt_tokens: 1, completion_tokens: 1 });
+    await expect(
+      new OpenAITransport(deps(unwired.client)).complete('p', { tier: 'cheap', maxTokens: 10 }),
+    ).resolves.toBe('hi'); // no onUsage dep — must not throw
   });
 });

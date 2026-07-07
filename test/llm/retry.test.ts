@@ -38,4 +38,24 @@ describe('withRetry', () => {
     await expect(withRetry(fn, { attempts: 3, sleep: noSleep })).rejects.toMatchObject({ status: 429 });
     expect(fn).toHaveBeenCalledTimes(3);
   });
+
+  it('applies ±25% jitter to the exponential backoff delays', async () => {
+    const fn = vi.fn().mockRejectedValue({ status: 429 });
+    const delays: number[] = [];
+    const sleep = async (ms: number): Promise<void> => {
+      delays.push(ms);
+    };
+
+    // random()=0 → the low edge (75%); random()=1 → the high edge (125%).
+    await expect(
+      withRetry(fn, { attempts: 3, baseDelayMs: 100, sleep, random: () => 0 }),
+    ).rejects.toBeDefined();
+    expect(delays).toEqual([75, 150]); // 100·2^n · 0.75
+
+    delays.length = 0;
+    await expect(
+      withRetry(fn, { attempts: 3, baseDelayMs: 100, sleep, random: () => 1 }),
+    ).rejects.toBeDefined();
+    expect(delays).toEqual([125, 250]); // 100·2^n · 1.25
+  });
 });

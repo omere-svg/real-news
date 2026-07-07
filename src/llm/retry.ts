@@ -13,6 +13,8 @@ export interface RetryOptions {
   readonly baseDelayMs?: number;
   /** Injectable sleep for tests; defaults to a real timer. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Injectable randomness for the jitter (tests); defaults to Math.random. */
+  readonly random?: () => number;
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -36,6 +38,7 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
   const attempts = Math.max(1, opts.attempts ?? 3);
   const baseDelayMs = opts.baseDelayMs ?? 250;
   const sleep = opts.sleep ?? defaultSleep;
+  const random = opts.random ?? Math.random;
 
   let lastErr: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -46,7 +49,10 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
       // A permanent error won't get better by retrying — fail fast so the
       // resilient client degrades immediately instead of after 9 doomed calls.
       if (!isRetryable(err)) break;
-      if (attempt < attempts - 1) await sleep(baseDelayMs * 2 ** attempt);
+      // ±25% jitter de-synchronizes the tick's fan-out: a 429 hits many calls at
+      // once, and identical backoffs would re-stampede the API in lockstep.
+      const jitter = 0.75 + 0.5 * random();
+      if (attempt < attempts - 1) await sleep(baseDelayMs * 2 ** attempt * jitter);
     }
   }
   throw lastErr;

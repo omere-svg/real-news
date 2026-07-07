@@ -14,6 +14,8 @@ import type {
 export interface BotApiTransportDeps {
   /** Bot token from `TELEGRAM_BOT_TOKEN` (env, never config). */
   readonly token: string;
+  /** Injectable for testing; defaults to the global `fetch` (mirrors src/sources/http.ts). */
+  readonly fetchImpl?: typeof fetch;
 }
 
 /** Telegram's hard cap on a single text message. */
@@ -138,9 +140,11 @@ export function toUpdates(raw: unknown): TelegramUpdate[] {
 
 export class BotApiTransport implements TelegramTransport {
   private readonly base: string;
+  private readonly fetchImpl: typeof fetch;
 
   constructor(deps: BotApiTransportDeps) {
     this.base = `https://api.telegram.org/bot${deps.token}`;
+    this.fetchImpl = deps.fetchImpl ?? fetch;
   }
 
   async sendMessage(chatId: number, text: string, opts: SendMessageOptions = {}): Promise<void> {
@@ -175,7 +179,7 @@ export class BotApiTransport implements TelegramTransport {
       new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }),
       opts.filename ?? 'horizon.mp3',
     );
-    const res = await fetch(`${this.base}/sendAudio`, {
+    const res = await this.fetchImpl(`${this.base}/sendAudio`, {
       method: 'POST',
       body: form,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -200,7 +204,7 @@ export class BotApiTransport implements TelegramTransport {
     body: unknown,
     timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<unknown> {
-    const res = await fetch(`${this.base}/${method}`, {
+    const res = await this.fetchImpl(`${this.base}/${method}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

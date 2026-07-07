@@ -12,7 +12,22 @@ export interface EntityBlocking {
   readonly relaxedThreshold: number;
   /** Shared-entity count that unlocks the relaxed threshold for a pair. */
   readonly minSharedEntities: number;
+  /**
+   * Tiered relaxation: an even lower bar for pairs sharing MANY entities.
+   * Cross-outlet phrasings of one event (a Wikipedia sentence vs a GDACS alert
+   * title vs a Guardian headline) often land at cosine 0.60–0.66 — below the
+   * one-entity band — while sharing the place AND the figures ("venezuela" +
+   * "3500"). Defaults: `relaxedThreshold - STRONG_BAND_DELTA` once a pair shares
+   * `minSharedEntities + 1` entities. Precision holds because the band demands
+   * more shared evidence exactly when it trusts the cosine less, and every pair
+   * still passes the Reasoner confirm.
+   */
+  readonly strongRelaxedThreshold?: number;
+  readonly strongMinSharedEntities?: number;
 }
+
+/** How far below `relaxedThreshold` the >=2-entity band sits by default. */
+const STRONG_BAND_DELTA = 0.06;
 
 export interface ClusterOptions {
   /** Cosine similarity above which two items become a candidate pair (ADR-0007). */
@@ -52,7 +67,13 @@ export function candidatePairs(
           entitySets[i] as Set<string>,
           entitySets[j] as Set<string>,
         );
-        if (shared >= entityBlocking.minSharedEntities) bar = entityBlocking.relaxedThreshold;
+        const strongMin =
+          entityBlocking.strongMinSharedEntities ?? entityBlocking.minSharedEntities + 1;
+        const strongBar =
+          entityBlocking.strongRelaxedThreshold ??
+          Math.max(0, entityBlocking.relaxedThreshold - STRONG_BAND_DELTA);
+        if (shared >= strongMin) bar = strongBar;
+        else if (shared >= entityBlocking.minSharedEntities) bar = entityBlocking.relaxedThreshold;
       }
       if (cosine(a.vector, b.vector) >= bar) pairs.push([i, j]);
     }
@@ -107,6 +128,13 @@ export async function cluster(
   pairs.forEach(([i, j], k) => {
     if (confirmed[k]) union(i, j);
   });
+
+  // Confirm-veto observability: cheap precision evidence for the blocking bands
+  // (how often the Reasoner rejects what the cosine/entity layer proposed).
+  if (pairs.length > 0) {
+    const accepted = confirmed.filter(Boolean).length;
+    console.log(`[dedup] cluster confirmed=${accepted} vetoed=${pairs.length - accepted}`);
+  }
 
   // Group by root, preserving first-occurrence order.
   const groups = new Map<number, EmbeddedItem[]>();

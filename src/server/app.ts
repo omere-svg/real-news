@@ -137,12 +137,18 @@ export function createApp(
   // grows and develops across ticks (stories merge, gain sources, get re-scored)
   // and that Signal history keeps building — nothing is rebuilt from scratch.
   app.get('/api/stats', async (c) => {
-    const [storyStats, signalStats, ticks] = await Promise.all([
+    // Today's durable LLM token counters (TokenLedger writes them via the usage
+    // repo) — read from the same store so a restart doesn't zero the surface.
+    const day = utcDay(Date.now());
+    const [storyStats, signalStats, ticks, cheapTokens, deepTokens] = await Promise.all([
       storyRepo.stats(CROSS_TICK_MS),
       signalObservations?.stats() ?? { observations: 0, oldestObservedAt: null },
       tickReports?.recent(200) ?? [],
+      web.usage?.peek('global:tokens:cheap', day) ?? 0,
+      web.usage?.peek('global:tokens:deep', day) ?? 0,
     ]);
     return c.json({
+      tokens: { day, cheap: cheapTokens, deep: deepTokens, total: cheapTokens + deepTokens },
       stories: storyStats.stories,
       multiSourceStories: storyStats.multiSourceStories,
       storiesUpdatedAcrossTicks: storyStats.storiesUpdatedAcrossTicks,
