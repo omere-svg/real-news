@@ -46,3 +46,24 @@ export function looksNonEnglish(text: string): boolean {
   }
   return false;
 }
+
+/**
+ * Characters from writing systems other than Latin: Greek, Cyrillic, Armenian,
+ * Hebrew, Arabic, Devanagari, CJK punctuation/Hiragana/Katakana, CJK ideographs,
+ * and Hangul. Accented Latin (é, ñ, ü, ç) is Latin and deliberately NOT here.
+ */
+const NON_LATIN_SCRIPT =
+  /[\u0370-\u03FF\u0400-\u04FF\u0530-\u058F\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u3000-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/u;
+
+/**
+ * True when `text` contains a non-Latin script (ADR-0059) — a strong, cheap
+ * signal that a stored summary / why-it-matters is not English and should be
+ * re-analyzed. Unlike `looksNonEnglish` (used for one-line headlines, where a
+ * cheap translate harmlessly cleans accented Latin), this is used to gate the
+ * *expensive* deep-tier heal of body text, so it must NOT fire on an English
+ * sentence that merely contains a foreign name ("café", "Beyoncé", "Łódź") —
+ * only on genuinely foreign script (中文, кириллица, עברית, العربية).
+ */
+export function hasNonLatinScript(text: string): boolean {
+  return Boolean(text) && NON_LATIN_SCRIPT.test(text);
+}

@@ -131,7 +131,7 @@ export class FakeLLM implements LLMClient {
     this.lastRoute = input;
     const r = this.options.route;
     if (typeof r === 'function') return r(input);
-    return r ?? { action: 'help', minutes: null, topic: null };
+    return r ?? { action: 'help', minutes: null };
   }
 
   async interpretPrefs(input: PrefsInput): Promise<PrefsPatch> {

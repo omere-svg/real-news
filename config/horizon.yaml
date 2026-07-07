@@ -43,6 +43,24 @@ sources:
     enabled: true
     weight: 0.5
     maxItems: 20
+  # ADR-0059 — mainstream corroboration + coverage gaps. Same generic RssSource,
+  # weights matched to existing media precedent (Guardian/Times of Israel tier).
+  - id: bbc-world       # BBC World — global mainstream (classifier decides Topic)
+    enabled: true
+    weight: 0.5
+    maxItems: 20
+  - id: bbc-business    # BBC Business — real business/economy events (fills SEC/NBER gap)
+    enabled: true
+    weight: 0.55
+    maxItems: 20
+  - id: bbc-sport       # BBC Sport — sports news incl. the World Cup (thesportsdb = scores only)
+    enabled: true
+    weight: 0.5
+    maxItems: 20
+  - id: ynetnews        # second Israel outlet, distinct ownership from Times of Israel
+    enabled: true
+    weight: 0.5
+    maxItems: 20
   - id: knesset-votes   # recorded Knesset vote tallies (for/against/abstain)
     # DISABLED (ADR-0049): the upstream OData view stopped updating — its newest
     # "approved vote" is 2021-07-13, so it re-ingested 5-year-old votes as fresh
@@ -235,7 +253,7 @@ presentation:
     - AI
     - Geopolitics
   # Budget cost model (ADR-0013): delivery rates and per-depth word costs.
-  textWordsPerMinute: 220   # reading rate (brief, outline)
+  textWordsPerMinute: 220   # reading rate (brief)
   audioWordsPerMinute: 150  # speaking rate (podcast script)
   candidatePool: 200        # how many top Stories to consider per request
   dedupSimilarity: 0.72     # same-event diversity guard (ADR-0053): near-duplicate

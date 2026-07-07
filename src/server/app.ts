@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
-import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
+import type { StoryRepo } from '../db/story-repo.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { ChatTraceRepo } from '../db/chat-trace-repo.js';
 import type { TickReportRepo } from '../db/tick-report-repo.js';
@@ -13,17 +13,15 @@ import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import { FixedWindowLimiter, type RateLimiter } from '../telegram/rate-limiter.js';
 import type { Synthesizer } from '../telegram/synthesizer.js';
 import { TOPICS, type Topic } from '../domain/types.js';
-import { canonical } from '../domain/vocab.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
-import { scoreExplanation } from '../presentation/score-explanation.js';
 import { renderUI, renderDashboard } from './ui.js';
 
 /**
  * The read-only presentation server (ADR-0011, Principle 4). Serves the
  * pre-compiled Story cache — never makes real-time external calls. A thin HTTP
- * surface over StoryRepo.topStories (plain list) and the QueryEngine (brief /
- * outline / podcast, ADR-0014), plus the single-page viewer.
+ * surface over the QueryEngine's two reader artifacts (brief / podcast,
+ * ADR-0014/0060), plus the single-page viewer and the ops dashboard.
  */
 
 /** Default attention budget + preferences applied when the request omits them. */
@@ -239,32 +237,6 @@ export function createApp(
     ),
   );
 
-  app.get('/api/stories', async (c) => {
-    const q = c.req.query();
-    const topics = c.req.queries('topic') as Topic[] | undefined;
-    // Guard both numeric params: a bad `limit` or `minSignificance` (e.g.
-    // `?minSignificance=abc`) must degrade to a sane query, never reach the DB
-    // as NaN — libsql rejects a NaN bind and 500s the whole endpoint (ADR-0047).
-    const minSignificance = q.minSignificance !== undefined ? Number(q.minSignificance) : undefined;
-    const query: StoryQuery = {
-      limit: normalizeLimit(q.limit, 50),
-      ...(topics?.length ? { topic: topics } : {}),
-      ...(minSignificance !== undefined && Number.isFinite(minSignificance)
-        ? { minSignificance }
-        : {}),
-    };
-    // Attach the compact score tags (server-computed via the single scoreExplanation
-    // interpreter, ADR-0037) so the viewer can show the rationale always-visible
-    // without duplicating the thresholds client-side (ADR-0050).
-    const stories = await storyRepo.topStories(query);
-    return c.json({
-      stories: stories.map((s) => ({
-        ...s,
-        scoreTags: s.scoreBreakdown ? scoreExplanation(s.scoreBreakdown).tags : [],
-      })),
-    });
-  });
-
   app.get('/api/brief', async (c) => {
     return c.json({ brief: await queryEngine.textBrief(briefRequestOf(c, defaults, web)) });
   });
@@ -305,23 +277,6 @@ export function createApp(
       if (buf) audio = buf.toString('base64');
     }
     return c.json({ script, audio });
-  });
-
-  app.get('/api/outline', async (c) => {
-    const raw = c.req.query('topic');
-    if (raw === undefined) {
-      const topic = defaults.topics?.[0];
-      if (!topic) return c.json({ error: 'topic is required' }, 400);
-      return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
-    }
-    // Validate against the controlled vocabulary the same way the Telegram bot
-    // does (canonical()) — an unrecognized topic must 400, not silently flow
-    // through as a fake Topic and hit the query engine with garbage.
-    const topic = canonical(TOPICS, raw);
-    if (!topic) {
-      return c.json({ error: `unknown topic "${raw}"; expected one of ${TOPICS.join(', ')}` }, 400);
-    }
-    return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
   });
 
   app.get('/', (c) =>

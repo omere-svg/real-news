@@ -4,7 +4,7 @@ import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { RawItemRef, Story } from '../domain/types.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import { representativeRefOf } from '../domain/cluster.js';
-import { looksNonEnglish } from '../text/language.js';
+import { hasNonLatinScript, looksNonEnglish } from '../text/language.js';
 
 /**
  * Backfill a Story's factual `summary` + concise `whyItMatters` via the deep tier
@@ -66,6 +66,21 @@ export function needsDisplayTitle(story: Story): boolean {
 }
 
 /**
+ * True when a Story's stored summary or why-it-matters is in a non-Latin script
+ * (ADR-0059) — i.e. an early deep pass wrote the body in the SOURCE language
+ * (e.g. a Chinese lede under an English headline). Re-analyzing rewrites both in
+ * English (the analyze prompt now insists on it). Uses the script test, not the
+ * accent-sensitive `looksNonEnglish`, so an English summary naming "Beyoncé" or
+ * "Łódź" never triggers an endless (expensive) re-analysis.
+ */
+export function needsEnglishBody(story: Story): boolean {
+  return (
+    (story.summary !== null && hasNonLatinScript(story.summary)) ||
+    (story.whyItMatters !== null && hasNonLatinScript(story.whyItMatters))
+  );
+}
+
+/**
  * True when a Story still needs deep-tier enrichment: no factual summary, no
  * "why it matters", or a foreign headline lacking an English displayTitle.
  * Stories that got only a deterministic fallback summary (source lead) never
@@ -77,7 +92,8 @@ export function needsAnalysis(story: Story): boolean {
     needsSummary(story) ||
     !story.whyItMatters ||
     story.whyItMatters.trim().length === 0 ||
-    needsDisplayTitle(story)
+    needsDisplayTitle(story) ||
+    needsEnglishBody(story)
   );
 }
 

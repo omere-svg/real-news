@@ -140,12 +140,6 @@ async function main(): Promise<void> {
   const briefOk = transport.lastText.includes('Frontier lab') && !transport.lastText.includes('Knesset'); // Politics filtered out
   checks.push({ name: 'brief respects topic prefs + budget', ok: briefOk, note: '' });
 
-  await run('/outline AI', 'outline');
-  checks.push({ name: 'outline returns AI section', ok: transport.lastText.includes('AI outline'), note: '' });
-
-  await run('/outline Weather', 'invalid topic');
-  checks.push({ name: 'invalid topic rejected', ok: /topic/i.test(transport.lastText), note: '' });
-
   await run('/podcast 1', 'podcast → real TTS audio');
   const audioOk = transport.lastAudioBytes > 1000;
   checks.push({ name: 'podcast delivered audio (mp3)', ok: audioOk, note: `${transport.lastAudioBytes} bytes` });

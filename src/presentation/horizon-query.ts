@@ -1,6 +1,6 @@
 import type { StoryRepo } from '../db/story-repo.js';
 import type { Narrator } from '../llm/llm-client.js';
-import type { Story, Topic } from '../domain/types.js';
+import type { Story } from '../domain/types.js';
 import { cosine } from '../embedding/cosine.js';
 import {
   budgetStories,
@@ -14,15 +14,14 @@ import { scoreExplanation } from './score-explanation.js';
 /**
  * The Presentation seam implemented (ADR-0011 / ADR-0014). Turns the
  * pre-compiled Story cache, under a time budget (ADR-0013), into user-facing
- * artifacts — never calling external services (Principle 4). Text brief and
- * topic outline are pure deterministic renders of stored Story fields; only the
- * podcast escalates to the Reasoner's `narrate`, and even that degrades to the
- * brief on failure.
+ * artifacts — never calling external services (Principle 4). The text brief is a
+ * pure deterministic render of stored Story fields; only the podcast escalates
+ * to the Reasoner's `narrate`, and even that degrades to the brief on failure.
  */
 
 /** Tunables injected from config (ADR-0003) so the engine stays declarative. */
 export interface QueryParams {
-  /** Reading rate for text artifacts (brief, outline). */
+  /** Reading rate for the text brief. */
   readonly textWordsPerMinute: number;
   /** Speaking rate for the podcast script. */
   readonly audioWordsPerMinute: number;
@@ -60,14 +59,6 @@ export class HorizonQuery implements QueryEngine {
       this.deps.params.textWordsPerMinute,
     );
     return renderBrief(selection, request.minutes);
-  }
-
-  async topicOutline(topic: Topic, request: BriefRequest): Promise<string> {
-    const selection = await this.select(
-      { ...request, topics: [topic] },
-      this.deps.params.textWordsPerMinute,
-    );
-    return renderOutline(topic, selection);
   }
 
   async podcastScript(request: BriefRequest): Promise<string> {
@@ -217,13 +208,5 @@ function renderBrief(selection: BudgetedStory[], minutes: number): string {
   }
   const noun = selection.length === 1 ? 'story' : 'stories';
   const header = `Horizon brief — ${minutes} min, ${selection.length} ${noun}`;
-  return [header, '', selection.map(renderStory).join('\n\n')].join('\n');
-}
-
-function renderOutline(topic: Topic, selection: BudgetedStory[]): string {
-  if (selection.length === 0) {
-    return `No ${topic} stories available.`;
-  }
-  const header = `${topic} outline`;
   return [header, '', selection.map(renderStory).join('\n\n')].join('\n');
 }

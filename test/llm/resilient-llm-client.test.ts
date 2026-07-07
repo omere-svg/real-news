@@ -83,7 +83,6 @@ describe('ResilientLLMClient', () => {
     expect(await llm.routeIntent({ text: 'give me a brief' })).toEqual({
       action: 'help',
       minutes: null,
-      topic: null,
     }); // degrade to the menu when routing can't run
 
     expect(await llm.interpretPrefs({ text: 'add politics' })).toEqual({

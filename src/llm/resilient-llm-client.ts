@@ -104,7 +104,6 @@ export class ResilientLLMClient implements LLMClient {
     return this.guard('routeIntent', (d) => d.routeIntent(input), {
       action: 'help',
       minutes: null,
-      topic: null,
     });
   }
 

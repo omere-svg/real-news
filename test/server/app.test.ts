@@ -62,62 +62,6 @@ async function appWith(web: { maxMinutes: number; maxPodcastMinutes?: number; po
 }
 
 describe('HTTP API', () => {
-  it('GET /api/stories returns stories ordered by significance', async () => {
-    const app = await appWithStories();
-    const res = await app.request('/api/stories');
-    expect(res.status).toBe(200);
-    const body = await res.json() as { stories: { id: string }[] };
-    expect(body.stories.map((s: { id: string }) => s.id)).toEqual(['a', 'b']);
-  });
-
-  it('GET /api/stories attaches server-computed score tags for the viewer (ADR-0050)', async () => {
-    const db = await createTestDb();
-    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
-    await repo.upsert({
-      id: 'q', title: 'Major quake', url: null, topic: 'Climate', significance: 9,
-      whyItMatters: null, memberRefs: [{ source: 'usgs-quakes', externalId: '1' }],
-      scoreBreakdown: {
-        base: 9, recencyFactor: 1, impact: 0.9, signalNudge: 0,
-        components: [
-          { key: 'impact', value: 0.9 }, { key: 'corroboration', value: 0.6 },
-          { key: 'authority', value: 0.8 }, { key: 'attention', value: 0.1 },
-        ],
-        signals: { points: 0, mentions: 0, tone: 0, sourceWeight: 0.8, ageHours: 1, corroboration: 3 },
-      },
-    });
-    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
-    const app = createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false });
-    const body = await (await app.request('/api/stories')).json() as { stories: { scoreTags: string[] }[] };
-    expect(Array.isArray(body.stories[0]?.scoreTags)).toBe(true);
-    expect(body.stories[0]?.scoreTags).toContain('major real-world impact');
-  });
-
-  it('GET /api/stories filters by topic query param', async () => {
-    const app = await appWithStories();
-    const res = await app.request('/api/stories?topic=Israel');
-    const body = await res.json() as { stories: { id: string }[] };
-    expect(body.stories.map((s: { id: string }) => s.id)).toEqual(['b']);
-  });
-
-  it('GET /api/stories ignores a non-numeric minSignificance instead of 500ing (ADR-0047)', async () => {
-    // A NaN reaching the SQL bind crashes libsql; the endpoint must degrade to no filter.
-    const app = await appWithStories();
-    const res = await app.request('/api/stories?minSignificance=notanumber');
-    expect(res.status).toBe(200);
-    const body = await res.json() as { stories: { id: string }[] };
-    expect(body.stories.map((s) => s.id)).toEqual(['a', 'b']); // filter dropped, all returned
-  });
-
-  it('GET /api/stories clamps an out-of-range or bad limit (ADR-0047)', async () => {
-    const app = await appWithStories();
-    for (const q of ['limit=99999', 'limit=-5', 'limit=abc']) {
-      const res = await app.request(`/api/stories?${q}`);
-      expect(res.status).toBe(200);
-      const body = await res.json() as { stories: unknown[] };
-      expect(body.stories.length).toBeGreaterThan(0); // never errors, always a sane page
-    }
-  });
-
   it('GET /health returns ok', async () => {
     const app = await appWithStories();
     const res = await app.request('/health');
@@ -139,28 +83,6 @@ describe('HTTP API', () => {
     const body = (await res.json()) as { brief: string };
     expect(body.brief).toContain('Israeli politics');
     expect(body.brief).not.toContain('AI story');
-  });
-
-  it('GET /api/outline returns a topic-grouped outline', async () => {
-    const app = await appWithStories();
-    const res = await app.request('/api/outline?topic=AI&minutes=10');
-    const body = (await res.json()) as { outline: string };
-    expect(body.outline).toContain('AI outline');
-    expect(body.outline).toContain('AI story');
-  });
-
-  it('GET /api/outline without a topic is a 400', async () => {
-    const app = await appWithStories();
-    const res = await app.request('/api/outline');
-    expect(res.status).toBe(400);
-  });
-
-  it('GET /api/outline rejects an unknown topic with 400', async () => {
-    const app = await appWithStories();
-    const res = await app.request('/api/outline?topic=NotARealTopic');
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/topic/i);
   });
 
   it('GET /api/podcast returns a narrated script', async () => {
@@ -306,21 +228,19 @@ describe('HTTP API', () => {
     expect(await res.text()).toContain('value="10"'); // defaults.minutes
   });
 
-  it('the viewer ships the card renderers and score-surfacing UI (ADR-0050)', async () => {
+  it('the viewer ships the card + podcast renderers (ADR-0050/0060)', async () => {
     const app = await appWithStories();
     const html = await (await app.request('/')).text();
-    // Brief/outline/podcast render as cards + prose, not a <pre> blob.
+    // Brief renders as cards, podcast as an audio player — not a <pre> blob.
     expect(html).toContain('function renderDoc');
-    expect(html).toContain('function renderScript');
-    // Score rationale is surfaced always-visible + the top breakdown auto-opens.
-    expect(html).toContain('scoreTags');
-    expect(html).toContain('breakdownHtml(s.scoreBreakdown, i === 0, SCORE_LABELS)');
+    expect(html).toContain('function renderPodcast');
+    // Only Brief + Podcast formats remain (Stories + Topic outline removed, ADR-0060).
+    expect(html).toContain('data-fmt="brief"');
+    expect(html).not.toContain('data-fmt="stories"');
+    expect(html).not.toContain('data-fmt="outline"');
     // Backend is made legible (sources / zero-scraping / live freshness).
     expect(html).toContain('zero scraping');
     expect(html).toContain('loadFreshness');
-    // The signature "what changed since last update" editor's note.
-    expect(html).toContain('function editorsNote');
-    expect(html).toContain('Editor’s note');
   });
 
   it('the viewer routes story links through a scheme-checked safeUrl, never a raw href (ADR-0049)', async () => {
@@ -556,13 +476,6 @@ describe('HTTP API', () => {
     // server-seeded preferred-topics default back to "All" (no filter).
     expect(html).toContain('if (Array.isArray(cached.topics)) setTopics(cached.topics);');
     expect(html).toContain('else setTopics([]);');
-  });
-
-  it('the outline tab auto-picks the most significant checked topic instead of erroring', async () => {
-    const app = await appWithStories();
-    const html = await (await app.request('/')).text();
-    expect(html).toContain('function autoOutlineTopic');
-    expect(html).not.toContain('Pick exactly one topic');
   });
 
   it('the podcast hint tells the reader to press Generate to produce the audio episode', async () => {

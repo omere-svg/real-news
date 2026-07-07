@@ -19,7 +19,7 @@ import type {
 } from '../../src/telegram/telegram-transport.js';
 import type { BriefRequest, QueryEngine } from '../../src/presentation/query-engine.js';
 import type { Synthesizer } from '../../src/telegram/synthesizer.js';
-import type { Story, Topic } from '../../src/domain/types.js';
+import type { Story } from '../../src/domain/types.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
 import type {
   Discussant,
@@ -81,15 +81,9 @@ function makeStory(over: Partial<Story> = {}): Story {
 
 class FakeQuery implements QueryEngine {
   lastRequest?: BriefRequest;
-  lastTopic?: Topic;
   async textBrief(r: BriefRequest): Promise<string> {
     this.lastRequest = r;
     return `BRIEF[${r.minutes}]`;
-  }
-  async topicOutline(topic: Topic, r: BriefRequest): Promise<string> {
-    this.lastTopic = topic;
-    this.lastRequest = r;
-    return `OUTLINE[${topic}]`;
   }
   async podcastScript(r: BriefRequest): Promise<string> {
     this.lastRequest = r;
@@ -225,20 +219,6 @@ describe('HorizonBot', () => {
     await bot.handle(update(5, '/podcast'));
     expect(transport.audios).toHaveLength(0);
     expect(transport.messages.at(-1)?.text).toBe('SCRIPT[3]');
-  });
-
-  it('/outline canonicalizes the topic and queries it', async () => {
-    const { bot, transport, query } = await build();
-    await bot.handle(update(5, '/outline ai')); // lowercase
-    expect(query.lastTopic).toBe('AI');
-    expect(transport.messages.at(-1)?.text).toBe('OUTLINE[AI]');
-  });
-
-  it('/outline rejects an unknown topic without querying', async () => {
-    const { bot, transport, query } = await build();
-    await bot.handle(update(5, '/outline Weather'));
-    expect(query.lastTopic).toBeUndefined();
-    expect(transport.messages.at(-1)?.text).toMatch(/topic/i);
   });
 
   it('/prefs topics sets per-chat topics, then briefs use them', async () => {
@@ -753,10 +733,10 @@ describe('HorizonBot', () => {
 
   describe('natural-language routing', () => {
     const intentRouter = (intent: RouterIntent): IntentRouter => new FakeLLM({ route: intent });
-    const help = (): RouterIntent => ({ action: 'help', minutes: null, topic: null });
+    const help = (): RouterIntent => ({ action: 'help', minutes: null });
 
     it('routes a plain-text request to a brief with the asked-for minutes', async () => {
-      const router = intentRouter({ action: 'brief', minutes: 8, topic: null });
+      const router = intentRouter({ action: 'brief', minutes: 8 });
       const { bot, query, transport } = await build({ router });
 
       await bot.handle(update(5, 'can I get a quick 8 minute catch-up?'));
@@ -764,16 +744,16 @@ describe('HorizonBot', () => {
       expect(transport.messages.at(-1)?.text).toBe('BRIEF[8]');
     });
 
-    it('routes a plain-text topic request to an outline', async () => {
-      const router = intentRouter({ action: 'outline', minutes: null, topic: 'AI' });
-      const { bot, query } = await build({ router });
+    it('routes a plain-text catch-up request to a brief', async () => {
+      const router = intentRouter({ action: 'brief', minutes: null });
+      const { bot, transport } = await build({ router });
 
-      await bot.handle(update(5, 'tell me everything about AI today'));
-      expect(query.lastTopic).toBe('AI');
+      await bot.handle(update(5, 'what is going on today'));
+      expect(transport.messages.at(-1)?.text).toMatch(/^BRIEF\[/);
     });
 
     it('routes a plain-text question to chat when chat is wired', async () => {
-      const router = intentRouter({ action: 'question', minutes: null, topic: null });
+      const router = intentRouter({ action: 'question', minutes: null });
       const { bot, transport } = await build({
         router,
         discussant: new FakeLLM(),
@@ -790,7 +770,7 @@ describe('HorizonBot', () => {
         length: null,
         summary: 'More AI.',
       };
-      const router = intentRouter({ action: 'feedback', minutes: null, topic: null });
+      const router = intentRouter({ action: 'feedback', minutes: null });
       const { bot, prefs } = await build({ router, feedback: fakeInterpreter(intent) });
 
       await bot.handle(update(5, 'show me a lot more AI please'));
@@ -798,7 +778,7 @@ describe('HorizonBot', () => {
     });
 
     it('routes a plain-text "remember" to memory', async () => {
-      const router = intentRouter({ action: 'remember', minutes: null, topic: null });
+      const router = intentRouter({ action: 'remember', minutes: null });
       const { bot, prefs } = await build({ router });
 
       await bot.handle(update(5, 'remember I trade commodities'));
@@ -814,13 +794,12 @@ describe('HorizonBot', () => {
       expect(last?.opts?.buttons?.map((b) => b.data)).toEqual([
         'brief',
         'podcast',
-        'topics',
         'prefs',
       ]);
     });
 
     it('slash commands still win over the router (power-user shortcut)', async () => {
-      const router = intentRouter({ action: 'podcast', minutes: null, topic: null });
+      const router = intentRouter({ action: 'podcast', minutes: null });
       const fake = router as FakeLLM;
       const { bot, query } = await build({ router });
 
@@ -830,7 +809,7 @@ describe('HorizonBot', () => {
     });
 
     it('does NOT spend the router LLM once the daily command quota is exhausted (ADR-0049)', async () => {
-      const router = intentRouter({ action: 'brief', minutes: null, topic: null });
+      const router = intentRouter({ action: 'brief', minutes: null });
       const fake = router as FakeLLM;
       const { bot, transport } = await build({ router, limits: { commandsPerDay: 1 } });
 
@@ -844,7 +823,7 @@ describe('HorizonBot', () => {
     it('charges a routed message even when it resolves to a free command (ADR-0051)', async () => {
       // "show my prefs" routes (LLM spend) to prefsShow, which is a free command —
       // withinQuota wouldn't charge it, so the routing spend must be counted here.
-      const router = intentRouter({ action: 'prefs', minutes: null, topic: null });
+      const router = intentRouter({ action: 'prefs', minutes: null });
       const { bot, usage } = await build({ router });
       await bot.handle(update(5, 'show my preferences'));
       expect(await usage.peek('chat:5:cmd', '1970-01-01')).toBe(1); // routing charged
@@ -858,7 +837,7 @@ describe('HorizonBot', () => {
     });
 
     it('routes "reset my preferences" to an actual clear (ADR-0030)', async () => {
-      const router = intentRouter({ action: 'clearPrefs', minutes: null, topic: null });
+      const router = intentRouter({ action: 'clearPrefs', minutes: null });
       const { bot, prefs } = await build({ router });
       await prefs.set(5, { topics: ['AI'] });
 
@@ -867,7 +846,7 @@ describe('HorizonBot', () => {
     });
 
     it('adds a topic and sets the budget from one plain-text request (ADR-0030)', async () => {
-      const router = intentRouter({ action: 'setPrefs', minutes: null, topic: null });
+      const router = intentRouter({ action: 'setPrefs', minutes: null });
       const patch: PrefsPatch = {
         topics: { mode: 'add', values: ['Politics'] },
         minutes: 5,
@@ -887,7 +866,7 @@ describe('HorizonBot', () => {
     });
 
     it('replaces topics for an "only X" request, dropping invalid values', async () => {
-      const router = intentRouter({ action: 'setPrefs', minutes: null, topic: null });
+      const router = intentRouter({ action: 'setPrefs', minutes: null });
       const patch: PrefsPatch = {
         topics: { mode: 'replace', values: ['AI', 'Weather'] }, // Weather is not a Topic
         minutes: null,
@@ -904,7 +883,7 @@ describe('HorizonBot', () => {
     });
 
     it('says so when a preference change maps to nothing valid', async () => {
-      const router = intentRouter({ action: 'setPrefs', minutes: null, topic: null });
+      const router = intentRouter({ action: 'setPrefs', minutes: null });
       const patch: PrefsPatch = {
         topics: { mode: 'add', values: ['Weather'] }, // nothing valid
         minutes: null,
@@ -929,7 +908,7 @@ describe('HorizonBot', () => {
       callbackData: data,
       callbackQueryId: 'cq1',
     });
-    const router: IntentRouter = new FakeLLM({ route: { action: 'help', minutes: null, topic: null } });
+    const router: IntentRouter = new FakeLLM({ route: { action: 'help', minutes: null } });
 
     it('a Brief button tap runs a brief and is acknowledged', async () => {
       const { bot, query, transport } = await build({ router });
@@ -945,19 +924,6 @@ describe('HorizonBot', () => {
       expect(transport.audios).toHaveLength(1);
       const notices = transport.messages.filter((m) => /podcast allowance/i.test(m.text));
       expect(notices).toHaveLength(1);
-    });
-
-    it('the By-topic button opens a topic picker, and a topic button runs its outline', async () => {
-      const { bot, query, transport } = await build({ router });
-
-      await bot.handle(callback(5, 'topics'));
-      const picker = transport.messages.at(-1);
-      expect(picker?.text).toMatch(/topic/i);
-      const aiButton = picker?.opts?.buttons?.find((b) => b.data === 'outline:AI');
-      expect(aiButton).toBeDefined();
-
-      await bot.handle(callback(5, aiButton!.data));
-      expect(query.lastTopic).toBe('AI');
     });
 
     it('the Menu button reopens the main menu without drawing quota', async () => {

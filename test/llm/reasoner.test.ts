@@ -102,6 +102,13 @@ describe('Reasoner', () => {
     expect(t.calls[0]?.opts.temperature).toBe(0.3);
   });
 
+  it('analyze: the prompt insists every field is written in English (ADR-0059)', async () => {
+    const t = new FakeTransport({ summary: 's', whyItMatters: 'w', displayTitle: 'd' });
+    await new Reasoner(t).analyze({ title: '高市早苗政府', text: null, topic: 'Politics', significance: 5 });
+    expect(t.calls[0]?.prompt).toMatch(/in clear,? natural English/i);
+    expect(t.calls[0]?.prompt).toMatch(/even when the item is in another language/i);
+  });
+
   it('analyze: displayTitle is null when the tier returns nothing usable (Task 20)', async () => {
     const t = new FakeTransport({ summary: 'x', whyItMatters: 'y' });
     const out = await new Reasoner(t).analyze({
@@ -297,16 +304,16 @@ describe('Reasoner', () => {
     const t = new FakeTransport({ action: 'brief', minutes: 5, topic: null });
     const intent = await new Reasoner(t).routeIntent({ text: 'give me a 5 minute catch-up' });
 
-    expect(intent).toEqual({ action: 'brief', minutes: 5, topic: null });
+    expect(intent).toEqual({ action: 'brief', minutes: 5 });
     expect(t.calls[0]?.kind).toBe('json');
     expect(t.calls[0]?.opts.tier).toBe('cheap');
     expect(t.calls[0]?.prompt).toContain('give me a 5 minute catch-up');
   });
 
   it('routeIntent: an unknown action degrades to help, not a throw', async () => {
-    const t = new FakeTransport({ action: 'banana', minutes: 'soon', topic: 42 });
+    const t = new FakeTransport({ action: 'banana', minutes: 'soon' });
     const intent = await new Reasoner(t).routeIntent({ text: 'hi there' });
-    expect(intent).toEqual({ action: 'help', minutes: null, topic: null });
+    expect(intent).toEqual({ action: 'help', minutes: null });
   });
 
   it('interpretFeedback: silently drops out-of-vocabulary topics', async () => {

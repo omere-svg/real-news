@@ -244,7 +244,7 @@ describe('HorizonQuery', () => {
     expect(await q.textBrief({ minutes: 0 })).toContain('No stories');
   });
 
-  it('topicOutline lists the topic ordered by significance and excludes other topics', async () => {
+  it('textBrief with an explicit topic filter excludes other topics, ordered by significance', async () => {
     const repo = await seed(
       upsert({ id: 'a1', title: 'AI one', topic: 'AI', significance: 8 }),
       upsert({ id: 'a2', title: 'AI two', topic: 'AI', significance: 7 }),
@@ -252,13 +252,12 @@ describe('HorizonQuery', () => {
     );
     const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
 
-    const outline = await q.topicOutline('AI', { minutes: 10 });
+    const brief = await q.textBrief({ minutes: 10, topics: ['AI'] });
 
-    expect(outline).toContain('AI outline');
-    expect(outline).toContain('AI one');
-    expect(outline).toContain('AI two');
-    expect(outline.indexOf('AI one')).toBeLessThan(outline.indexOf('AI two')); // by significance
-    expect(outline).not.toContain('A politics piece');
+    expect(brief).toContain('AI one');
+    expect(brief).toContain('AI two');
+    expect(brief.indexOf('AI one')).toBeLessThan(brief.indexOf('AI two')); // by significance
+    expect(brief).not.toContain('A politics piece');
   });
 
   it('podcastScript narrates the budgeted brief via the deep tier', async () => {

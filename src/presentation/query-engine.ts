@@ -3,9 +3,9 @@ import type { Topic } from '../domain/types.js';
 /**
  * The Presentation seam (ADR-0011). Generates user-facing artifacts from the
  * pre-compiled Story cache — never makes real-time external calls (Principle 4).
- * Implemented by `HorizonQuery` (ADR-0014); plain Story reads (filter + order)
- * live on the StoryRepo read contract (`StoryQuery`), which the HTTP layer
- * consumes directly — this seam is only for the *generated* artifacts below.
+ * Implemented by `HorizonQuery` (ADR-0014). The two reader-facing artifacts are
+ * the text brief and the narrated podcast (ADR-0060); each is sized to a time
+ * budget and drawn from the same significance-ranked, topic-filterable pool.
  */
 export interface QueryEngine {
   /** A concise text bullet brief within a time budget. */
@@ -13,9 +13,6 @@ export interface QueryEngine {
 
   /** A unified audio podcast script within a time budget. */
   podcastScript(request: BriefRequest): Promise<string>;
-
-  /** A topic-focused outline. */
-  topicOutline(topic: Topic, request: BriefRequest): Promise<string>;
 }
 
 export interface BriefRequest {

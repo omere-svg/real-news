@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as vm from 'node:vm';
-import { ago, breakdownHtml, emptyStateHtml, escHtml, fmtDuration, topicChips } from '../../src/server/ui-view.js';
+import { ago, emptyStateHtml, escHtml, fmtDuration, topicChips } from '../../src/server/ui-view.js';
 import { renderUI } from '../../src/server/ui.js';
 import { TOPICS } from '../../src/domain/types.js';
 
@@ -19,8 +19,6 @@ function extractDecl(source: string, startMarker: string, untilMarker: string): 
   return source.slice(start, end).trim();
 }
 
-const LABELS = { impact: 'Real-world impact', corroboration: 'Corroboration' };
-
 describe('escHtml', () => {
   it('escapes a story title that carries a script tag', () => {
     expect(escHtml('<script>alert(1)</script>')).toBe(
@@ -34,72 +32,6 @@ describe('escHtml', () => {
 
   it('coerces non-string input like the original client helper', () => {
     expect(escHtml(42 as unknown as string)).toBe('42');
-  });
-});
-
-describe('breakdownHtml — the "Why this score?" widget', () => {
-  const breakdown = {
-    components: [
-      { key: 'impact', value: 0.8 },
-      { key: '<script>', value: 0.3 }, // an unknown key falls back to itself, must still be escaped
-      { key: 'corroboration', value: 0.6 },
-    ],
-    signals: { corroboration: 3 },
-    recencyFactor: 0.95,
-    signalNudge: 0.2,
-  };
-
-  it('renders a bar per component with its label, escaped', () => {
-    const html = breakdownHtml(breakdown, false, LABELS);
-    expect(html).toContain('<div class="bars">');
-    expect(html).toContain('Real-world impact');
-    expect(html).toContain('width:80%');
-    expect(html).toContain('&lt;script&gt;'); // unknown-key fallback label is escaped
-    expect(html).not.toContain('<script>value');
-  });
-
-  it('opens the <details> when told to (top story default-open)', () => {
-    expect(breakdownHtml(breakdown, true, LABELS)).toContain('<details class="why-score" open>');
-    expect(breakdownHtml(breakdown, false, LABELS)).toContain('<details class="why-score">');
-  });
-
-  it('surfaces corroboration count and recency in the facts line', () => {
-    const html = breakdownHtml(breakdown, false, LABELS);
-    expect(html).toContain('3 sources');
-    expect(html).toContain('recency 95%');
-  });
-
-  it('omits the "0 sources" phrase — it is noise, not a fact', () => {
-    const single = { ...breakdown, signals: { corroboration: 0 } };
-    const html = breakdownHtml(single, false, LABELS);
-    expect(html).not.toMatch(/0 source/);
-    expect(html).toContain('recency 95%');
-  });
-
-  it('renders nothing for a missing breakdown (pre-ADR-0032 stories)', () => {
-    expect(breakdownHtml(null, false, LABELS)).toBe('');
-    expect(breakdownHtml(undefined, true, LABELS)).toBe('');
-  });
-
-  it('renders the corroboration bar for a multi-source story', () => {
-    const html = breakdownHtml(breakdown, false, LABELS);
-    expect(html).toContain('Corroboration');
-    expect(html).toContain('width:60%');
-  });
-
-  it('single-source story renders no corroboration bar', () => {
-    const single = {
-      ...breakdown,
-      components: [
-        { key: 'impact', value: 0.8 },
-        { key: 'corroboration', value: 0 },
-      ],
-      signals: { corroboration: 1 },
-    };
-    const html = breakdownHtml(single, false, LABELS);
-    expect(html).not.toContain('Corroboration');
-    expect(html).not.toContain('width:0%');
-    expect(html).toContain('Real-world impact'); // other bars still render
   });
 });
 
@@ -142,167 +74,98 @@ describe('ago / fmtDuration', () => {
 });
 
 describe('renderUI — client script wiring (regression coverage)', () => {
-  const html = renderUI({ minutes: 10 });
+  const html = renderUI({ minutes: 10, podcastEnabled: true });
 
-  it('embeds the single-source-of-truth escHtml/breakdownHtml/emptyStateHtml helpers verbatim', () => {
+  it('embeds the single-source-of-truth escHtml/emptyStateHtml helpers verbatim', () => {
     expect(html).toContain('const escHtml = function escHtml(s)');
-    expect(html).toContain('const breakdownHtml = function breakdownHtml(b, open, labels)');
     expect(html).toContain('const emptyStateHtml = function emptyStateHtml(headline, body)');
   });
 
-  it('splices escHtml before breakdownHtml — breakdownHtml resolves escHtml as a free variable, not a closure', () => {
-    // Unenforced-by-the-type-system dependency: breakdownHtml (and
-    // emptyStateHtml) are injected as standalone function source, not
-    // closures, so they only work in the browser if escHtml has already
-    // been declared earlier in the same <script>. Guard the splice order.
+  it('splices escHtml before emptyStateHtml — emptyStateHtml resolves escHtml as a free variable', () => {
+    // emptyStateHtml is injected as standalone function source (not a closure),
+    // so it only works in the browser if escHtml is declared earlier in the same
+    // <script>. Guard the splice order.
     const escHtmlIdx = html.indexOf('const escHtml =');
     const emptyStateHtmlIdx = html.indexOf('const emptyStateHtml =');
-    const breakdownHtmlIdx = html.indexOf('const breakdownHtml =');
     expect(escHtmlIdx).toBeGreaterThan(-1);
     expect(emptyStateHtmlIdx).toBeGreaterThan(escHtmlIdx);
-    expect(breakdownHtmlIdx).toBeGreaterThan(escHtmlIdx);
   });
 
-  it('regression: a bad/error stories payload cannot leave the skeletons spinning forever', () => {
-    // The original bug read `.stories.length` outside the try that fetches it, so
-    // an error body without `.stories` threw an uncaught TypeError and the
-    // skeleton loaders never cleared. Source-position check as a cheap smoke
-    // test; the behavioral guard below actually executes the shipped code.
-    expect(html).toContain('stories = Array.isArray(body.stories) ? body.stories : [];');
-    const tryIdx = html.indexOf('const [res] = await Promise.all');
-    const catchIdx = html.indexOf("Couldn't load stories");
-    const guardIdx = html.indexOf('stories = Array.isArray(body.stories)');
-    expect(tryIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeGreaterThan(tryIdx);
-    expect(catchIdx).toBeGreaterThan(guardIdx);
+  it('offers only the Brief + Podcast formats (Stories + Topic outline removed, ADR-0060)', () => {
+    expect(html).toContain('data-fmt="brief"');
+    expect(html).toContain('data-fmt="podcast"');
+    expect(html).not.toContain('data-fmt="stories"');
+    expect(html).not.toContain('data-fmt="outline"');
+    // No leftover Stories-only code paths.
+    expect(html).not.toContain('loadStories');
+    expect(html).not.toContain('editorsNote');
+    expect(html).not.toContain('autoOutlineTopic');
+    expect(html).not.toContain('/api/stories');
   });
 
-  it('renders the empty/error state markup for stories, docs, and podcast-disabled', () => {
-    expect(html).toContain('No stories match yet');
-    expect(html).toContain("Couldn't load stories");
+  it('renders the empty/error state markup for docs and podcast-disabled', () => {
+    expect(html).toContain('Ready when you are'); // Generate-gated empty state
+    expect(html).toContain("Couldn't load that");
     expect(html).toContain('Podcast is not enabled here');
   });
 
-  describe('behavioral: loadStories actually clears the skeletons on a bad payload', () => {
-    // Extract the real shipped source for escHtml, emptyStateHtml, skeletons,
-    // and loadStories out of renderUI()'s output and execute them in a vm
-    // sandbox with a stubbed fetch/list — this exercises the actual shipped
-    // guard logic (not a grep of it), the technique proven during review.
+  describe('behavioral: load() clears the skeletons on a bad brief payload', () => {
+    // Extract the real shipped source for escHtml, emptyStateHtml, skeletons, the
+    // renderers, and load() out of renderUI()'s output and execute them in a vm
+    // sandbox with a stubbed fetch/list — this exercises the actual shipped guard
+    // logic, not a grep of it.
     const escHtmlSrc = extractDecl(html, 'const escHtml =', '\nfunction esc(s)');
+    const escFnSrc = extractDecl(html, 'function esc(s)', '\n// emptyStateHtml');
     const emptyStateHtmlSrc = extractDecl(html, 'const emptyStateHtml =', '\n// Only allow http(s) links');
+    const safeUrlSrc = extractDecl(html, 'function safeUrl(u)', '\nfunction selectedTopics');
+    const topicColorsSrc = extractDecl(html, 'const TOPIC_COLORS = {', '\ndocument.querySelectorAll');
+    const hintsSrc = extractDecl(html, 'const HINTS = {', '\nconst DOC_FIELD');
+    const docFieldSrc = extractDecl(html, 'const DOC_FIELD =', '\nlet format');
     const skeletonsSrc = extractDecl(html, 'function skeletons(n)', '\n\n// ---- Brief');
-    const loadStoriesSrc = extractDecl(html, 'async function loadStories(topics) {', '\n\nseg.addEventListener');
+    const renderDocSrc = extractDecl(html, 'function renderDoc(format, text)', '\n// The web podcast');
+    const renderPodcastSrc = extractDecl(html, 'function renderPodcast(script, audioB64)', '\n\nasync function load');
+    const loadSrc = extractDecl(html, 'async function load() {', '\n\nseg.addEventListener');
 
     function makeSandbox(fetchImpl: (...args: unknown[]) => Promise<unknown>) {
       const list = { innerHTML: '<div class="skel"></div>' };
       const context = vm.createContext({
         list,
         fetch: fetchImpl,
-        getLastTickAt: async () => null,
-        URLSearchParams,
-      });
-      vm.runInContext(
-        `${escHtmlSrc}\n${emptyStateHtmlSrc}\n${skeletonsSrc}\n${loadStoriesSrc}`,
-        context,
-      );
-      return { context, list };
-    }
-
-    it('a non-2xx JSON error body with no .stories renders the empty state instead of hanging on skeletons', async () => {
-      const { context, list } = makeSandbox(async () => ({
-        json: async () => ({ error: 'boom' }),
-      }));
-      await context.loadStories([]);
-      expect(list.innerHTML).not.toContain('class="skel"');
-      expect(list.innerHTML).toContain('No stories match yet');
-    });
-
-    it('a rejected fetch (network failure) renders the load-error state instead of hanging on skeletons', async () => {
-      const { context, list } = makeSandbox(async () => {
-        throw new Error('network down');
-      });
-      await context.loadStories([]);
-      expect(list.innerHTML).not.toContain('class="skel"');
-      expect(list.innerHTML).toContain("Couldn't load stories");
-    });
-  });
-
-  describe('behavioral: loadStories prefers displayTitle over the raw title (Task 20)', () => {
-    // Same vm-sandbox technique as above, but this time execute the full
-    // shipped card-rendering path (TOPIC_COLORS, safeUrl, breakdownHtml,
-    // SCORE_LABELS too) so the assertion exercises the real shipped
-    // `s.displayTitle || s.title` logic, not a re-implementation of it.
-    const escHtmlSrc = extractDecl(html, 'const escHtml =', '\nfunction esc(s)');
-    const escFnSrc = extractDecl(html, 'function esc(s)', '\n// emptyStateHtml');
-    const emptyStateHtmlSrc = extractDecl(html, 'const emptyStateHtml =', '\n// Only allow http(s) links');
-    const safeUrlSrc = extractDecl(html, 'function safeUrl(u)', '\nfunction selectedTopics');
-    const topicColorsSrc = extractDecl(html, 'const TOPIC_COLORS = {', '\ndocument.querySelectorAll');
-    const scoreLabelsSrc = extractDecl(html, 'const SCORE_LABELS =', '\nconst breakdownHtml =');
-    const breakdownHtmlSrc = extractDecl(html, 'const breakdownHtml =', '\n\nfunction skeletons');
-    const skeletonsSrc = extractDecl(html, 'function skeletons(n)', '\n\n// ---- Brief');
-    const loadStoriesSrc = extractDecl(html, 'async function loadStories(topics) {', '\n\nseg.addEventListener');
-
-    function makeSandbox(stories: unknown[]) {
-      const list = { innerHTML: '<div class="skel"></div>' };
-      const context = vm.createContext({
-        list,
-        fetch: async () => ({ json: async () => ({ stories }) }),
-        getLastTickAt: async () => null,
-        editorsNote: () => '',
+        format: 'brief',
+        hint: { textContent: '' },
+        minutesInput: { value: '10' },
+        minutesLabel: { textContent: '' },
+        selectedTopics: () => [],
         location: { origin: 'https://horizon.example' },
         URL,
         URLSearchParams,
       });
       vm.runInContext(
         [
-          escHtmlSrc,
-          escFnSrc,
-          emptyStateHtmlSrc,
-          safeUrlSrc,
-          topicColorsSrc,
-          scoreLabelsSrc,
-          breakdownHtmlSrc,
-          skeletonsSrc,
-          loadStoriesSrc,
+          escHtmlSrc, escFnSrc, emptyStateHtmlSrc, safeUrlSrc, topicColorsSrc,
+          hintsSrc, docFieldSrc, skeletonsSrc, renderDocSrc, renderPodcastSrc, loadSrc,
         ].join('\n'),
         context,
       );
       return { context, list };
     }
 
-    const baseStory = {
-      title: 'Boğaziçi Köprüsü açıldı',
-      url: null,
-      topic: 'AI',
-      significance: 5,
-      whyItMatters: null,
-      scoreBreakdown: null,
-      scoreTags: [],
-      memberRefs: [{ source: 'hackernews', externalId: '1' }],
-    };
-
-    it('renders displayTitle when the deep tier set one, not the raw source title', async () => {
-      const { context, list } = makeSandbox([
-        { ...baseStory, displayTitle: 'The Bosphorus Bridge opened' },
-      ]);
-      await context.loadStories([]);
-      expect(list.innerHTML).toContain('The Bosphorus Bridge opened');
-      expect(list.innerHTML).not.toContain('Boğaziçi Köprüsü açıldı');
+    it('a rejected fetch (network failure) renders the load-error state instead of hanging on skeletons', async () => {
+      const { context, list } = makeSandbox(async () => {
+        throw new Error('network down');
+      });
+      await context.load();
+      expect(list.innerHTML).not.toContain('class="skel"');
+      expect(list.innerHTML).toContain("Couldn't load that");
     });
 
-    it('falls back to the cleaned original title when displayTitle is null (below top-N)', async () => {
-      const { context, list } = makeSandbox([{ ...baseStory, displayTitle: null }]);
-      await context.loadStories([]);
-      expect(list.innerHTML).toContain('Boğaziçi Köprüsü açıldı');
-    });
-
-    it('HTML-escapes a displayTitle the same as any other rendered field', async () => {
-      const { context, list } = makeSandbox([
-        { ...baseStory, displayTitle: '<script>alert(1)</script>' },
-      ]);
-      await context.loadStories([]);
-      expect(list.innerHTML).not.toContain('<script>alert(1)</script>');
-      expect(list.innerHTML).toContain('&lt;script&gt;');
+    it('renders the parsed brief as story cards, escaping fields', async () => {
+      const brief = 'Horizon brief — 10 min, 1 story\n\n📰 <b>Big</b> news\nWhat happened here.\n💡 Why it counts\n🏷 AI · significance 7.0';
+      const { context, list } = makeSandbox(async () => ({ json: async () => ({ brief }) }));
+      await context.load();
+      expect(list.innerHTML).not.toContain('class="skel"');
+      expect(list.innerHTML).toContain('&lt;b&gt;Big&lt;/b&gt; news'); // title escaped
+      expect(list.innerHTML).toContain('Why it counts');
     });
   });
 });

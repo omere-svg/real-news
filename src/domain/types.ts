@@ -50,6 +50,11 @@ export const STORY_SOURCE_IDS = [
   // Phase 4 — media + thematic anchors (ADR-0021).
   'guardian',
   'timesofisrael',
+  // ADR-0059 — mainstream corroboration + coverage gaps (business, sports, 2nd Israel outlet).
+  'bbc-world', // BBC World — global mainstream media (classifier decides Topic)
+  'bbc-business', // BBC Business — real business/economy events (fills the SEC/NBER gap)
+  'bbc-sport', // BBC Sport — sports news incl. the World Cup (thesportsdb is scores only)
+  'ynetnews', // Ynetnews — second Israel outlet, distinct ownership from Times of Israel
   'knesset-votes',
   'hf-papers',
   'nber',

@@ -35,8 +35,8 @@ remains is optional deepening (below).
 | **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze → upsert`, sequenced by `TickRunner`. Impact-first `computeBaseScore` — real-world impact (Reasoner `assessImpact`) + corroboration + authority, popularity a bounded booster (ADR-0034). `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Neural `OpenAIEmbedder` + hashing fallback (ADR-0018). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
 | **Scheduler / daemon** | In-process tick loop every X min (`main.ts`, ADR-0001). | ✅ |
 | **Config** | YAML + Zod (`config/horizon.yaml`, ADR-0003). | ✅ |
-| **Presentation** (Phase 2) | Read-only **query layer**: `budgetStories` attention kernel with a **readability floor** (ADR-0013/0024) + `HorizonQuery` (text brief, topic outline, podcast script, ADR-0014) over `GET /api/stories\|brief\|outline\|podcast`, plus a single-page viewer. Config-driven preferences (ADR-0015). | ✅ |
-| **Telegram bot** | Second Presentation adapter (ADR-0019/0020): `/brief\|outline\|podcast\|prefs\|feedback\|start`, per-chat persisted preferences, long-poll, podcast **audio** via OpenAI TTS, message-splitting for the 4096-char limit. **Free-text `/feedback`** tunes per-chat soft preference weights — the Reasoner interprets intent, pure `applyFeedback` does the clamped math, a weighted re-rank biases briefs; one-level undo (ADR-0026). | ✅ |
+| **Presentation** (Phase 2) | Read-only **query layer**: `budgetStories` attention kernel with a **readability floor** (ADR-0013/0024) + `HorizonQuery` (text brief, podcast script, ADR-0014) over `GET /api/brief\|podcast`, plus a single-page viewer. Two reader formats — **Brief + Podcast** (Stories + Topic outline removed, ADR-0060). Config-driven preferences (ADR-0015). | ✅ |
+| **Telegram bot** | Second Presentation adapter (ADR-0019/0020): `/brief\|podcast\|prefs\|feedback\|start`, per-chat persisted preferences, long-poll, podcast **audio** via OpenAI TTS, message-splitting for the 4096-char limit. **Free-text `/feedback`** tunes per-chat soft preference weights — the Reasoner interprets intent, pure `applyFeedback` does the clamped math, a weighted re-rank biases briefs; one-level undo (ADR-0026). | ✅ |
 | **Security & hardening** | Default-deny access, rate limits + persisted cost quotas, minutes clamp, localhost bind, fetch timeout/size caps, DB `0600` (ADR-0022/0023). | ✅ |
 
 Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain language in `../CONTEXT.md`.
@@ -49,7 +49,7 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain l
 |---|---|
 | **Text bullet brief** | ✅ `HorizonQuery.textBrief` (ADR-0014), readability floor (ADR-0024) |
 | **Audio podcast** | ✅ `podcastScript` → `narrate` → OpenAI TTS audio in Telegram (ADR-0020) |
-| **Topic-focused outline** | ✅ `topicOutline`, flat by significance (ADR-0014; region grouping dropped in ADR-0030) |
+| **Topic-focused outline** | ⛔ removed (ADR-0060) — the reader surface is now just Brief + Podcast; the topic filter still narrows the brief |
 | **Attention & time budgeting** (Principle 5) | ✅ `budgetStories` — readability-first allocator (ADR-0013/0024) |
 | **User preferences** | ✅ config defaults (ADR-0015) + per-chat persisted prefs for the bot (ADR-0022) |
 | **Cross-tick dedup** | ✅ `resolve` stage + persisted `story_vectors` (ADR-0017) |
@@ -77,8 +77,8 @@ Each step is TDD'd behind the seams already in place.
 
 ### ✅ Phase 2 — Query / Presentation layer *(DONE)*
 `HorizonQuery` over `StoryRepo`; `budgetStories` attention kernel (ADR-0013) with a
-readability floor + max-stories cap (ADR-0024); text brief, topic outline, podcast script
-(ADR-0014); config-driven preferences (ADR-0015).
+readability floor + max-stories cap (ADR-0024); text brief + podcast script
+(ADR-0014/0060); config-driven preferences (ADR-0015).
 
 ### ✅ Phase 3 — Deeper reasoning across time *(DONE)*
 7. ✅ **Persist embeddings + cross-tick dedup** — `resolve` stage, `story_vectors` (ADR-0017).

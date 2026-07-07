@@ -36,8 +36,8 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
    with social popularity only a bounded booster + a bounded numeric-Signal nudge — ADR-0034) → factual **summary** + **"why it matters"** → upsert.
    Runs every tick.
 4. **Presentation** — a read-only web viewer/JSON API **and** a Telegram bot deliver
-   time-budgeted briefs, topic outlines, podcast audio, and chat about the news from the
-   pre-digested cache.
+   time-budgeted briefs, podcast audio, and chat about the news from the
+   pre-digested cache (ADR-0060: two reader formats, Brief + Podcast).
 
 Tiered OpenAI models (configured in `config/horizon.yaml`) do the reasoning, embeddings, and TTS; **if no API key
 is set, the loop degrades gracefully** — real data + signal scoring, no AI enrichment.
@@ -67,8 +67,8 @@ npm run typecheck
 
 ## Telegram bot (ADR-0019/0020/0028/0029/0030)
 
-A second read-only surface over the same cache: time-budgeted briefs, topic outlines,
-**podcast audio**, and **chat about the news**, with per-chat preferences and memory.
+A second read-only surface over the same cache: time-budgeted briefs, **podcast audio**,
+and **chat about the news**, with per-chat preferences and memory.
 
 ```bash
 # 1. Create a bot with @BotFather, copy the token into .env:
@@ -79,7 +79,7 @@ npm start
 
 **Just talk to it (ADR-0030).** Plain English and tap-to-run buttons are the primary UX — the
 Reasoner routes free text ("what's new in AI?", "make it shorter") to the right action, and
-`/start` surfaces inline menus. Slash commands still work as aliases: `/brief 3`, `/outline AI`,
+`/start` surfaces inline menus. Slash commands still work as aliases: `/brief 3`,
 `/podcast 1`, `/chat <question>`, `/prefs topics AI,Geopolitics`, `/remember <note>`, `/forget`,
 `/subscribe 08:00`.
 Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as text. Restrict who
@@ -124,8 +124,8 @@ writes the podcast to `/tmp/horizon-podcast.mp3`.
   backstops that make open access safe. Every command (including a chat question, which hits the
   LLM) counts against both the per-chat and the global command cap; podcasts additionally draw the
   podcast caps. All counters are persisted, so a restart can't reset a day's budget. The only
-  user-driven OpenAI costs are the **podcast** (LLM + TTS) and **chat** (deep tier) paths — text
-  briefs/outlines and the whole web viewer are deterministic cache reads that spend **zero** tokens.
+  user-driven OpenAI costs are the **podcast** (LLM + TTS) and **chat** (deep tier) paths — the text
+  brief and the whole web viewer are deterministic cache reads that spend **zero** tokens.
 - **`minutes` is clamped** to `presentation.maxMinutes`, with a **tighter
   `presentation.maxPodcastMinutes`** cap on the expensive audio path. The LLM-backed web
   `/api/podcast` is **on** (`presentation.webPodcastEnabled: true`, ADR-0050); it narrates real
@@ -154,9 +154,7 @@ boot). Secrets and deploy knobs come from the environment:
 
 ## API
 
-- `GET /api/stories?topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
-- `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
-- `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
+- `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted; `topic` repeatable to filter)
 - `GET /api/podcast?minutes=3` → `{ script, audio }` — on (`presentation.webPodcastEnabled`, ADR-0050); narrates mp3 `audio` (base64) when TTS is enabled, else `audio:null` + `script` (ADR-0020/0058); `maxPodcastMinutes`-capped, shares the global podcast budget (ADR-0052)
 - `GET /api/ticks?limit=50` → `{ ticks: [...] }` — recent tick outcomes (ADR-0033)
 - `GET /api/reflection` → `{ reflections: [...] }` — LLM advisories + the actions they imposed (ADR-0042/0054)
@@ -194,7 +192,7 @@ The worker is a long-lived process, so deploy it as a service (not serverless). 
 2. **Host (Railway / Render / Fly.io):** deploy this repo (the `Dockerfile` is ready), and set env vars:
    - `OPENAI_API_KEY` — your key
    - `DB_URL` — the Turso URL · `DB_AUTH_TOKEN` — the Turso token
-3. Open the service URL — the viewer is at `/`, the API at `/api/stories`.
+3. Open the service URL — the viewer is at `/`, the API at `/api/brief`.
 
 Locally with Docker:
 
@@ -243,7 +241,7 @@ escaping and model outputs pass grounding guards; scheduled personalized briefs 
 use every surface → inspect all collections) drove a correctness/cost/resilience sweep: deep
 summaries + "why it matters" now persist across ticks instead of being wiped by cheap
 re-upserts; the two GDELT adapters share a per-host rate limiter (no more 429 every tick);
-`/api/stories` can't be 500'd by a non-numeric param; HTML entities are decoded in summaries;
+the JSON API can't be 500'd by a non-numeric param; HTML entities are decoded in summaries;
 `raw_items`/`signal_observations` are kept bounded; classify/score run with bounded
 concurrency and the boot backfill no longer races live ticks; the OpenAI transport + embedder
 retry transient blips (so a hash vector can't poison the neural store); pairing codes are

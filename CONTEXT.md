@@ -166,11 +166,11 @@ crashing it.
 
 **Presentation Layer** — read-only surfaces over finalized Stories, mapping user constraints
 (time budget, topic preferences) onto the pre-computed Significance scores via the
-`QueryEngine`. Two adapters: the single-page **web viewer** and the **Telegram bot** (text
-briefs, topic outlines, and podcast audio; per-chat preferences and Memory). The bot's primary
-UX is **plain English + tap-to-run buttons** (ADR-0030) — free text is routed to an intent;
-slash commands (`/brief`, `/outline`, `/podcast`, `/chat`, `/prefs`, `/feedback`, `/remember`,
-`/forget`) remain as aliases. It also supports **Chat** — conversational Q&A grounded in the
-cached Stories, escalating to an optional **web search** fallback only when the cache can't
-answer and only when configured (ADR-0029, off by default). The brief and outline read the
-cache only; chat's web fallback is the one deliberate exception.
+`QueryEngine`. Two adapters: the single-page **web viewer** and the **Telegram bot**. Both
+offer exactly two reader formats — the text **brief** and the narrated **podcast** (ADR-0060) —
+plus per-chat preferences and Memory. The bot's primary UX is **plain English + tap-to-run
+buttons** (ADR-0030) — free text is routed to an intent; slash commands (`/brief`, `/podcast`,
+`/chat`, `/prefs`, `/feedback`, `/remember`, `/forget`) remain as aliases. It also supports
+**Chat** — conversational Q&A grounded in the cached Stories, escalating to an optional **web
+search** fallback only when the cache can't answer and only when configured (ADR-0029, off by
+default). The brief reads the cache only; chat's web fallback is the one deliberate exception.

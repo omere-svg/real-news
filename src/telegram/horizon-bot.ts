@@ -70,7 +70,6 @@ const MENU_BUTTON = { text: '☰ Menu', data: 'menu' } as const;
 const MENU_BUTTONS = [
   { text: '📰 Brief', data: 'brief' },
   { text: '🎧 Podcast', data: 'podcast' },
-  { text: '🔎 By topic', data: 'topics' },
   { text: '⚙️ Preferences', data: 'prefs' },
 ] as const;
 
@@ -157,8 +156,6 @@ const HELP = [
   '',
   '📰  A brief, sized to your time',
   '      “give me a 5-minute brief on AI”  ·  /brief 5',
-  '🔎  A deep dive on one topic',
-  '      “what’s happening in Israel?”  ·  /outline Israel',
   '🎧  A narrated podcast episode',
   '      “make me a 3-minute podcast”  ·  /podcast 3',
   '💬  Ask about the news',
@@ -287,12 +284,6 @@ export class HorizonBot {
     switch (intent.action) {
       case 'brief':
         return minutes === undefined ? { kind: 'brief' } : { kind: 'brief', minutes };
-      case 'outline':
-        return {
-          kind: 'outline',
-          ...(intent.topic ? { topic: intent.topic } : {}),
-          ...(minutes === undefined ? {} : { minutes }),
-        };
       case 'podcast':
         return minutes === undefined ? { kind: 'podcast' } : { kind: 'podcast', minutes };
       case 'question':
@@ -335,8 +326,6 @@ export class HorizonBot {
       );
     } else if (data === 'menu') {
       await this.sendMenu(chatId);
-    } else if (data === 'topics') {
-      await this.sendTopicMenu(chatId);
     } else {
       const command = callbackCommand(data);
       if (command && (await this.quota.withinQuota(chatId, command, now))) {
@@ -391,22 +380,6 @@ export class HorizonBot {
       case 'brief': {
         const req = await this.request(chatId, command.minutes);
         return this.sendContent(chatId, await query.textBrief(req));
-      }
-
-      case 'outline': {
-        if (!command.topic) {
-          return this.sendTopicMenu(chatId);
-        }
-        const topic = canonical(TOPICS, command.topic);
-        if (!topic) {
-          return transport.sendMessage(
-            chatId,
-            `I don’t follow “${command.topic}”. Pick one of: ${TOPICS.join(', ')} — ` +
-              `e.g. /outline AI. Or just tap 🔎 By topic.`,
-          );
-        }
-        const req = await this.request(chatId, command.minutes);
-        return this.sendContent(chatId, await query.topicOutline(topic, req));
       }
 
       case 'podcast': {
@@ -522,7 +495,7 @@ export class HorizonBot {
   }
 
   /**
-   * Send a generated artifact (brief/outline/chat answer) and arm conversation:
+   * Send a generated artifact (brief/podcast/chat answer) and arm conversation:
    * attach the per-answer feedback button (ADR-0028) and the menu button
    * (ADR-0030), and put the chat into question mode so a plain follow-up is
    * treated as a news question (ADR-0029).
@@ -536,14 +509,6 @@ export class HorizonBot {
   /** The welcome / catch-all: the help blurb with the tap-to-run main menu (ADR-0030). */
   private async sendMenu(chatId: number): Promise<void> {
     await this.deps.transport.sendMessage(chatId, HELP, { buttons: [...MENU_BUTTONS] });
-  }
-
-  /** A one-tap topic picker; each button runs an outline for that topic (ADR-0030). */
-  private async sendTopicMenu(chatId: number): Promise<void> {
-    const buttons = TOPICS.map((t) => ({ text: t, data: `outline:${t}` }));
-    await this.deps.transport.sendMessage(chatId, 'Pick a topic for a focused outline:', {
-      buttons,
-    });
   }
 
   /**
@@ -948,8 +913,7 @@ function humanJoin(parts: readonly string[]): string {
 
 /**
  * Map a tap-to-run button's callback data to a Command (ADR-0030), or null for
- * a navigation-only tap. `outline:<topic>` carries the picked topic; the topic
- * is validated by the dispatcher like a typed one.
+ * a navigation-only tap.
  */
 function callbackCommand(data: string): Command | null {
   switch (data) {
@@ -959,10 +923,6 @@ function callbackCommand(data: string): Command | null {
       return { kind: 'podcast' };
     case 'prefs':
       return { kind: 'prefsShow' };
-  }
-  if (data.startsWith('outline:')) {
-    const topic = data.slice('outline:'.length);
-    return topic ? { kind: 'outline', topic } : null;
   }
   return null;
 }

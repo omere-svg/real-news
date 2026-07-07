@@ -12,7 +12,6 @@ export type Command =
   | { kind: 'link'; code: string }
   | { kind: 'help' }
   | { kind: 'brief'; minutes?: number }
-  | { kind: 'outline'; topic?: string; minutes?: number }
   | { kind: 'podcast'; minutes?: number }
   | { kind: 'prefsShow' }
   | { kind: 'prefsSet'; field: PrefsField; value: string }
@@ -62,14 +61,6 @@ export function parseCommand(text: string): Command {
     case 'podcast': {
       const minutes = positiveNumber(args[0]);
       return minutes === undefined ? { kind: 'podcast' } : { kind: 'podcast', minutes };
-    }
-    case 'outline': {
-      const topic = args[0];
-      const minutes = positiveNumber(args[1]);
-      if (topic === undefined) return { kind: 'outline' };
-      return minutes === undefined
-        ? { kind: 'outline', topic }
-        : { kind: 'outline', topic, minutes };
     }
     case 'prefs': {
       const sub = args[0]?.toLowerCase();

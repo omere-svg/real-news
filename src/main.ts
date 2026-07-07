@@ -129,6 +129,17 @@ function buildSource(id: StorySourceId, s: SourceConfig, fetchJson: JsonFetcher)
       return new RssSource({ ...base, id: 'guardian', feedUrl: 'https://www.theguardian.com/world/rss' });
     case 'timesofisrael':
       return new RssSource({ ...base, id: 'timesofisrael', feedUrl: 'https://www.timesofisrael.com/feed/', topic: 'Israel' });
+    // ADR-0059 — mainstream corroboration + coverage gaps.
+    case 'bbc-world':
+      // Like Guardian, BBC World spans many Topics — no hard-coded Topic, so the
+      // classifier decides per item and same-event articles converge (ADR-0038).
+      return new RssSource({ ...base, id: 'bbc-world', feedUrl: 'https://feeds.bbci.co.uk/news/world/rss.xml' });
+    case 'bbc-business':
+      return new RssSource({ ...base, id: 'bbc-business', feedUrl: 'https://feeds.bbci.co.uk/news/business/rss.xml', topic: 'Business' });
+    case 'bbc-sport':
+      return new RssSource({ ...base, id: 'bbc-sport', feedUrl: 'https://feeds.bbci.co.uk/sport/rss.xml', topic: 'Sports' });
+    case 'ynetnews':
+      return new RssSource({ ...base, id: 'ynetnews', feedUrl: 'https://www.ynetnews.com/Integration/StoryRss3082.xml', topic: 'Israel' });
     case 'nber':
       return new RssSource({ ...base, id: 'nber', feedUrl: 'https://back.nber.org/rss/new.xml', topic: 'Business' });
     case 'nature':

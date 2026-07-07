@@ -155,6 +155,31 @@ describe('backfillSummaries', () => {
     expect(healed?.displayTitle).toBe('Lithuania bans false programs'); // English headline now stored
   });
 
+  it('heals a story whose summary/why were written in the source language (ADR-0059)', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    await rawItemRepo.upsert([rawItem('1', { title: 'Japan remilitarization', text: 'Details.' })]);
+    // English displayTitle, but an early deep pass wrote the body in Chinese — the
+    // exact screenshot bug. needsSummary/whyItMatters are both non-empty, so only
+    // the non-Latin-script check can catch it.
+    await storyRepo.upsert({
+      id: 'cjk', title: 'Japan remilitarization', url: null, topic: 'Politics',
+      significance: 8, displayTitle: 'Japan remilitarization moves draw criticism',
+      summary: '千龙网·中国首都网报道称，高市早苗政府频繁采取再军事化动作。',
+      whyItMatters: '这些动作在日本国内引发强烈批评。',
+      memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+
+    const llm = new FakeLLM({
+      analyze: { summary: 'Japan is expanding its military.', whyItMatters: 'It alarms neighbours.', displayTitle: 'Japan remilitarization moves draw criticism' },
+    });
+    const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
+
+    expect(res).toEqual({ processed: 1, total: 1 }); // needsEnglishBody picked it up
+    const healed = await storyRepo.get('cjk');
+    expect(healed?.summary).toBe('Japan is expanding its military.'); // now English
+    expect(healed?.whyItMatters).toBe('It alarms neighbours.');
+  });
+
   it('carries an existing displayTitle through a summary-only heal (does not wipe it)', async () => {
     const { storyRepo, rawItemRepo } = await setup();
     await rawItemRepo.upsert([rawItem('1', { title: 'Fallback lead', text: 'Something happened.' })]);

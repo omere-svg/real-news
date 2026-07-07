@@ -22,16 +22,6 @@ describe('parseCommand', () => {
     expect(parseCommand('/brief@HorizonBot 5')).toEqual({ kind: 'brief', minutes: 5 });
   });
 
-  it('parses outline with a topic and optional minutes', () => {
-    expect(parseCommand('/outline AI')).toEqual({ kind: 'outline', topic: 'AI' });
-    expect(parseCommand('/outline Geopolitics 12')).toEqual({
-      kind: 'outline',
-      topic: 'Geopolitics',
-      minutes: 12,
-    });
-    expect(parseCommand('/outline')).toEqual({ kind: 'outline' });
-  });
-
   it('parses preference commands', () => {
     expect(parseCommand('/prefs')).toEqual({ kind: 'prefsShow' });
     expect(parseCommand('/prefs clear')).toEqual({ kind: 'prefsClear' });

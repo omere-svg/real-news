@@ -139,6 +139,60 @@ describe('RssSource', () => {
     expect(items).toHaveLength(1);
   });
 
+  // Real BBC feed shape (observed 2026-07-07): clean CDATA title + plain-text
+  // description; identical structure across news/world, news/business, sport.
+  const BBC_FEED = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <item><title><![CDATA[World Cup: hosts advance to the quarter-finals]]></title>
+    <description><![CDATA[The hosts beat their rivals 2-1 in front of a record crowd.]]></description>
+    <link>https://www.bbc.com/sport/football/articles/abc123</link>
+    <pubDate>Mon, 06 Jul 2026 20:00:00 GMT</pubDate></item>
+</channel></rss>`;
+
+  // Real Ynetnews feed shape (observed 2026-07-07): real (not double-escaped)
+  // inline HTML inside the description — the stripHtml→decodeEntities pipeline
+  // must reduce it to plain text.
+  const YNET_FEED = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <item><title>Israel signs new trade deal</title>
+    <description><![CDATA[<a href="https://ynetnews.com/x"><img src="p.jpg"/></a>Officials said the deal would boost exports &amp; jobs.]]></description>
+    <link>https://www.ynetnews.com/article/xyz</link>
+    <pubDate>Mon, 06 Jul 2026 18:00:00 GMT</pubDate></item>
+</channel></rss>`;
+
+  it('bbc-world lets the classifier decide the Topic (no hard-coded topic)', async () => {
+    const source = new RssSource({
+      id: 'bbc-world', feedUrl: 'https://x/rss', fetchJson: async () => BBC_FEED, maxItems: 10,
+    });
+    const [item] = await source.extract();
+    expect(item?.source).toBe('bbc-world');
+    expect(item?.metadata.topic).toBeUndefined();
+    expect(item?.title).toBe('World Cup: hosts advance to the quarter-finals');
+  });
+
+  it('bbc-business maps to Business, bbc-sport maps to Sports', async () => {
+    const business = new RssSource({
+      id: 'bbc-business', feedUrl: 'https://x/rss', topic: 'Business', fetchJson: async () => BBC_FEED, maxItems: 10,
+    });
+    const sport = new RssSource({
+      id: 'bbc-sport', feedUrl: 'https://x/rss', topic: 'Sports', fetchJson: async () => BBC_FEED, maxItems: 10,
+    });
+    expect((await business.extract())[0]?.metadata.topic).toBe('Business');
+    expect((await sport.extract())[0]?.metadata.topic).toBe('Sports');
+  });
+
+  it('ynetnews maps to Israel and strips inline HTML from the description', async () => {
+    const source = new RssSource({
+      id: 'ynetnews', feedUrl: 'https://x/rss', topic: 'Israel', fetchJson: async () => YNET_FEED, maxItems: 10,
+    });
+    const [item] = await source.extract();
+    expect(item?.metadata.topic).toBe('Israel');
+    expect(item?.title).toBe('Israel signs new trade deal');
+    // The <a>/<img> markup is gone; entities are decoded to plain text.
+    expect(item?.text).toBe('Officials said the deal would boost exports & jobs.');
+    expect(item?.text).not.toContain('<');
+  });
+
   it('healthCheck returns false (never throws) on failure', async () => {
     const source = new RssSource({
       id: 'nature',

@@ -251,7 +251,7 @@ export const configSchema = z.object({
     maxStories: z.number().int().positive().default(12),
     /** Expose the LLM-backed /api/podcast on the web server (ADR-0023). Off by default. */
     webPodcastEnabled: z.boolean().default(false),
-    /** Reading rate for text artifacts — brief, outline (ADR-0013/0014). */
+    /** Reading rate for the text brief (ADR-0013/0014). */
     textWordsPerMinute: z.number().positive().default(220),
     /** Speaking rate for the podcast script (ADR-0013/0014). */
     audioWordsPerMinute: z.number().positive().default(150),

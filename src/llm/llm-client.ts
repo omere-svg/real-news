@@ -274,7 +274,6 @@ export interface DiscussResult {
  */
 export type RouterAction =
   | 'brief'
-  | 'outline'
   | 'podcast'
   | 'question'
   | 'prefs'
@@ -292,15 +291,13 @@ export interface RouteInput {
 
 /**
  * The structured intent parsed from a free-text message. The router names the
- * action and extracts any explicit time budget / topic; argument validation
- * (valid topics, positive minutes) stays where the vocabulary lives — the bot.
+ * action and extracts any explicit time budget; argument validation (positive
+ * minutes) stays where the vocabulary lives — the bot.
  */
 export interface RouterIntent {
   readonly action: RouterAction;
   /** An explicit time budget the message asked for, else null. */
   readonly minutes: number | null;
-  /** The topic for an outline, else null (validated downstream). */
-  readonly topic: string | null;
 }
 
 // --- Plain-language preference edits (ADR-0030) ---
