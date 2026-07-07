@@ -163,16 +163,27 @@ export function createApp(
     // Today's durable LLM token counters (TokenLedger writes them via the usage
     // repo) — read from the same store so a restart doesn't zero the surface.
     const day = utcDay(Date.now());
-    const [storyStats, signalStats, ticks, cheapTokens, deepTokens, embedTokens, ttsTokens] =
-      await Promise.all([
-        storyRepo.stats(CROSS_TICK_MS),
-        signalObservations?.stats() ?? { observations: 0, oldestObservedAt: null },
-        tickReports?.recent(200) ?? [],
-        web.usage?.peek('global:tokens:cheap', day) ?? 0,
-        web.usage?.peek('global:tokens:deep', day) ?? 0,
-        web.usage?.peek('global:tokens:embed', day) ?? 0,
-        web.usage?.peek('global:tokens:tts', day) ?? 0,
-      ]);
+    const [
+      storyStats,
+      signalStats,
+      ticks,
+      cheapTokens,
+      deepTokens,
+      embedTokens,
+      ttsTokens,
+      subscribers,
+      questionsAnswered,
+    ] = await Promise.all([
+      storyRepo.stats(CROSS_TICK_MS),
+      signalObservations?.stats() ?? { observations: 0, oldestObservedAt: null },
+      tickReports?.recent(200) ?? [],
+      web.usage?.peek('global:tokens:cheap', day) ?? 0,
+      web.usage?.peek('global:tokens:deep', day) ?? 0,
+      web.usage?.peek('global:tokens:embed', day) ?? 0,
+      web.usage?.peek('global:tokens:tts', day) ?? 0,
+      auth?.prefs.countSubscribed() ?? 0,
+      chatTraces?.count() ?? 0,
+    ]);
     return c.json({
       tokens: {
         day,
@@ -191,6 +202,8 @@ export function createApp(
       signalObservations: signalStats.observations,
       oldestSignalAt: signalStats.oldestObservedAt,
       ticksRecorded: ticks.length,
+      subscribers,
+      questionsAnswered,
       generatedAt: Date.now(),
     });
   });

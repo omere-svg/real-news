@@ -285,20 +285,23 @@ export class DrizzleStoryRepo implements StoryRepo {
 
   async stats(crossTickMs: number): Promise<StoryStats> {
     const [total] = await this.db.select({ n: count() }).from(stories);
-    // One grouped pass over membership: a row per Story owning more than one
-    // member ref — the corroboration/dedup evidence.
-    const multi = await this.db
+    // One grouped pass over membership — a row per Story owning more than one
+    // member ref (the corroboration/dedup evidence) — counted in SQL via a
+    // subquery rather than pulling every group row back to count in JS.
+    const multiGroups = this.db
       .select({ storyId: membership.storyId })
       .from(membership)
       .groupBy(membership.storyId)
-      .having(sql`count(*) > 1`);
+      .having(sql`count(*) > 1`)
+      .as('multi_groups');
+    const [multi] = await this.db.select({ n: count() }).from(multiGroups);
     const [developed] = await this.db
       .select({ n: count() })
       .from(stories)
       .where(gt(stories.updatedAt, sql`${stories.firstSeenAt} + ${crossTickMs}`));
     return {
       stories: total?.n ?? 0,
-      multiSourceStories: multi.length,
+      multiSourceStories: multi?.n ?? 0,
       storiesUpdatedAcrossTicks: developed?.n ?? 0,
     };
   }

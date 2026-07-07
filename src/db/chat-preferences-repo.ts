@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, lte, ne, or } from 'drizzle-orm';
+import { and, count, eq, isNotNull, isNull, lte, ne, or } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { chatPreferences } from './schema.js';
 import type { Topic } from '../domain/types.js';
@@ -51,6 +51,11 @@ export interface ChatPreferencesRepo {
   dueBriefs(hhmm: string, utcDay: string): Promise<number[]>;
   /** Stamp today's delivery so a restart can't double-send (ADR-0053). */
   markBriefSent(chatId: number, utcDay: string): Promise<void>;
+  /**
+   * Count of chats with an active daily-brief subscription (`briefAt` set) —
+   * the `/api/stats` accumulation surface (ADR-0053).
+   */
+  countSubscribed(): Promise<number>;
 }
 
 type Row = typeof chatPreferences.$inferSelect;
@@ -147,5 +152,13 @@ export class DrizzleChatPreferencesRepo implements ChatPreferencesRepo {
       .update(chatPreferences)
       .set({ briefLastSentDay: utcDay })
       .where(eq(chatPreferences.chatId, chatId));
+  }
+
+  async countSubscribed(): Promise<number> {
+    const [row] = await this.db
+      .select({ n: count() })
+      .from(chatPreferences)
+      .where(isNotNull(chatPreferences.briefAt));
+    return row?.n ?? 0;
   }
 }

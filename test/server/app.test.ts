@@ -336,7 +336,39 @@ describe('HTTP API', () => {
     expect(body).toMatchObject({
       stories: 2, signalObservations: 0, oldestSignalAt: null, ticksRecorded: 0,
       tokens: { cheap: 0, deep: 0, embed: 0, tts: 0, total: 0, ttsCharacters: 0 }, // no usage store wired
+      subscribers: 0, questionsAnswered: 0, // no prefs/chatTraces repo wired
     });
+  });
+
+  it('stats expose subscribers and answered-questions counts', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const prefs = new DrizzleChatPreferencesRepo(db);
+    const webAuth = new DrizzleWebAuthRepo(db);
+    const chatTraces = new DrizzleChatTraceRepo(db);
+
+    // Two chats with an active daily-brief subscription (briefAt set), one without.
+    await prefs.set(1, { briefAt: '08:00' });
+    await prefs.set(2, { briefAt: '09:30' });
+    await prefs.set(3, { topics: ['AI'] }); // no briefAt ⇒ not subscribed
+
+    await chatTraces.record({
+      createdAt: 1000, question: 'q1', steps: [], answeredFromNews: true, plan: '', path: 'agent',
+    });
+    await chatTraces.record({
+      createdAt: 2000, question: 'q2', steps: [], answeredFromNews: false, plan: '', path: 'fallback',
+    });
+
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(
+      repo, queryEngine, { minutes: 10 },
+      { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false },
+      undefined, { webAuth, prefs, now: () => 1000 }, undefined, undefined, chatTraces,
+    );
+
+    const body = (await (await app.request('/api/stats')).json()) as Record<string, number>;
+    expect(body.subscribers).toBe(2);
+    expect(body.questionsAnswered).toBe(2);
   });
 
   it('public chat-traces endpoint never returns the full question text', async () => {

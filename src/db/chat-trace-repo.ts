@@ -1,4 +1,4 @@
-import { desc, notInArray } from 'drizzle-orm';
+import { count, desc, notInArray } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { chatTraces, type StoredTraceStep } from './schema.js';
 
@@ -54,6 +54,8 @@ export interface ChatTraceRepo {
   recent(limit: number): Promise<ChatTrace[]>;
   /** Delete all but the most recent `keep` traces. Returns rows removed. */
   pruneToRecent(keep: number): Promise<number>;
+  /** Total traces recorded — the "questions answered" `/api/stats` aggregate (ADR-0053). */
+  count(): Promise<number>;
 }
 
 export class DrizzleChatTraceRepo implements ChatTraceRepo {
@@ -104,5 +106,10 @@ export class DrizzleChatTraceRepo implements ChatTraceRepo {
     if (stale.length === 0) return 0;
     await this.db.delete(chatTraces).where(notInArray(chatTraces.id, keepIds));
     return stale.length;
+  }
+
+  async count(): Promise<number> {
+    const [row] = await this.db.select({ n: count() }).from(chatTraces);
+    return row?.n ?? 0;
   }
 }
