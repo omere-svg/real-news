@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/server/app.js';
+import { TOPICS } from '../../src/domain/types.js';
 import { renderDashboard } from '../../src/server/ui.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
 import { DrizzleSignalObservationRepo } from '../../src/db/signal-observation-repo.js';
@@ -152,6 +153,14 @@ describe('HTTP API', () => {
     const app = await appWithStories();
     const res = await app.request('/api/outline');
     expect(res.status).toBe(400);
+  });
+
+  it('GET /api/outline rejects an unknown topic with 400', async () => {
+    const app = await appWithStories();
+    const res = await app.request('/api/outline?topic=NotARealTopic');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/topic/i);
   });
 
   it('GET /api/podcast returns a narrated script', async () => {
@@ -535,6 +544,35 @@ describe('Log in with Telegram + shared preferences (ADR-0040)', () => {
     const body = (await put.json()) as { topics: string[]; minutes: number };
     expect(body.topics).toEqual(['AI']); // "Nonsense" filtered out
     expect(body.minutes).toBe(60); // clamped to maxMinutes
+  });
+
+  it('preferences dedupes topics and rejects oversized arrays', async () => {
+    const { app, webAuth } = await appWithAuth();
+    const start = await app.request('/api/auth/start', { method: 'POST' });
+    const { code } = (await start.json()) as { code: string };
+    const cookie = cookieOf(start);
+    await webAuth.claim(code, 11, null, 1000);
+
+    // Duplicate entries collapse to a single occurrence.
+    const dup = await app.request('/api/preferences', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ topics: ['AI', 'AI', 'Israel', 'Israel'] }),
+    });
+    expect(dup.status).toBe(200);
+    const dupBody = (await dup.json()) as { topics: string[] };
+    expect(dupBody.topics).toEqual(['AI', 'Israel']);
+
+    // An array larger than the Topic vocabulary is rejected outright.
+    const oversized = Array.from({ length: TOPICS.length + 1 }, () => 'AI');
+    const big = await app.request('/api/preferences', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ topics: oversized }),
+    });
+    expect(big.status).toBe(400);
+    const bigBody = (await big.json()) as { error: string };
+    expect(bigBody.error).toMatch(/topic/i);
   });
 
   it('logout ends the session', async () => {

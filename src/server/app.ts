@@ -11,6 +11,7 @@ import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
 import { utcDay, type UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import { TOPICS, type Topic } from '../domain/types.js';
+import { canonical } from '../domain/vocab.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
 import { scoreExplanation } from '../presentation/score-explanation.js';
@@ -217,8 +218,19 @@ export function createApp(
   });
 
   app.get('/api/outline', async (c) => {
-    const topic = (c.req.query('topic') ?? defaults.topics?.[0]) as Topic | undefined;
-    if (!topic) return c.json({ error: 'topic is required' }, 400);
+    const raw = c.req.query('topic');
+    if (raw === undefined) {
+      const topic = defaults.topics?.[0];
+      if (!topic) return c.json({ error: 'topic is required' }, 400);
+      return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
+    }
+    // Validate against the controlled vocabulary the same way the Telegram bot
+    // does (canonical()) — an unrecognized topic must 400, not silently flow
+    // through as a fake Topic and hit the query engine with garbage.
+    const topic = canonical(TOPICS, raw);
+    if (!topic) {
+      return c.json({ error: `unknown topic "${raw}"; expected one of ${TOPICS.join(', ')}` }, 400);
+    }
     return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
   });
 
@@ -324,11 +336,21 @@ function wireAuth(
     const patch: { topics?: Topic[] | undefined; defaultMinutes?: number } = {};
 
     if (Array.isArray(body.topics)) {
+      // A client-controlled array with no bound could carry thousands of
+      // (possibly duplicated) entries; reject anything bigger than the whole
+      // vocabulary outright rather than doing wasted work on it.
+      if (body.topics.length > TOPICS.length) {
+        return c.json(
+          { error: `too many topics; at most ${TOPICS.length} distinct topics are supported` },
+          400,
+        );
+      }
       const valid = body.topics.filter((t): t is Topic =>
         (TOPICS as readonly string[]).includes(t as string),
       );
+      const deduped = [...new Set(valid)];
       // An empty/no-valid selection clears the filter back to the default ("all").
-      patch.topics = valid.length ? valid : undefined;
+      patch.topics = deduped.length ? deduped : undefined;
     }
     if (body.minutes !== undefined && Number.isFinite(Number(body.minutes))) {
       patch.defaultMinutes = normalizeMinutes(Number(body.minutes), web.maxMinutes);
