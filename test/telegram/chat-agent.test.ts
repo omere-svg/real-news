@@ -377,6 +377,17 @@ describe('ChatAgent (ADR-0053)', () => {
     expect(out.answer).toBe('ok');
   });
 
+  it('a malformed final answer on turn 0 does not become the plan', async () => {
+    const transport = new ScriptedTransport([{ text: 'not json, just a broken final answer', toolCalls: [] }]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    // parseFinal's raw-text degrade still applies to the answer...
+    expect(out.answer).toBe('not json, just a broken final answer');
+    // ...but the same raw text must not be misfiled as the plan: there were no
+    // tool calls on turn 0, so this was never an agentic "state your plan" turn.
+    expect(out.plan).toBe('');
+  });
+
   it('calls the same tool with distinct arguments across steps (real iteration)', async () => {
     const search = tool('search_stories', '(nothing)');
     const transport = new ScriptedTransport([

@@ -151,7 +151,7 @@ export class ChatAgent {
       // Rubric plan→act→observe: capture the model's stated plan from its
       // very first turn, whichever shape it arrives in (never fails on a
       // missing/malformed plan — see extractPlan).
-      if (turn === 0) plan = extractPlan(res.text);
+      if (turn === 0) plan = extractPlan(res.text, res.toolCalls.length > 0);
 
       if (res.toolCalls.length === 0) {
         const final = parseFinal(res.text);
@@ -245,8 +245,12 @@ function groundAnswer(answer: string, grounded: ReadonlySet<string>): string {
  * turn (rubric plan→act→observe). Two shapes are tolerated: a `"plan"` field
  * on a JSON final answer, or plain leading text sent alongside tool calls.
  * Never throws; '' when the model didn't state one.
+ *
+ * The raw-text fallback (for malformed JSON) only fires when this turn
+ * actually made tool calls — otherwise the raw text is a (broken) final
+ * answer, and its first line must not be misfiled as the plan.
  */
-function extractPlan(text: string | null): string {
+function extractPlan(text: string | null, hasToolCalls: boolean): string {
   const raw = (text ?? '').trim();
   if (!raw) return '';
   try {
@@ -257,8 +261,9 @@ function extractPlan(text: string | null): string {
     // Valid JSON but no plan field — tolerate, don't guess from the answer body.
     return '';
   } catch {
-    // Not JSON: plain leading text sent alongside a first-turn tool call.
-    return raw.split('\n')[0]!.trim().slice(0, PLAN_CHARS);
+    // Not JSON. If tool calls came with it, it's plain leading text sent
+    // alongside them — a real plan. Otherwise it's a malformed final answer.
+    return hasToolCalls ? raw.split('\n')[0]!.trim().slice(0, PLAN_CHARS) : '';
   }
 }
 
