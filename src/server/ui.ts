@@ -314,6 +314,10 @@ const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 let format = 'stories';
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// Only allow http(s) links; a feed-controlled url must never reach an href raw
+// (a " breaks out of the attribute; a javascript: scheme runs on click). Returns
+// a safe absolute url or null (drop the link, keep the title).
+function safeUrl(u){ try { const p = new URL(u, location.origin); return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null; } catch { return null; } }
 function selectedTopics(){ return [...topicsBox.querySelectorAll('input[name="topic"]:checked')].map(c => c.value); }
 function setTopics(list){ const set = new Set(list || []); topicsBox.querySelectorAll('input[name="topic"]').forEach(i => { i.checked = set.has(i.value); }); }
 function setFormat(f){ if(f && seg.querySelector('button[data-fmt="'+f+'"]')) format = f; seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fmt === format))); }
@@ -512,7 +516,8 @@ async function loadStories(topics) {
   }
   list.innerHTML = '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map(s => {
     const color = TOPIC_COLORS[s.topic] || '#8b93a7';
-    const title = s.url ? '<a href="'+s.url+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
+    const su = s.url ? safeUrl(s.url) : null;
+    const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
     const sources = [...new Set(s.memberRefs.map(r => r.source))].join(', ');
     return '<div class="card story"><div class="row"><p class="title">'+title+'</p>'+
       '<span class="scorepill">'+s.significance.toFixed(1)+'<span class="max">/10</span></span></div>'+

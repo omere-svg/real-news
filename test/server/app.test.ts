@@ -157,6 +157,16 @@ describe('HTTP API', () => {
     expect(await res.text()).toContain('value="10"'); // defaults.minutes
   });
 
+  it('the viewer routes story links through a scheme-checked safeUrl, never a raw href (ADR-0049)', async () => {
+    const app = await appWithStories();
+    const html = await (await app.request('/')).text();
+    // The XSS fix: a feed-controlled url must be escaped + scheme-checked, not
+    // interpolated raw into the href attribute.
+    expect(html).toContain('function safeUrl');
+    expect(html).toContain("'<a href=\"'+esc(su)+'\"");
+    expect(html).not.toContain("'<a href=\"'+s.url+'\"");
+  });
+
   it('GET /api/ticks returns recent tick records, newest first (ADR-0033)', async () => {
     const db = await createTestDb();
     const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
