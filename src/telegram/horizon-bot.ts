@@ -20,12 +20,17 @@ import type { PresentationDefaults } from '../server/app.js';
 import type {
   ConversationTurn,
   Discussant,
+  DiscussResult,
   FeedbackInterpreter,
   IntentRouter,
   PreferencesInterpreter,
   PrefsListChange,
 } from '../llm/llm-client.js';
 import type { WebSearch } from '../web/web-search.js';
+import type { ToolCapableTransport } from '../llm/chat-transport.js';
+import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
+import type { ChatTraceRepo } from '../db/chat-trace-repo.js';
+import { buildChatTools, ChatAgent } from './chat-agent.js';
 import { applyFeedback, type PreferenceProfile } from '../preferences/feedback.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
 import { TOPICS, type Topic } from '../domain/types.js';
@@ -90,6 +95,17 @@ export interface HorizonBotDeps {
   readonly embedder?: Embedder;
   /** Live web fallback when the cache can't answer (ADR-0029); omit to stay cache-only. */
   readonly webSearch?: WebSearch;
+  /**
+   * Tool-capable transport for the chat agent loop (ADR-0053): when wired, the
+   * MODEL drives chat — choosing tools (cache search, story detail, signal
+   * trends, web search, memory) until it can answer. Omit (or on error) chat
+   * falls back to the fixed retrieve→answer discuss path.
+   */
+  readonly agentTransport?: ToolCapableTransport;
+  /** Signal history behind the agent's get_signal_trends tool (ADR-0053). */
+  readonly signals?: Pick<SignalObservationRepo, 'latestTrends'>;
+  /** Persists chat-agent trajectories as inspectable traces (ADR-0053). */
+  readonly traces?: ChatTraceRepo;
   /** Claims web pairing codes to link a web session to this chat (ADR-0040); omit to disable. */
   readonly webLink?: WebLinker;
   /** TTS for podcast audio; null sends the script as text (ADR-0020). */
@@ -445,26 +461,86 @@ export class HorizonBot {
     }
 
     const prefs = await this.deps.prefs.get(chatId);
-    const stories = await this.grounding!.stories(prefs, q);
     const memory = prefs?.memory;
     const history = this.session(chatId).history;
-    const base = { question: q, history, stories, ...(memory ? { memory } : {}) };
 
-    let result = await discussant.discuss(base);
-    let sourcedFromWeb = false;
-    if (!result.answeredFromNews && this.deps.webSearch) {
-      const web = await this.deps.webSearch.search(q);
-      if (web.length > 0) {
-        sourcedFromWeb = true;
-        result = await discussant.discuss({ ...base, web });
+    // The agent loop (ADR-0053): the model drives tool selection. Any failure
+    // degrades to the fixed retrieve→answer path below — never to the user.
+    let result: DiscussResult | null = null;
+    let usedWeb = false;
+    if (this.deps.agentTransport) {
+      const agentResult = await this.runChatAgent(chatId, q, history, prefs).catch((err) => {
+        console.warn('[telegram] chat agent failed, degrading to discuss:', err);
+        return null;
+      });
+      if (agentResult) {
+        result = agentResult;
+        usedWeb = agentResult.steps.some((s: { tool: string }) => s.tool === 'web_search');
+      }
+    }
+
+    if (!result) {
+      const stories = await this.grounding!.stories(prefs, q);
+      const base = { question: q, history, stories, ...(memory ? { memory } : {}) };
+      result = await discussant.discuss(base);
+      if (!result.answeredFromNews && this.deps.webSearch) {
+        const web = await this.deps.webSearch.search(q);
+        if (web.length > 0) {
+          usedWeb = true;
+          result = await discussant.discuss({ ...base, web });
+        }
       }
     }
 
     this.remember(chatId, { role: 'user', content: q });
     this.remember(chatId, { role: 'assistant', content: result.answer });
 
-    const note = sourcedFromWeb ? '\n\n(Sourced from a web search.)' : '';
+    const note = usedWeb ? '\n\n(Sourced from a web search.)' : '';
     return this.sendContent(chatId, result.answer + note);
+  }
+
+  /** Run the model-driven tool loop and persist its trajectory (ADR-0053). */
+  private async runChatAgent(
+    chatId: number,
+    question: string,
+    history: readonly ConversationTurn[],
+    prefs: ChatPreferences | null,
+  ): Promise<(DiscussResult & { steps: readonly { tool: string }[] }) | null> {
+    const { agentTransport, storyRepo, embedder, webSearch, signals } = this.deps;
+    if (!agentTransport || !storyRepo) return null;
+
+    const tools = buildChatTools({
+      reader: storyRepo,
+      ...(embedder ? { embedder } : {}),
+      ...(prefs?.topics?.length ? { topics: prefs.topics as readonly Topic[] } : {}),
+      ...(webSearch ? { webSearch } : {}),
+      ...(signals ? { signals } : {}),
+      saveMemory: async (note) => {
+        const existing = (await this.deps.prefs.get(chatId))?.memory;
+        const merged = (existing ? `${existing}\n${note}` : note).slice(0, MAX_MEMORY_CHARS);
+        await this.deps.prefs.set(chatId, { memory: merged });
+      },
+    });
+    const agent = new ChatAgent({ transport: agentTransport, tools });
+    const out = await agent.answer({
+      question,
+      history,
+      ...(prefs?.memory ? { memory: prefs.memory } : {}),
+    });
+    if (!out.answer.trim()) return null;
+
+    // Persist the trajectory (best-effort): the inspectable "how I answered".
+    if (this.deps.traces) {
+      await this.deps.traces
+        .record({
+          createdAt: this.deps.clock.now(),
+          question,
+          steps: out.steps,
+          answeredFromNews: out.answeredFromNews,
+        })
+        .catch((err) => console.warn('[telegram] trace record failed:', err));
+    }
+    return out;
   }
 
   /**

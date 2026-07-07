@@ -32,6 +32,8 @@ import type {
   RouterIntent,
 } from '../../src/llm/llm-client.js';
 import type { WebSearch, WebResult } from '../../src/web/web-search.js';
+import type { ToolCapableTransport } from '../../src/llm/chat-transport.js';
+import type { ChatTraceRepo } from '../../src/db/chat-trace-repo.js';
 import type { Embedder } from '../../src/embedding/embedder.js';
 import { FakeEmbedder } from '../helpers/fake-embedder.js';
 import type { SemanticQuery } from '../../src/db/story-repo.js';
@@ -131,6 +133,8 @@ async function build(opts: {
   prefsInterpreter?: PreferencesInterpreter;
   webLink?: WebLinker;
   embedder?: Embedder;
+  agentTransport?: ToolCapableTransport;
+  traces?: ChatTraceRepo;
 } = {}) {
   const transport = new FakeTransport();
   const query = new FakeQuery();
@@ -160,8 +164,10 @@ async function build(opts: {
     ...(opts.allowedChatIds ? { allowedChatIds: opts.allowedChatIds } : {}),
     ...(opts.webLink ? { webLink: opts.webLink } : {}),
     ...(opts.embedder ? { embedder: opts.embedder } : {}),
+    ...(opts.agentTransport ? { agentTransport: opts.agentTransport } : {}),
+    ...(opts.traces ? { traces: opts.traces } : {}),
   });
-  return { bot, transport, query, prefs, usage, clock };
+  return { bot, transport, query, prefs, usage, clock, db };
 }
 
 /** A FeedbackInterpreter that returns a canned intent (the model is stubbed). */
@@ -523,6 +529,66 @@ describe('HorizonBot', () => {
       await bot.handle(update(5, '/chat something'));
       expect(topCalls).toBe(1);
       expect(llm.lastDiscuss?.stories[0]?.title).toBe('By significance');
+    });
+
+    it('uses the model-driven tool loop when an agentTransport is wired, and persists the trace (ADR-0053)', async () => {
+      // Scripted agent: one search_stories call, then a grounded final answer.
+      const offeredTools: string[][] = [];
+      const agentTransport: ToolCapableTransport = {
+        completeWithTools: async (_messages, tools) => {
+          offeredTools.push(tools.map((t) => t.name));
+          return tools.length
+            ? { text: null, toolCalls: [{ id: 'c1', name: 'search_stories', args: { query: 'AI' } }] }
+            : { text: '', toolCalls: [] };
+        },
+      };
+      // Second turn: the model answers (tools still offered, none called).
+      let turn = 0;
+      const scripted: ToolCapableTransport = {
+        completeWithTools: async (messages, tools) => {
+          turn += 1;
+          if (turn === 1) return agentTransport.completeWithTools(messages, tools, { tier: 'deep', maxTokens: 1 });
+          return {
+            text: JSON.stringify({ answer: 'Agent answer.', answeredFromNews: true }),
+            toolCalls: [],
+          };
+        },
+      };
+      const discussant = new FakeLLM();
+      // In-memory trace store: the bot only needs `record`.
+      const recorded: { steps: readonly { tool: string }[]; answeredFromNews: boolean }[] = [];
+      const traces = {
+        record: async (rec: { steps: readonly { tool: string; step: number; args: string; resultPreview: string }[]; answeredFromNews: boolean }) => {
+          recorded.push(rec);
+        },
+        recent: async () => [],
+        pruneToRecent: async () => 0,
+      } as unknown as ChatTraceRepo;
+      const { bot, transport } = await chatBuild({ agentTransport: scripted, discussant, traces });
+
+      await bot.handle(update(5, '/chat tell me about AI'));
+
+      expect(transport.messages.at(-1)?.text).toBe('Agent answer.');
+      expect(discussant.discussCalls).toBe(0); // the fixed two-pass never ran
+      expect(offeredTools[0]).toContain('search_stories');
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.steps.map((s) => s.tool)).toEqual(['search_stories']);
+      expect(recorded[0]?.answeredFromNews).toBe(true);
+    });
+
+    it('a failing agent degrades to the fixed discuss path, never to the user (ADR-0053)', async () => {
+      const agentTransport: ToolCapableTransport = {
+        completeWithTools: async () => {
+          throw new Error('model exploded');
+        },
+      };
+      const llm = new FakeLLM();
+      const { bot, transport } = await chatBuild({ agentTransport, discussant: llm });
+
+      await bot.handle(update(5, '/chat tell me about AI'));
+
+      expect(llm.discussCalls).toBe(1); // fallback path ran
+      expect(transport.messages.at(-1)?.text).toContain('Answer to: tell me about AI');
     });
 
     it('escalates to web search only when the cache cannot answer (ADR-0029)', async () => {

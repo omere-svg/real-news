@@ -4,6 +4,7 @@ import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
+import type { ChatTraceRepo } from '../db/chat-trace-repo.js';
 import type { TickReportRepo } from '../db/tick-report-repo.js';
 import type { TickReflectionRepo } from '../db/tick-reflection-repo.js';
 import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
@@ -103,6 +104,8 @@ export function createApp(
   tickReflections?: TickReflectionRepo,
   /** Signal history (ADR-0044); when omitted `/api/stats` reports zero observations. */
   signalObservations?: SignalObservationRepo,
+  /** Chat-agent trajectories (ADR-0053); when omitted `/api/chat-traces` is empty. */
+  chatTraces?: ChatTraceRepo,
 ): Hono {
   const app = new Hono();
 
@@ -120,6 +123,14 @@ export function createApp(
   app.get('/api/reflection', async (c) => {
     const limit = normalizeLimit(c.req.query('limit'), 10);
     return c.json({ reflections: tickReflections ? await tickReflections.recent(limit) : [] });
+  });
+
+  // The chat agent's tool-loop trajectories (ADR-0053): which tools the model
+  // chose, in what order, and whether the answer was grounded — the public,
+  // inspectable "how I answered" evidence. No chat identity is stored.
+  app.get('/api/chat-traces', async (c) => {
+    const limit = normalizeLimit(c.req.query('limit'), 20);
+    return c.json({ traces: chatTraces ? await chatTraces.recent(limit) : [] });
   });
 
   // Accumulation evidence: cheap COUNT-only queries proving the Story cache

@@ -1,5 +1,13 @@
 import OpenAI from 'openai';
-import type { ChatTransport, CompletionOptions } from './chat-transport.js';
+import type {
+  AgentMessage,
+  ChatTransport,
+  CompletionOptions,
+  ToolCall,
+  ToolCapableTransport,
+  ToolCompletion,
+  ToolSpec,
+} from './chat-transport.js';
 import { withRetry } from './retry.js';
 
 export interface OpenAITransportDeps {
@@ -16,7 +24,7 @@ export interface OpenAITransportDeps {
  * Picks the model for the requested tier and sends; JSON mode uses OpenAI's
  * native `response_format`. No prompts or schemas live here.
  */
-export class OpenAITransport implements ChatTransport {
+export class OpenAITransport implements ChatTransport, ToolCapableTransport {
   private readonly client: OpenAI;
 
   constructor(private readonly deps: OpenAITransportDeps) {
@@ -60,5 +68,73 @@ export class OpenAITransport implements ChatTransport {
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error('openai: empty response');
     return JSON.parse(content);
+  }
+
+  /** Tool-selection completion for the chat agent loop (ADR-0053). */
+  async completeWithTools(
+    messages: readonly AgentMessage[],
+    tools: readonly ToolSpec[],
+    opts: CompletionOptions,
+  ): Promise<ToolCompletion> {
+    const res = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model(opts.tier),
+        max_tokens: opts.maxTokens,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        messages: messages.map(toOpenAIMessage),
+        ...(tools.length
+          ? {
+              tools: tools.map((t) => ({
+                type: 'function' as const,
+                function: { name: t.name, description: t.description, parameters: t.parameters },
+              })),
+            }
+          : {}),
+      }),
+    );
+    const msg = res.choices[0]?.message;
+    return {
+      text: msg?.content?.trim() || null,
+      toolCalls: (msg?.tool_calls ?? []).map((tc) => ({
+        id: tc.id,
+        name: tc.function.name,
+        args: parseArgs(tc.function.arguments),
+      })),
+    };
+  }
+}
+
+/** Map the provider-neutral message shape onto OpenAI's wire format. */
+function toOpenAIMessage(m: AgentMessage): OpenAI.ChatCompletionMessageParam {
+  if (m.role === 'assistant') {
+    return {
+      role: 'assistant',
+      content: m.content,
+      ...(m.toolCalls?.length
+        ? {
+            tool_calls: m.toolCalls.map((tc: ToolCall) => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+            })),
+          }
+        : {}),
+    };
+  }
+  if (m.role === 'tool') {
+    return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+  }
+  return { role: m.role, content: m.content };
+}
+
+/** Model-emitted argument strings are untrusted JSON — degrade to {} on garbage. */
+function parseArgs(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
   }
 }

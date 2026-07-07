@@ -13,9 +13,10 @@ import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
 import { DrizzleTickReportRepo, lockSkipRecord } from './db/tick-report-repo.js';
 import type { TickRecord } from './db/tick-report-repo.js';
-import { DrizzleSignalObservationRepo } from './db/signal-observation-repo.js';
+import { DrizzleSignalObservationRepo, type SignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
 import { DrizzleAgentPolicyRepo } from './db/agent-policy-repo.js';
+import { DrizzleChatTraceRepo, type ChatTraceRepo } from './db/chat-trace-repo.js';
 import { DrizzleTickLock } from './db/tick-lock-repo.js';
 import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
@@ -45,6 +46,7 @@ import type { SignalSource } from './sources/signal-source.js';
 import type { JsonFetcher } from './sources/http.js';
 import { Reasoner } from './llm/reasoner.js';
 import { OpenAITransport } from './llm/openai-transport.js';
+import type { ToolCapableTransport } from './llm/chat-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import type { LLMClient } from './llm/llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
@@ -233,19 +235,19 @@ async function main(): Promise<void> {
   const signalObservationRepo = new DrizzleSignalObservationRepo(db);
   const tickReflectionRepo = new DrizzleTickReflectionRepo(db);
   const agentPolicyRepo = new DrizzleAgentPolicyRepo(db);
+  const chatTraceRepo = new DrizzleChatTraceRepo(db);
   // Shared across the web viewer and the Telegram bot so a linked user sees the
   // same preferences on both surfaces (ADR-0040).
   const chatPrefs = new DrizzleChatPreferencesRepo(db);
   const webAuth = new DrizzleWebAuthRepo(db);
 
-  const llm = new ResilientLLMClient(
-    new Reasoner(
-      new OpenAITransport({
-        cheapModel: config.reasoner.cheapModel,
-        deepModel: config.reasoner.deepModel,
-      }),
-    ),
-  );
+  // One provider transport, shared by the slot-filling Reasoner and the chat
+  // agent's tool loop (ADR-0053) — same models, same retry discipline.
+  const openaiTransport = new OpenAITransport({
+    cheapModel: config.reasoner.cheapModel,
+    deepModel: config.reasoner.deepModel,
+  });
+  const llm = new ResilientLLMClient(new Reasoner(openaiTransport));
 
   const queryEngine = new HorizonQuery({
     storyRepo,
@@ -300,6 +302,8 @@ async function main(): Promise<void> {
     if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
     // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
     if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
+    // Chat-agent trajectories are bounded the same way (ADR-0053).
+    await chatTraceRepo.pruneToRecent(200);
 
     if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
       // Reason over the trailing window of ticks as a group; persist the note
@@ -543,12 +547,16 @@ async function main(): Promise<void> {
     },
     tickReflectionRepo,
     signalObservationRepo,
+    chatTraceRepo,
   );
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
   if (config.telegram.enabled) {
-    startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage);
+    startTelegramBot(
+      config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage,
+      openaiTransport, signalObservationRepo, chatTraceRepo,
+    );
   }
 }
 
@@ -593,6 +601,12 @@ function startTelegramBot(
   webAuth: WebAuthRepo,
   embedder: Embedder,
   usage: UsageRepo,
+  /** Tool-capable transport for the chat agent loop (ADR-0053). */
+  agentTransport?: ToolCapableTransport,
+  /** Signal history behind the agent's trends tool (ADR-0053). */
+  signals?: SignalObservationRepo,
+  /** Persisted chat-agent trajectories (ADR-0053). */
+  traces?: ChatTraceRepo,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -629,6 +643,11 @@ function startTelegramBot(
     // Semantic chat grounding over story_vectors (ADR-0045); off ⇒ top-by-significance.
     ...(chat && tg.chat.semanticRetrieval ? { embedder } : {}),
     ...(webSearch ? { webSearch } : {}),
+    // The chat agent loop (ADR-0053): model-driven tool selection over the
+    // cache/signals/web, with persisted trajectories; degrades to discuss.
+    ...(chat && agentTransport ? { agentTransport } : {}),
+    ...(chat && signals ? { signals } : {}),
+    ...(chat && traces ? { traces } : {}),
     prefs,
     // Lets a `t.me/<bot>?start=link_<code>` deep link connect the web app (ADR-0040).
     webLink: webAuth,
