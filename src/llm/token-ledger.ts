@@ -50,7 +50,12 @@ export interface DailyTokenTotals {
   readonly deep: TierTokenTotals;
   readonly embed: TierTokenTotals;
   readonly tts: TierTokenTotals;
+  /** cheap + deep + embed only — token-denominated tiers. TTS bills in
+   * characters, not tokens, so it is excluded here and reported separately
+   * as `ttsCharacters`. */
   readonly totalTokens: number;
+  /** TTS usage, in characters (the unit TTS providers actually bill). */
+  readonly ttsCharacters: number;
 }
 
 /** A fresh zeroed totals bucket per tier — shared by construction and day-roll. */
@@ -118,7 +123,8 @@ export class TokenLedger {
       deep,
       embed,
       tts,
-      totalTokens: cheap.totalTokens + deep.totalTokens + embed.totalTokens + tts.totalTokens,
+      totalTokens: cheap.totalTokens + deep.totalTokens + embed.totalTokens,
+      ttsCharacters: tts.totalTokens,
     };
   }
 }

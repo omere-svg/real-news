@@ -17,7 +17,8 @@ describe('TokenLedger', () => {
       deep: { promptTokens: 1000, completionTokens: 200, totalTokens: 1200 },
       embed: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       tts: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      totalTokens: 1380,
+      totalTokens: 1380, // cheap + deep + embed only — no tts in this event mix
+      ttsCharacters: 0,
     });
   });
 
@@ -75,8 +76,19 @@ describe('TokenLedger', () => {
       deep: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       embed: { promptTokens: 42, completionTokens: 0, totalTokens: 42 },
       tts: { promptTokens: 500, completionTokens: 0, totalTokens: 500 },
-      totalTokens: 542,
+      totalTokens: 42, // embed only — tts characters are not tokens
+      ttsCharacters: 500,
     });
+  });
+
+  it('excludes tts from totalTokens even when it dwarfs the token tiers', () => {
+    const ledger = new TokenLedger({ now: () => DAY1 });
+    ledger.record({ tier: 'cheap', promptTokens: 10, completionTokens: 5 });
+    ledger.record({ tier: 'tts', promptTokens: 100_000, completionTokens: 0 });
+
+    const totals = ledger.today();
+    expect(totals.totalTokens).toBe(15);
+    expect(totals.ttsCharacters).toBe(100_000);
   });
 
   it('persists a durable per-tier counter for embed and tts', async () => {

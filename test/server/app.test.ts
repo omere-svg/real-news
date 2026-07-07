@@ -335,7 +335,7 @@ describe('HTTP API', () => {
     const body = (await (await app.request('/api/stats')).json()) as Record<string, unknown>;
     expect(body).toMatchObject({
       stories: 2, signalObservations: 0, oldestSignalAt: null, ticksRecorded: 0,
-      tokens: { cheap: 0, deep: 0, embed: 0, tts: 0, total: 0 }, // no usage store wired
+      tokens: { cheap: 0, deep: 0, embed: 0, tts: 0, total: 0, ttsCharacters: 0 }, // no usage store wired
     });
   });
 
@@ -377,12 +377,24 @@ describe('HTTP API', () => {
     });
 
     const body = (await (await app.request('/api/stats')).json()) as {
-      tokens: { day: string; cheap: number; deep: number; embed: number; tts: number; total: number };
+      tokens: {
+        day: string;
+        cheap: number;
+        deep: number;
+        embed: number;
+        tts: number;
+        total: number;
+        ttsCharacters: number;
+      };
     };
-    expect(body.tokens).toEqual({ day: today, cheap: 1500, deep: 400, embed: 0, tts: 0, total: 1900 });
+    // total is token-denominated tiers only (cheap + deep + embed); tts
+    // bills in characters, not tokens, so it does not feed total.
+    expect(body.tokens).toEqual({
+      day: today, cheap: 1500, deep: 400, embed: 0, tts: 0, total: 1900, ttsCharacters: 0,
+    });
   });
 
-  it("GET /api/stats surfaces today's embed and tts token counters", async () => {
+  it("GET /api/stats surfaces today's embed and tts token counters, and keeps tts out of total", async () => {
     const db = await createTestDb();
     const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
     const usage = new DrizzleUsageRepo(db);
@@ -396,10 +408,12 @@ describe('HTTP API', () => {
     });
 
     const body = (await (await app.request('/api/stats')).json()) as {
-      tokens: { embed: number; tts: number };
+      tokens: { embed: number; tts: number; total: number; ttsCharacters: number };
     };
     expect(body.tokens.embed).toBe(300);
     expect(body.tokens.tts).toBe(900);
+    expect(body.tokens.total).toBe(300); // embed only — tts is reported separately
+    expect(body.tokens.ttsCharacters).toBe(900);
   });
 
   it('a first-time visitor (no saved prefs) defaults to ALL topics, so the global lead is visible', async () => {

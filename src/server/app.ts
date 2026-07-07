@@ -180,7 +180,10 @@ export function createApp(
         deep: deepTokens,
         embed: embedTokens,
         tts: ttsTokens,
-        total: cheapTokens + deepTokens + embedTokens + ttsTokens,
+        // Token-denominated tiers only — tts bills in characters, not
+        // tokens, so it is excluded and reported separately below.
+        total: cheapTokens + deepTokens + embedTokens,
+        ttsCharacters: ttsTokens,
       },
       stories: storyStats.stories,
       multiSourceStories: storyStats.multiSourceStories,
