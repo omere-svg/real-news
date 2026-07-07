@@ -7,6 +7,7 @@ import {
 } from '../../src/scoring/signal-context.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
 import { FakeClock } from '../helpers/fake-clock.js';
+import type { IdentifiedCluster } from '../../src/pipeline/resolve.js';
 import type { Cluster, RawItem, SourceId, StorySourceId } from '../../src/domain/types.js';
 
 const HOUR = 3_600_000;
@@ -31,6 +32,13 @@ function member(
 
 function cluster(items: RawItem[]): Cluster {
   return { items, topic: 'AI' };
+}
+
+// score() now consumes IdentifiedCluster (id + vector threaded from resolve,
+// ADR-0063). The score stage ignores id/vector beyond passing them through, so
+// a stub id + empty vector is sufficient here.
+function ident(c: Cluster): IdentifiedCluster {
+  return { id: `id:${c.items[0]?.externalId ?? 'x'}`, cluster: c, vector: [] };
 }
 
 const ctx = {
@@ -63,7 +71,7 @@ describe('score stage', () => {
     const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
     const llm = new FakeLLM({ impact: 0 });
 
-    const [scored] = await score([c], llm, ctx);
+    const [scored] = await score([ident(c)], llm, ctx);
 
     const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), baseParams);
     expect(scored?.significance).toBeCloseTo(base, 5);
@@ -71,8 +79,8 @@ describe('score stage', () => {
 
   it('a high-impact story scores well above a low-impact one (ADR-0034)', async () => {
     const c = cluster([member('guardian', '1', {}, NOW)]); // no social signal
-    const low = await score([c], new FakeLLM({ impact: 0.1 }), ctx);
-    const high = await score([c], new FakeLLM({ impact: 0.9 }), ctx);
+    const low = await score([ident(c)], new FakeLLM({ impact: 0.1 }), ctx);
+    const high = await score([ident(c)], new FakeLLM({ impact: 0.9 }), ctx);
     expect(high[0]!.significance).toBeGreaterThan(low[0]!.significance + 3);
   });
 
@@ -81,7 +89,7 @@ describe('score stage', () => {
       member('hackernews', '1', { points: 200 }, NOW),
       member('gdelt', '2', {}, NOW),
     ]);
-    const [scored] = await score([c], new FakeLLM({ impact: 0.7 }), ctx);
+    const [scored] = await score([ident(c)], new FakeLLM({ impact: 0.7 }), ctx);
 
     const bd = scored!.breakdown;
     expect(bd.impact).toBeCloseTo(0.7, 5);
@@ -110,7 +118,7 @@ describe('score stage', () => {
     const maxSignalAdjustment = 1.0;
     const expectedNudge = signalAdjustment('AI', signalContext, maxSignalAdjustment);
 
-    const [scored] = await score([c], new FakeLLM({ impact: 0 }), {
+    const [scored] = await score([ident(c)], new FakeLLM({ impact: 0 }), {
       ...ctx,
       signalContext,
       maxSignalAdjustment,
@@ -124,7 +132,7 @@ describe('score stage', () => {
     const c = cluster([member('hackernews', '1', { points: 80 }, NOW)]);
     const base = computeBaseScore(assembleSignals(c, NOW, ctx.sourceWeights), baseParams);
 
-    const [scored] = await score([c], new FakeLLM({ impact: 0 }), ctx);
+    const [scored] = await score([ident(c)], new FakeLLM({ impact: 0 }), ctx);
     expect(scored?.significance).toBeCloseTo(base, 5);
   });
 });

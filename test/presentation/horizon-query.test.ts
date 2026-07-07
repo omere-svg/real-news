@@ -308,4 +308,62 @@ describe('HorizonQuery', () => {
     expect(script).toContain('Alpha');
     expect(script.length).toBeGreaterThan(0);
   });
+
+  describe('briefStories (ADR-0064 — structured brief with the score breakdown)', () => {
+    it('returns the same selection as textBrief with each story\'s interpreted drivers', async () => {
+      const repo = await seed(
+        upsert({
+          id: 'a',
+          title: 'Alpha',
+          topic: 'AI',
+          significance: 9,
+          summary: 'What happened.',
+          whyItMatters: 'Why it matters here.',
+          url: 'https://example.com/a',
+          scoreBreakdown: {
+            base: 9,
+            recencyFactor: 1,
+            impact: 0.9,
+            components: [
+              { key: 'impact', value: 0.9 },
+              { key: 'corroboration', value: 0.7 },
+              { key: 'authority', value: 0.7 },
+              { key: 'attention', value: 0.2 },
+            ],
+            signalNudge: 0.3,
+            signals: {
+              points: 0, mentions: 0, tone: 0, sourceWeight: 0.7, ageHours: 0, corroboration: 4,
+            },
+          },
+        }),
+        upsert({ id: 'b', title: 'Bravo', significance: 4 }), // no breakdown
+      );
+      const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: { ...PARAMS, minDepth: 'full' } });
+
+      const stories = await q.briefStories({ minutes: 5 });
+
+      expect(stories.map((s) => s.title)).toEqual(['Alpha', 'Bravo']); // significance order
+      const alpha = stories[0]!;
+      expect(alpha.drivers[0]).toEqual({ key: 'impact', label: 'Real-world impact', value: 0.9 }); // strongest first
+      expect(alpha.tags).toContain('major real-world impact');
+      expect(alpha.corroboration).toBe(4);
+      expect(alpha.signalNudge).toBeCloseTo(0.3, 5);
+      expect(alpha.whyItMatters).toBe('Why it matters here.'); // full depth
+      // A pre-breakdown story degrades to an empty, non-throwing breakdown.
+      expect(stories[1]!.drivers).toEqual([]);
+      expect(stories[1]!.tags).toEqual([]);
+    });
+
+    it('omits why-it-matters below full depth, matching the text brief', async () => {
+      const repo = await seed(
+        upsert({ id: 'a', title: 'Alpha', significance: 9, summary: 'One. Two. Three.', whyItMatters: 'Hidden at brief depth.' }),
+      );
+      const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+      const [story] = await q.briefStories({ minutes: 1 }); // brief depth (20-word budget)
+
+      expect(story?.summary).toBe('One. Two.'); // trimmed to two sentences
+      expect(story?.whyItMatters).toBeNull(); // not full depth
+    });
+  });
 });

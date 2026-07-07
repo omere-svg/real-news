@@ -8,9 +8,10 @@ the live URLs prove it runs unattended. The judged tree is `main` as pushed
 - **The test suite — strongest evidence.** From the repo root:
   ```
   npm install
-  npm test              # the printed count is the proof (701 green, 86 files, ~3s, real migrations)
-  npm run test:coverage # 95.66% lines / 85.45% branches — CI gates the pipeline at 90/80
+  npm test              # the printed count is the proof (737 green + 2 env-gated live, 90 files, ~3s, real migrations)
+  npm run test:coverage # 96.26% lines / 85.73% branches — CI gates the pipeline at 90/80
   npm run typecheck  # clean
+  npm run lint       # clean
   npm run verify:bot # drives the real Telegram bot end-to-end
   ```
   Worth opening (named, so a judge can go straight there):
@@ -28,6 +29,16 @@ the live URLs prove it runs unattended. The judged tree is `main` as pushed
     plan step, and the agent's memory loop.
   - `test/pipeline/reflection-policy.test.ts` (the model-proposes /
     guard-disposes screen), `test/pipeline/resolve.test.ts` (cross-outlet merges).
+  - `test/pipeline/maintenance.test.ts` — the *real* Reasoner over a fake
+    transport driving reflection→action, plus the deterministic auto-revert
+    that clears overrides after N healthy ticks (ADR-0061).
+  - `test/pipeline/tick-e2e.test.ts` — two-tick end-to-end: entity-relaxed
+    cross-outlet merge + corroboration scoring, and a poisoned-feed red-team
+    run proving hostile input never reaches the DB (ADR-0065).
+  - `test/llm/spend-guard.test.ts` — the restart-safe daily USD ceiling on the
+    unattended pipeline (baseline seed, UTC rollover, cap exhaustion; ADR-0062).
+  - `test/llm/chat-agent.live.test.ts` — env-gated golden test that runs the
+    real tool loop against the live OpenAI API (set `OPENAI_API_KEY`).
 - **Live URLs (public, no login needed to read):**
   - Viewer: https://horizon-news.duckdns.org — ranked 0–10 stories, "Why this
     score?" breakdowns, time slider, editor's note.
@@ -42,19 +53,23 @@ the live URLs prove it runs unattended. The judged tree is `main` as pushed
 - **Try the agent:** https://t.me/OmerNewsBot — ask "why did markets drop?", then
   open `/api/chat-traces` and watch how it answered. `/subscribe 08:00` for the
   scheduled brief.
-- **Cross-outlet corroboration, judge-runnable:**
+- **Cross-outlet corroboration, judge-runnable:** `/api/brief` returns the
+  structured `stories` twin — each carries a `corroboration` count (distinct
+  sources) and the score `drivers` — so a judge can see multi-source stories
+  and their breakdown without any private endpoint:
   ```
-  curl -s "https://horizon-news.duckdns.org/api/stories?limit=100" \
-    | jq '[.stories[] | select(.scoreBreakdown.signals.corroboration > 1)
-           | {title, sources: (.memberRefs | map(.source))}]'
+  curl -s "https://horizon-news.duckdns.org/api/brief?minutes=30" \
+    | jq '[.stories[] | select(.corroboration > 1) | {title, corroboration, drivers}]'
   ```
-  **Expectation note:** this ranks the top-100 stories, so multi-source hits
-  are a minority by construction — expect single digits in the returned array,
-  especially shortly after a production reset (multi-source status accrues
-  across ticks as corroborating coverage arrives). Cross-check the running
-  total against the `multiSourceStories` field on `/api/stats` — that counter
-  climbs over the deployment's lifetime and is the more meaningful trend to
-  watch, not the single-query snapshot.
+  **Expectation note:** the brief is a time-boxed selection, so multi-source
+  hits are a minority by construction — expect single digits, especially shortly
+  after a production reset (multi-source status accrues across ticks as
+  corroborating coverage arrives). The more meaningful trend is the running
+  `multiSourceStories` counter on `/api/stats`, which climbs over the
+  deployment's lifetime rather than a single-query snapshot:
+  ```
+  curl -s "https://horizon-news.duckdns.org/api/stats" | jq '{stories, multiSourceStories}'
+  ```
 - **Second-tenant boot demo (multi-tenancy, judge-runnable):** the config path
   and DB are both env-driven (`src/main.ts`: `HORIZON_CONFIG` env var, default
   `config/horizon.yaml`; `DB_URL` env var, default `file:./data/horizon.db`).
@@ -79,7 +94,7 @@ an optional free demo key. Where an outlet's exact terms-of-service text
 couldn't be independently re-verified for this pass, the note below says so
 plainly rather than asserting a license we haven't read line-by-line.
 
-**Story sources (17):**
+**Story sources (21 enabled; `knesset-votes` is defined but disabled — its upstream feed froze in 2021, ADR-0049):**
 
 | Source | API | Terms posture |
 |---|---|---|
@@ -91,6 +106,10 @@ plainly rather than asserting a license we haven't read line-by-line.
 | wikipedia | Wikimedia REST API (featured-feed) | Public API, no key required; Wikimedia's REST API terms permit programmatic use with a User-Agent and rate limits. |
 | guardian | The Guardian world-section RSS feed | Public RSS feed, no key required; RSS syndication is published for automated consumption. |
 | timesofisrael | Times of Israel RSS feed | Public RSS feed, no key required. |
+| bbc-world | BBC News World RSS feed | Public RSS feed, no key required (ADR-0059). |
+| bbc-business | BBC News Business RSS feed | Public RSS feed, no key required (ADR-0059). |
+| bbc-sport | BBC Sport RSS feed | Public RSS feed, no key required (ADR-0059). |
+| ynetnews | Ynetnews RSS feed | Public RSS feed, no key required (ADR-0059). |
 | hf-papers | Hugging Face Daily Papers API | Public API, no key required. |
 | nber | NBER new-papers RSS feed | Public RSS feed, no key required. |
 | nature | Nature.com RSS feed | Public RSS feed, no key required. |
@@ -145,11 +164,13 @@ plainly rather than asserting a license we haven't read line-by-line.
   - `src/telegram/chat-agent.ts` — the model-driven tool loop (the chat agent).
   - `src/pipeline/reflection-policy.ts` — reflection→action, screened + clamped.
   - `src/pipeline/adaptive-backoff.ts` — observe→adapt, rehydrated across deploys.
-  - `src/llm/fence.ts` + `src/llm/reasoner.ts` — universal injection fencing.
+  - `src/llm/fence.ts` + `src/llm/reasoner.ts` — universal injection fencing + the spoken-URL guard on narration (ADR-0065).
   - `src/llm/url-guard.ts` — the rewritten URL output guard (host/path/query/fragment closed).
+  - `src/llm/spend-guard.ts` — the restart-safe daily USD ceiling on the pipeline (ADR-0062).
+  - `src/pipeline/maintenance.ts` — reflection + deterministic auto-revert (ADR-0061).
   - `src/telegram/quota-guard.ts` — per-chat + global cost caps.
-  - `src/presentation/score-explanation.ts` — the transparent scoring seam.
-  - `docs/adr/` — architecture decision records (55 after this pass).
+  - `src/presentation/score-explanation.ts` — the transparent scoring seam (breakdown restored on web, ADR-0064).
+  - `docs/adr/` — architecture decision records (66 after this pass).
 - **Depth artifacts (`reports/` in the repo):** `DEMO-SCRIPT.md` (3-minute path),
   `CODE-REVIEW.md`, `CYCLE-CHANGES.md` (what each QA cycle found and fixed).
 

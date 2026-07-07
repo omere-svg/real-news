@@ -17,11 +17,12 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
 
 ## What it does
 
-1. **Extraction worker** — pulls from **18 Story APIs/feeds** behind one `SourceAdapter`
+1. **Extraction worker** — pulls from **21 enabled Story APIs/feeds** behind one `SourceAdapter`
    contract (Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, Guardian, Times
-   of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv, plus TheSportsDB→Sports,
-   WHO Outbreaks→Health, and NASA EONET / USGS / GDACS→Climate — ADR-0031; `knesset-votes` is
-   currently disabled because its upstream feed froze in 2021 — ADR-0049) plus **6 numeric
+   of Israel, BBC World / Business / Sport and Ynetnews — ADR-0059, HF Daily Papers, NBER,
+   Nature, PsyArXiv, plus TheSportsDB→Sports, WHO Outbreaks→Health, and NASA EONET / USGS /
+   GDACS→Climate — ADR-0031; a 22nd, `knesset-votes`, is defined but currently disabled because
+   its upstream feed froze in 2021 — ADR-0049) plus **6 numeric
    Signal sources** behind a sibling `SignalSource` seam (Wikipedia Pageviews attention, World
    Bank macro — ADR-0025; CoinGecko + Frankfurter FX → Business, OpenAlex → Science — ADR-0031;
    GDELT aggregate tone → Geopolitics — ADR-0041), with per-source health checks so a dead
@@ -37,7 +38,10 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
    Runs every tick.
 4. **Presentation** — a read-only web viewer/JSON API **and** a Telegram bot deliver
    time-budgeted briefs, podcast audio, and chat about the news from the
-   pre-digested cache (ADR-0060: two reader formats, Brief + Podcast).
+   pre-digested cache (ADR-0060: two reader formats, Brief + Podcast). The Brief auto-loads on
+   first paint (it's a free, deterministic cache read) and every card carries an expandable
+   **"Why this score?"** breakdown of the significance math (ADR-0064); only the LLM-backed
+   podcast waits for an explicit **Generate** press.
 
 Tiered OpenAI models (configured in `config/horizon.yaml`) do the reasoning, embeddings, and TTS; **if no API key
 is set, the loop degrades gracefully** — real data + signal scoring, no AI enrichment.
@@ -126,6 +130,12 @@ writes the podcast to `/tmp/horizon-podcast.mp3`.
   podcast caps. All counters are persisted, so a restart can't reset a day's budget. The only
   user-driven OpenAI costs are the **podcast** (LLM + TTS) and **chat** (deep tier) paths — the text
   brief and the whole web viewer are deterministic cache reads that spend **zero** tokens.
+- **Daily tick-pipeline spend ceiling (ADR-0062):** a restart-safe USD/day cap (`spend.dailyUsdCap`,
+  default **$1000** — a deliberately high hard backstop, `0` disables it) bounds the *unattended*
+  side too. Once the day's estimated model spend (token counts × `spend.pricePerMillionTokens`)
+  reaches the cap, every LLM call degrades to its neutral fallback until UTC midnight. The baseline
+  is seeded from the persisted `usage` counters at boot, so a mid-day restart can't reset the day's
+  budget. This is the pipeline's equivalent of the bot's global command cap.
 - **`minutes` is clamped** to `presentation.maxMinutes`, with a **tighter
   `presentation.maxPodcastMinutes`** cap on the expensive audio path. The LLM-backed web
   `/api/podcast` is **on** (`presentation.webPodcastEnabled: true`, ADR-0050); it narrates real
@@ -154,7 +164,7 @@ boot). Secrets and deploy knobs come from the environment:
 
 ## API
 
-- `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted; `topic` repeatable to filter)
+- `GET /api/brief?minutes=3&topic=AI` → `{ brief, stories }` (deterministic, time-budgeted; `topic` repeatable to filter) — `brief` is the plain text, `stories` the structured twin each card renders with a "Why this score?" breakdown (ADR-0064)
 - `GET /api/podcast?minutes=3` → `{ script, audio }` — on (`presentation.webPodcastEnabled`, ADR-0050); narrates mp3 `audio` (base64) when TTS is enabled, else `audio:null` + `script` (ADR-0020/0058); `maxPodcastMinutes`-capped, shares the global podcast budget (ADR-0052)
 - `GET /api/ticks?limit=50` → `{ ticks: [...] }` — recent tick outcomes (ADR-0033)
 - `GET /api/reflection` → `{ reflections: [...] }` — LLM advisories + the actions they imposed (ADR-0042/0054)
@@ -236,6 +246,17 @@ persisted deep-analysis budget the next tick consumes; adaptation state (backoff
 policy, conversations) survives deploys; every untrusted prompt input is fenced with delimiter
 escaping and model outputs pass grounding guards; scheduled personalized briefs ship via
 `/subscribe`.
+
+**Control-loop, cost & safety hardening (ADR-0061–0065).** The reflection vocabulary widened
+to three screened/clamped knobs (deep-analysis budget, merge-confirm concurrency, merge
+sensitivity), and a deterministic **auto-revert** clears any override once ticks run healthy
+again — the adaptation loop now tightens *and* relaxes on its own (ADR-0061). A restart-safe
+**daily spend guard** caps unattended model cost (ADR-0062). The pipeline threads each story's
+id + vector through score→analyze→upsert so analysis can't silently mis-pair (ADR-0063). The
+web Brief regained an expandable per-story **"Why this score?"** breakdown driven by the
+persisted score data (ADR-0064). And a safety sweep (ADR-0065) stops a degraded fallback
+embedding from ever poisoning the neural index, strips every URL from spoken podcast output,
+and makes the chat agent the *only* web-search path once it's enabled.
 
 **Second integrity & resilience pass (ADR-0047).** A fresh-start run (wipe → three ticks →
 use every surface → inspect all collections) drove a correctness/cost/resilience sweep: deep

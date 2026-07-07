@@ -45,9 +45,10 @@ import type { SignalSource } from './sources/signal-source.js';
 import type { JsonFetcher } from './sources/http.js';
 import { Reasoner } from './llm/reasoner.js';
 import { OpenAITransport } from './llm/openai-transport.js';
-import { TokenLedger } from './llm/token-ledger.js';
+import { TokenLedger, tokenUsageKey } from './llm/token-ledger.js';
 import type { ToolCapableTransport } from './llm/chat-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
+import { SpendGuard, type SpendBudget } from './llm/spend-guard.js';
 import type { LLMClient } from './llm/llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { OpenAIEmbedder } from './embedding/openai-embedder.js';
@@ -60,14 +61,14 @@ import { ConsoleLogger, type Logger } from './log/logger.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
 import { screenReflectionActions } from './pipeline/reflection-policy.js';
-import { maybeReflect, runMaintenanceSteps } from './pipeline/maintenance.js';
+import { maybeReflect, maybeRevertPolicy, runMaintenanceSteps } from './pipeline/maintenance.js';
 import { withTimeout } from './scheduler/timeout.js';
 import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
 import { DrizzleChatPreferencesRepo } from './db/chat-preferences-repo.js';
 import type { ChatPreferencesRepo } from './db/chat-preferences-repo.js';
-import { DrizzleUsageRepo, type UsageRepo } from './db/usage-repo.js';
+import { DrizzleUsageRepo, utcDay, type UsageRepo } from './db/usage-repo.js';
 import { DrizzleWebAuthRepo } from './db/web-auth-repo.js';
 import type { WebAuthRepo } from './db/web-auth-repo.js';
 import { FixedWindowLimiter } from './telegram/rate-limiter.js';
@@ -173,6 +174,8 @@ function buildEmbedder(
   config: Config,
   /** Reports embeddings-call token usage to the ledger (Task 15); omitted ⇒ no accounting. */
   onUsage?: (usage: EmbeddingUsageReport) => void,
+  /** Daily spend backstop; once exhausted the embedder skips the paid API (ADR-0062). */
+  budget?: SpendBudget,
 ): Embedder {
   const { provider, model, dimensions } = config.embedder;
   const hashing = new HashingEmbedder(dimensions);
@@ -181,7 +184,40 @@ function buildEmbedder(
     new OpenAIEmbedder({ model, dimensions, ...(onUsage ? { onUsage } : {}) }),
     hashing,
     (op, err) => log.warn('embedder.degraded', { op, err }),
+    budget,
   );
+}
+
+/**
+ * Build the daily spend backstop (ADR-0062), seeding today's already-spent
+ * baseline from the durable per-tier token counters so the ceiling is
+ * restart-safe. A read failure degrades to a zero baseline (the guard still
+ * bounds the rest of the day from this session's live usage) — accounting must
+ * never block boot.
+ */
+async function buildSpendGuard(
+  usage: DrizzleUsageRepo,
+  tokenLedger: TokenLedger,
+  pricing: { cheap: number; deep: number; embed: number },
+  dailyUsdCap: number,
+): Promise<SpendGuard> {
+  const day = utcDay(systemClock.now());
+  let baselineUsd = 0;
+  try {
+    const [cheap, deep, embed] = await Promise.all([
+      usage.peek(tokenUsageKey('cheap'), day),
+      usage.peek(tokenUsageKey('deep'), day),
+      usage.peek(tokenUsageKey('embed'), day),
+    ]);
+    baselineUsd =
+      (cheap / 1_000_000) * pricing.cheap +
+      (deep / 1_000_000) * pricing.deep +
+      (embed / 1_000_000) * pricing.embed;
+    if (baselineUsd > 0) log.info('spend.baseline', { day, baselineUsd: Math.round(baselineUsd * 100) / 100 });
+  } catch (err) {
+    log.warn('spend.baseline_read_failed', { err, note: 'starting from 0 today' });
+  }
+  return new SpendGuard(tokenLedger, pricing, dailyUsdCap, baselineUsd, day);
 }
 
 function buildSources(config: Config, fetchJson: JsonFetcher): SourceAdapter[] {
@@ -280,6 +316,19 @@ async function main(): Promise<void> {
     onError: (err) => log.error('tokens.persist_failed', { err }),
   });
 
+  // Daily model-spend backstop (ADR-0062). Seed today's already-spent baseline
+  // from the durable per-tier token counters so the ceiling survives restarts
+  // and deploys (a runaway can't reset its bill by crashing the process). The
+  // ledger tracks THIS session live; baseline + session = the calendar day's
+  // spend, counted once.
+  const spend = config.spend;
+  const pricing = {
+    cheap: spend.pricePerMillionTokens.cheap,
+    deep: spend.pricePerMillionTokens.deep,
+    embed: spend.pricePerMillionTokens.embed,
+  };
+  const spendGuard = await buildSpendGuard(usage, tokenLedger, pricing, spend.dailyUsdCap);
+
   // One provider transport, shared by the slot-filling Reasoner and the chat
   // agent's tool loop (ADR-0053) — same models, same retry discipline.
   const openaiTransport = new OpenAITransport({
@@ -287,8 +336,10 @@ async function main(): Promise<void> {
     deepModel: config.reasoner.deepModel,
     onUsage: (u) => tokenLedger.record(u),
   });
-  const llm = new ResilientLLMClient(new Reasoner(openaiTransport), (op, err) =>
-    log.warn('reasoner.degraded', { op, err }),
+  const llm = new ResilientLLMClient(
+    new Reasoner(openaiTransport),
+    (op, err) => log.warn('reasoner.degraded', { op, err }),
+    spendGuard,
   );
 
   const queryEngine = new HorizonQuery({
@@ -307,8 +358,10 @@ async function main(): Promise<void> {
   );
   // One embedder, shared by the tick pipeline (dedup) and — when semantic chat is
   // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
-  const embedder = buildEmbedder(config, (u) =>
-    tokenLedger.record({ tier: 'embed', promptTokens: u.totalTokens, completionTokens: 0 }),
+  const embedder = buildEmbedder(
+    config,
+    (u) => tokenLedger.record({ tier: 'embed', promptTokens: u.totalTokens, completionTokens: 0 }),
+    spendGuard,
   );
   const storySources = buildSources(config, fetchJson);
   const signalSources = buildSignalSources(config, fetchJson);
@@ -343,8 +396,13 @@ async function main(): Promise<void> {
   // Each step runs in isolation (ADR-0054 audit fix): a failing prune must
   // not starve the prunes after it or reflection for the cycle — see
   // `runMaintenanceSteps` in pipeline/maintenance.ts for the isolation itself.
-  const maintain = async (): Promise<void> =>
-    runMaintenanceSteps(
+  const maintain = async (): Promise<void> => {
+    // Coordinate reflect → revert within one cycle: if reflection just imposed a
+    // fresh override, the deterministic revert must stand down this pass, or a
+    // healthy-looking window would clear the override before the next tick ever
+    // reads it — defeating the adaptation (Bugbot finding, ADR-0061).
+    let appliedPolicyOverrideThisCycle = false;
+    await runMaintenanceSteps(
       [
         {
           name: 'tickReports',
@@ -387,8 +445,8 @@ async function main(): Promise<void> {
           // see maybeReflect's docstring in pipeline/maintenance.ts), not an
           // in-memory counter and not a row count (ADR-0042).
           name: 'reflect',
-          run: () =>
-            maybeReflect({
+          run: async () => {
+            const outcome = await maybeReflect({
               reflect: (input) => llm.reflect(input),
               screen: screenReflectionActions,
               backoff,
@@ -402,11 +460,30 @@ async function main(): Promise<void> {
               reflectEveryTicks: retention.reflectEveryTicks,
               reflectWindow: retention.reflectWindow,
               reflectionsRetention: retention.reflections,
-            }),
+            });
+            appliedPolicyOverrideThisCycle = outcome.appliedPolicyOverride;
+          },
+        },
+        {
+          // Close the adaptation loop (ADR-0061): once ticks recover, relax any
+          // override a prior reflection imposed instead of letting a one-off
+          // stress response persist forever. Deterministic, every tick.
+          name: 'revertPolicy',
+          run: async () => {
+            if (appliedPolicyOverrideThisCycle) return; // let this cycle's fresh override stand
+            await maybeRevertPolicy({
+              agentPolicyRepo,
+              tickReportRepo,
+              now: () => systemClock.now(),
+              healthyWindow: retention.reflectWindow,
+              log,
+            });
+          },
         },
       ],
       log,
     );
+  };
 
   // Optional cross-process advisory lock (ADR-0047): when two processes point at
   // one DB, only the lock holder ticks — the other skips instead of double-writing.

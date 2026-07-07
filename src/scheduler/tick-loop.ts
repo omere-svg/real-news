@@ -9,6 +9,10 @@ export interface TickLoopRunner {
   run(opts: {
     skipSources: ReadonlySet<SourceId>;
     deepAnalysisTopN?: number;
+    /** Per-tick confirm-concurrency override from the reflection policy (ADR-0061). */
+    confirmConcurrency?: number;
+    /** Per-tick merge-sensitivity override from the reflection policy (ADR-0061). */
+    candidateThreshold?: number;
   }): Promise<TickReport>;
 }
 
@@ -33,9 +37,13 @@ export interface TickBackoff {
   ): SourceId[];
 }
 
-/** The slice of AgentPolicyRepo the loop reads each tick (ADR-0053). */
+/** The slice of AgentPolicyRepo the loop reads each tick (ADR-0053/0061). */
 export interface TickPolicyReader {
-  get(): Promise<{ readonly deepAnalysisTopN: number | null } | null>;
+  get(): Promise<{
+    readonly deepAnalysisTopN: number | null;
+    readonly confirmConcurrency: number | null;
+    readonly candidateThreshold: number | null;
+  } | null>;
 }
 
 export interface TickLoopDeps {
@@ -177,6 +185,8 @@ export class TickLoop {
       const report = await deps.runner.run({
         skipSources: backedOff,
         ...(policy?.deepAnalysisTopN ? { deepAnalysisTopN: policy.deepAnalysisTopN } : {}),
+        ...(policy?.confirmConcurrency ? { confirmConcurrency: policy.confirmConcurrency } : {}),
+        ...(policy?.candidateThreshold ? { candidateThreshold: policy.candidateThreshold } : {}),
       });
       this.recordTick({
         ...report,

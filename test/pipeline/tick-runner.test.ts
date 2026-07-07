@@ -7,6 +7,7 @@ import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
 import { FakeEmbedder } from '../helpers/fake-embedder.js';
+import { ResilientEmbedder } from '../../src/embedding/resilient-embedder.js';
 import { FakeSource } from '../helpers/fake-source.js';
 import { FakeSignalSource } from '../helpers/fake-signal-source.js';
 import type { RawItem, SignalObservation, SourceId, StorySourceId } from '../../src/domain/types.js';
@@ -531,6 +532,31 @@ describe('TickRunner', () => {
 
     const [afterSecond] = await storyRepo.all();
     expect(afterSecond?.displayTitle).toBe('The Deep Story, Explained'); // preserved
+  });
+
+  it('does not persist a degraded (fallback) embedding vector (ADR-0065)', async () => {
+    // Primary embedder is down, so the resilient embedder serves hash vectors.
+    // The Story still upserts (from the source text), but its hash vector must
+    // NOT reach story_vectors — a non-semantic vector would poison cross-tick
+    // merge and semantic search against the real neural index.
+    const brokenPrimary = { dimensions: 3, embed: async () => { throw new Error('down'); } };
+    const embedder = new ResilientEmbedder(brokenPrimary, new FakeEmbedder({ 'Live story': [0.3, 0.3, 0.3] }));
+    const { runner, storyRepo } = await build({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Live story', { topic: 'AI' })],
+        }),
+      ],
+    });
+    // Swap in the degrading embedder (build() defaults to a healthy FakeEmbedder).
+    (runner as unknown as { deps: { embedder: unknown } }).deps.embedder = embedder;
+
+    const report = await runner.run();
+
+    expect(report.storiesUpserted).toBe(1); // the tick still completes
+    const [story] = await storyRepo.all();
+    const vectors = await storyRepo.vectorsFor([story!.id]);
+    expect(vectors.size).toBe(0); // no hash vector persisted
   });
 
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {

@@ -69,12 +69,19 @@ describe('HTTP API', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
-  it('GET /api/brief returns a budgeted text brief', async () => {
+  it('GET /api/brief returns a budgeted text brief plus structured stories (ADR-0064)', async () => {
     const app = await appWithStories();
     const res = await app.request('/api/brief?minutes=10');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { brief: string };
+    const body = (await res.json()) as {
+      brief: string;
+      stories: { title: string; drivers: unknown[]; significance: number }[];
+    };
     expect(body.brief).toContain('AI story');
+    // The structured twin the web renders as cards with a "Why this score?" panel.
+    expect(Array.isArray(body.stories)).toBe(true);
+    expect(body.stories.some((s) => s.title.includes('AI story'))).toBe(true);
+    expect(body.stories[0]).toHaveProperty('drivers');
   });
 
   it('GET /api/brief filters by topic query param', async () => {

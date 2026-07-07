@@ -93,4 +93,39 @@ describe('ResilientLLMClient', () => {
 
     expect(await llm.reflect({ ticks: [] })).toEqual({ advisory: '', actions: [] }); // skip the advisory on an outage
   });
+
+  it('short-circuits to the neutral fallback WITHOUT calling the delegate when over the daily spend cap (ADR-0062)', async () => {
+    let calls = 0;
+    const counting: Pick<LLMClient, 'classify' | 'assessImpact'> = {
+      classify: async () => {
+        calls += 1;
+        return { topic: 'Israel' as const };
+      },
+      assessImpact: async () => {
+        calls += 1;
+        return 0.9;
+      },
+    };
+    const exhausted = { isExhausted: () => true };
+    const llm = new ResilientLLMClient(
+      counting as unknown as LLMClient,
+      () => undefined,
+      exhausted,
+    );
+
+    // Both degrade to the safe default and the delegate is never invoked.
+    expect(await llm.classify(classifyInput)).toEqual({ topic: 'Other' });
+    expect(await llm.assessImpact(stub)).toBe(0);
+    expect(calls).toBe(0);
+  });
+
+  it('calls the delegate normally while the budget is not exhausted', async () => {
+    const within = { isExhausted: () => false };
+    const llm = new ResilientLLMClient(
+      new FakeLLM({ classify: { topic: 'AI' } }),
+      () => undefined,
+      within,
+    );
+    expect(await llm.classify(classifyInput)).toEqual({ topic: 'AI' });
+  });
 });

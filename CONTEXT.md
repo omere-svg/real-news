@@ -35,7 +35,8 @@ item from its prior owner before re-attaching it (no primary-key collision).
 An official, public, stable developer API we extract from. Phase 1: Hacker News, GDELT,
 Knesset (bills), arXiv, SEC EDGAR, Wikipedia. Phase 4 (ADR-0021) adds media + thematic
 anchors: Guardian, Times of Israel, Knesset Votes, Hugging Face Daily Papers, NBER, Nature,
-PsyArXiv. ADR-0031 adds a keyless wave covering the under-sourced fields: TheSportsDB (Sports),
+PsyArXiv. ADR-0059 adds mainstream corroboration + coverage-gap feeds: BBC World / Business /
+Sport and Ynetnews. ADR-0031 adds a keyless wave covering the under-sourced fields: TheSportsDB (Sports),
 WHO Disease Outbreak News (Health), and NASA EONET / USGS / GDACS (Climate) — via keyless
 **RSS** (headline + summary + link only) or open JSON APIs. *Strictly zero scraping* —
 APIs/feeds only, never HTML/UI parsing.
@@ -171,6 +172,35 @@ offer exactly two reader formats — the text **brief** and the narrated **podca
 plus per-chat preferences and Memory. The bot's primary UX is **plain English + tap-to-run
 buttons** (ADR-0030) — free text is routed to an intent; slash commands (`/brief`, `/podcast`,
 `/chat`, `/prefs`, `/feedback`, `/remember`, `/forget`) remain as aliases. It also supports
-**Chat** — conversational Q&A grounded in the cached Stories, escalating to an optional **web
-search** fallback only when the cache can't answer and only when configured (ADR-0029, off by
-default). The brief reads the cache only; chat's web fallback is the one deliberate exception.
+**Chat** — conversational Q&A grounded in the cached Stories. When a tool-capable transport is
+wired it is a bounded **Chat Agent** (ADR-0053): the model itself drives, choosing tools
+(cache search, story detail, signal trends, web search, save-memory) until it can answer, with
+every trajectory persisted at `/api/chat-traces`. **Web search** is one of those tools, offered
+only when configured (ADR-0029, off by default); once the agent is enabled it is the *only*
+web-search path — the fixed fallback stays cache-only (ADR-0065). The brief reads the cache only.
+
+---
+
+## Adaptation & control (the self-tuning loop)
+
+**Reflection** — on a cadence the Reasoner reads the trailing window of Tick Reports *as a
+group* and returns an advisory plus structured **actions** (ADR-0042/0053). Actions are never
+trusted raw: the deterministic **Policy Guard** (`reflection-policy.ts`) screens and clamps each
+to a safe band before anything applies. The vocabulary (ADR-0061): rest a flaky source
+(`backoff_source`), and re-aim or clear three numeric knobs — the deep-analysis budget
+(`deep_analysis_top_n`), merge-confirm concurrency (`confirm_concurrency`), and merge
+sensitivity (`candidate_threshold`).
+
+**Agent Policy** — the persisted overrides (`agent_policy`) the reflection loop writes and the
+next Tick reads. A null column defers to config. A deterministic **auto-revert** clears *all*
+overrides once the last N ticks each ran healthy, so a one-off stress response never persists
+(ADR-0061) — the loop tightens under stress and relaxes on recovery, on its own.
+
+**Adaptive Backoff** — per-Source failure streaks that force a cooldown (skip the Source for a
+few ticks) so a rate-limited or broken endpoint isn't hammered (ADR-0052); the reflection loop
+can also force one.
+
+**Spend Guard** — a restart-safe daily USD ceiling on unattended model spend (ADR-0062). It
+sums a persisted baseline (today's `usage` token counters, read at boot) with the live in-tick
+ledger; once the day's estimated spend reaches `spend.dailyUsdCap`, every LLM call degrades to
+its neutral fallback until UTC midnight. The pipeline's equivalent of the bot's global quota.

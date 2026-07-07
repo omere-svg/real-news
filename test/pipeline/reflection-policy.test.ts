@@ -11,6 +11,8 @@ import type { ReflectionAction } from '../../src/llm/llm-client.js';
 const CTX = {
   validSources: ['gdelt', 'arxiv'] as const,
   topN: { min: 3, max: 15 },
+  confirmConcurrency: { min: 1, max: 16 },
+  candidateThreshold: { min: 0.5, max: 0.95 },
   maxBackoffTicks: 10,
 };
 
@@ -72,8 +74,55 @@ describe('screenReflectionActions', () => {
     expect(out.deepAnalysisTopN).toEqual({ value: null, reason: 'pipeline healthy again' });
   });
 
+  it('clamps set_confirm_concurrency into the guard bounds (ADR-0061)', () => {
+    const low = screenReflectionActions(
+      [{ type: 'set_confirm_concurrency', value: 0, reason: 'ease load' }],
+      CTX,
+    );
+    expect(low.confirmConcurrency).toEqual({ value: 1, reason: 'ease load' });
+
+    const high = screenReflectionActions(
+      [{ type: 'set_confirm_concurrency', value: 999, reason: 'headroom' }],
+      CTX,
+    );
+    expect(high.confirmConcurrency).toEqual({ value: 16, reason: 'headroom' });
+  });
+
+  it('clamps set_candidate_threshold into the guard bounds (ADR-0061)', () => {
+    const low = screenReflectionActions(
+      [{ type: 'set_candidate_threshold', value: 0.1, reason: 'merge more' }],
+      CTX,
+    );
+    expect(low.candidateThreshold).toEqual({ value: 0.5, reason: 'merge more' });
+
+    const high = screenReflectionActions(
+      [{ type: 'set_candidate_threshold', value: 0.99, reason: 'over-merging' }],
+      CTX,
+    );
+    expect(high.candidateThreshold).toEqual({ value: 0.95, reason: 'over-merging' });
+  });
+
+  it('rejects a non-finite numeric override rather than applying NaN (ADR-0061)', () => {
+    const out = screenReflectionActions(
+      [
+        { type: 'set_confirm_concurrency', value: Number.NaN, reason: 'bad' },
+        { type: 'set_candidate_threshold', value: Number.POSITIVE_INFINITY, reason: 'bad' },
+      ],
+      CTX,
+    );
+    expect(out.confirmConcurrency).toBeNull();
+    expect(out.candidateThreshold).toBeNull();
+    expect(out.rejected).toHaveLength(2);
+  });
+
   it('an empty proposal set yields an empty, all-null policy', () => {
     const out = screenReflectionActions([] as ReflectionAction[], CTX);
-    expect(out).toEqual({ backoffs: [], deepAnalysisTopN: null, rejected: [] });
+    expect(out).toEqual({
+      backoffs: [],
+      deepAnalysisTopN: null,
+      confirmConcurrency: null,
+      candidateThreshold: null,
+      rejected: [],
+    });
   });
 });

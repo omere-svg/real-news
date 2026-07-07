@@ -20,6 +20,7 @@ import type {
   TranslateInput,
   Translation,
 } from './llm-client.js';
+import type { SpendBudget } from './spend-guard.js';
 
 /**
  * Wraps any LLMClient so a Reasoner failure degrades gracefully instead of
@@ -28,6 +29,14 @@ import type {
  * degradation policy is declared once per method as *data* (the neutral fallback),
  * not repeated as try/catch boilerplate (ADR-0052). On error it logs and returns
  * the fallback; the pipeline keeps running with signal-only scoring.
+ *
+ * It is ALSO the enforcement point for the daily spend ceiling (ADR-0062): when
+ * the optional `budget` reports the day's estimated model spend has hit the
+ * configured cap, every call short-circuits to its neutral fallback WITHOUT
+ * touching the network — the same degrade path a transport failure takes, so the
+ * pipeline and bot keep serving deterministic output instead of running an
+ * unbounded bill. The cap is deliberately set very high; this is a runaway
+ * backstop, not a normal-operation throttle.
  */
 export class ResilientLLMClient implements LLMClient {
   constructor(
@@ -35,10 +44,17 @@ export class ResilientLLMClient implements LLMClient {
     // Composition root wires the real Logger-backed callback (main.ts); this
     // default only covers callers (tests) that don't care about the degrade log.
     private readonly onError: (op: string, err: unknown) => void = () => undefined,
+    /** Optional daily spend ceiling (ADR-0062); absent ⇒ never budget-gated. */
+    private readonly budget?: SpendBudget,
   ) {}
 
-  /** Run a delegate call; on failure log and return the neutral fallback. */
+  /** Run a delegate call; on failure — or when over the daily spend cap — log and
+   * return the neutral fallback without hitting the network. */
   private guard<T>(op: string, call: (d: LLMClient) => Promise<T>, fallback: T): Promise<T> {
+    if (this.budget?.isExhausted()) {
+      this.onError(op, new Error('daily model spend cap reached — degrading (ADR-0062)'));
+      return Promise.resolve(fallback);
+    }
     return call(this.delegate).catch((err) => {
       this.onError(op, err);
       return fallback;

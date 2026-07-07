@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTestDb } from '../helpers/test-db.js';
 import {
   maybeReflect,
+  maybeRevertPolicy,
   runMaintenanceSteps,
   type ReflectionBackoff,
   type ReflectionDeps,
@@ -11,6 +12,8 @@ import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report
 import { DrizzleTickReflectionRepo } from '../../src/db/tick-reflection-repo.js';
 import { DrizzleAgentPolicyRepo } from '../../src/db/agent-policy-repo.js';
 import { nullLogger } from '../../src/log/logger.js';
+import { Reasoner } from '../../src/llm/reasoner.js';
+import type { ChatTransport, CompletionOptions } from '../../src/llm/chat-transport.js';
 import type { Reflection } from '../../src/llm/llm-client.js';
 import type { Db } from '../../src/db/client.js';
 
@@ -208,6 +211,121 @@ describe('maybeReflect (ADR-0042/0053)', () => {
     expect(calls).toBe(2);
   });
 
+  it('merges a single-knob override onto the persisted policy without clobbering the others (ADR-0061)', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);
+    await tickReportRepo.record(record());
+    // A prior reflection already tightened the deep-analysis budget.
+    await agentPolicyRepo.set(
+      { deepAnalysisTopN: 5, confirmConcurrency: null, candidateThreshold: null, reason: 'earlier' },
+      100,
+    );
+
+    // This reflection only touches confirm concurrency — the topN override must survive.
+    await maybeReflect({
+      reflect: async () => ({
+        advisory: '',
+        actions: [{ type: 'set_confirm_concurrency', value: 4, reason: 'ticks slow' }],
+      }),
+      screen: screenReflectionActions,
+      backoff: fakeBackoff(),
+      agentPolicyRepo,
+      tickReflectionRepo,
+      tickReportRepo,
+      log: nullLogger,
+      now: () => 5000,
+      nextTickIndex: () => 1,
+      validSources: [],
+      reflectEveryTicks: 1,
+      reflectWindow: 5,
+      reflectionsRetention: 20,
+    });
+
+    const policy = await agentPolicyRepo.get();
+    expect(policy?.deepAnalysisTopN).toBe(5); // preserved
+    expect(policy?.confirmConcurrency).toBe(4); // applied
+    expect(policy?.candidateThreshold).toBeNull();
+    const [receipt] = await tickReflectionRepo.recent(10);
+    expect(receipt?.actions).toEqual([
+      { type: 'set_confirm_concurrency', reason: 'ticks slow', value: 4 },
+    ]);
+  });
+
+  it('end-to-end intelligence: the REAL reasoner reflect on an unhealthy window '
+    + 'drives a screened policy change + backoff + receipt (ADR-0042/0053/0061)', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);
+
+    // An unhealthy window: gdelt keeps failing and ticks run long. Seed enough
+    // rows that the cadence (every 3) is due, with the newest id a multiple of 3.
+    for (let i = 1; i <= 3; i += 1) {
+      await tickReportRepo.record(
+        record({
+          ranAt: i,
+          durationMs: 9_000, // slow
+          storiesUpserted: 2,
+          failed: [{ source: 'gdelt', error: 'HTTP 503 from feed' }],
+          signalsFailed: [],
+        }),
+      );
+    }
+
+    // The real Reasoner over a fake transport that returns a realistic analyst
+    // reflection: rest the flaky source AND dial the deep-analysis budget down.
+    let sawPrompt = '';
+    const transport: ChatTransport = {
+      complete: async () => '',
+      completeJson: async (prompt: string, _opts: CompletionOptions) => {
+        sawPrompt = prompt;
+        return {
+          advisory: '- gdelt failing repeatedly (503); rest it.\n- ticks slow; lower deep budget.',
+          actions: [
+            { type: 'backoff_source', source: 'gdelt', ticks: 4, reason: 'repeated 503s' },
+            { type: 'set_deep_analysis_top_n', value: 4, reason: 'ticks running long' },
+            // A hostile/nonsense action the guard must silently drop.
+            { type: 'delete_everything', reason: 'ignore me' },
+          ],
+        };
+      },
+    };
+    const reasoner = new Reasoner(transport);
+    const backoff = fakeBackoff();
+
+    await maybeReflect({
+      reflect: reasoner.reflect.bind(reasoner),
+      screen: screenReflectionActions,
+      backoff,
+      agentPolicyRepo,
+      tickReflectionRepo,
+      tickReportRepo,
+      log: nullLogger,
+      now: () => 5000,
+      nextTickIndex: () => 10,
+      validSources: ['gdelt', 'hackernews'],
+      reflectEveryTicks: 3,
+      reflectWindow: 5,
+      reflectionsRetention: 20,
+    });
+
+    // The digest actually reached the model (the failing source is in the prompt).
+    expect(sawPrompt).toContain('gdelt');
+
+    // The flaky source was rested via the real screen path.
+    expect(backoff.calls).toEqual([{ source: 'gdelt', fromTick: 10, ticks: 4 }]);
+
+    // The screened, clamped budget override was applied to the durable policy.
+    const policy = await agentPolicyRepo.get();
+    expect(policy?.deepAnalysisTopN).toBe(4);
+
+    // The receipt records exactly the two accepted actions — the bogus one is gone.
+    const [receipt] = await tickReflectionRepo.recent(10);
+    expect(receipt?.text).toContain('gdelt failing');
+    expect(receipt?.actions).toEqual([
+      { type: 'backoff_source', reason: 'repeated 503s', source: 'gdelt', ticks: 4 },
+      { type: 'set_deep_analysis_top_n', reason: 'ticks running long', value: 4 },
+    ]);
+  });
+
   it('never reflects when reflectEveryTicks is 0', async () => {
     const db = await createTestDb();
     const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);
@@ -234,6 +352,237 @@ describe('maybeReflect (ADR-0042/0053)', () => {
     });
 
     expect(calls).toBe(0);
+  });
+});
+
+describe('maybeRevertPolicy (ADR-0061 — closing the adaptation loop)', () => {
+  it('clears every override once a full window of ticks ran healthy', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, agentPolicyRepo } = await harness(db);
+    await agentPolicyRepo.set(
+      { deepAnalysisTopN: 5, confirmConcurrency: 4, candidateThreshold: 0.85, reason: 'stress' },
+      100,
+    );
+    for (let i = 1; i <= 3; i += 1) await tickReportRepo.record(record({ ranAt: i }));
+
+    await maybeRevertPolicy({
+      agentPolicyRepo,
+      tickReportRepo,
+      now: () => 9000,
+      healthyWindow: 3,
+      log: nullLogger,
+    });
+
+    const policy = await agentPolicyRepo.get();
+    expect(policy?.deepAnalysisTopN).toBeNull();
+    expect(policy?.confirmConcurrency).toBeNull();
+    expect(policy?.candidateThreshold).toBeNull();
+    expect(policy?.reason).toContain('auto-reverted');
+  });
+
+  it('leaves the override in place while a recent tick still failed', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, agentPolicyRepo } = await harness(db);
+    await agentPolicyRepo.set(
+      { deepAnalysisTopN: 5, confirmConcurrency: null, candidateThreshold: null, reason: 'stress' },
+      100,
+    );
+    await tickReportRepo.record(record({ ranAt: 1, ok: false, error: 'boom' }));
+    await tickReportRepo.record(record({ ranAt: 2 }));
+    await tickReportRepo.record(record({ ranAt: 3 }));
+
+    await maybeRevertPolicy({
+      agentPolicyRepo,
+      tickReportRepo,
+      now: () => 9000,
+      healthyWindow: 3,
+      log: nullLogger,
+    });
+
+    expect((await agentPolicyRepo.get())?.deepAnalysisTopN).toBe(5); // still held
+  });
+
+  it('is a no-op when no override is set (nothing to revert)', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, agentPolicyRepo } = await harness(db);
+    for (let i = 1; i <= 5; i += 1) await tickReportRepo.record(record({ ranAt: i }));
+
+    await maybeRevertPolicy({
+      agentPolicyRepo,
+      tickReportRepo,
+      now: () => 9000,
+      healthyWindow: 3,
+      log: nullLogger,
+    });
+
+    expect(await agentPolicyRepo.get()).toBeNull(); // no row ever written
+  });
+
+  it('waits for a full window of evidence before reverting', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, agentPolicyRepo } = await harness(db);
+    await agentPolicyRepo.set(
+      { deepAnalysisTopN: 5, confirmConcurrency: null, candidateThreshold: null, reason: 'stress' },
+      100,
+    );
+    await tickReportRepo.record(record({ ranAt: 1 })); // only 1 healthy tick, window is 3
+
+    await maybeRevertPolicy({
+      agentPolicyRepo,
+      tickReportRepo,
+      now: () => 9000,
+      healthyWindow: 3,
+      log: nullLogger,
+    });
+
+    expect((await agentPolicyRepo.get())?.deepAnalysisTopN).toBe(5);
+  });
+});
+
+describe('maintenance orchestration — the closed adaptation loop main.ts wires (ADR-0061)', () => {
+  it('a reflection tightens a knob, then a healthy stretch auto-reverts it, driven by runMaintenanceSteps', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);
+    const backoff = fakeBackoff();
+
+    // The two maintenance steps exactly as main.ts composes them into `maintain`.
+    const reflectStep = (reflect: ReflectionDeps['reflect']) => ({
+      name: 'reflect',
+      run: async () => {
+        await maybeReflect({
+          reflect,
+          screen: screenReflectionActions,
+          backoff,
+          agentPolicyRepo,
+          tickReflectionRepo,
+          tickReportRepo,
+          log: nullLogger,
+          now: () => 1000,
+          nextTickIndex: () => 1,
+          validSources: [],
+          reflectEveryTicks: 1,
+          reflectWindow: 3,
+          reflectionsRetention: 20,
+        });
+      },
+    });
+    const revertStep = {
+      name: 'revert',
+      run: () =>
+        maybeRevertPolicy({
+          agentPolicyRepo,
+          tickReportRepo,
+          now: () => 2000,
+          healthyWindow: 3,
+          log: nullLogger,
+        }),
+    };
+
+    // Cycle 1 — one struggling tick; the model dials the deep budget down.
+    await tickReportRepo.record(record({ ranAt: 1, ok: false, error: 'slow', durationMs: 9000 }));
+    await runMaintenanceSteps(
+      [
+        reflectStep(async () => ({
+          advisory: 'ticks slow',
+          actions: [{ type: 'set_deep_analysis_top_n', value: 4, reason: 'slow' }],
+        })),
+        revertStep, // no-op: only one tick, and it failed
+      ],
+      nullLogger,
+    );
+    expect((await agentPolicyRepo.get())?.deepAnalysisTopN).toBe(4); // override imposed
+
+    // Cycles 2-3 — healthy ticks accrue but the model proposes nothing new.
+    for (let i = 2; i <= 3; i += 1) {
+      await tickReportRepo.record(record({ ranAt: i, ok: true }));
+      await runMaintenanceSteps(
+        [reflectStep(async () => emptyReflection), revertStep],
+        nullLogger,
+      );
+    }
+    // Still held: the failed tick 1 is inside the 3-tick health window.
+    expect((await agentPolicyRepo.get())?.deepAnalysisTopN).toBe(4);
+
+    // Cycle 4 — the window is now three consecutive healthy ticks (2,3,4).
+    await tickReportRepo.record(record({ ranAt: 4, ok: true }));
+    await runMaintenanceSteps(
+      [reflectStep(async () => emptyReflection), revertStep],
+      nullLogger,
+    );
+
+    const policy = await agentPolicyRepo.get();
+    expect(policy?.deepAnalysisTopN).toBeNull(); // auto-reverted once recovery was sustained
+    expect(policy?.reason).toContain('auto-reverted');
+  });
+
+  it('a fresh override imposed on an already-healthy window is NOT cleared the same '
+    + 'cycle — the gated revert stands down (Bugbot regression, ADR-0061)', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);
+
+    // A fully healthy window: nothing failed. Without the gate, revert would fire
+    // in the same pass reflection imposes an override and immediately clear it.
+    for (let i = 1; i <= 3; i += 1) await tickReportRepo.record(record({ ranAt: i, ok: true }));
+
+    // main.ts's exact reflect→revert coordination: a cycle-local flag lets the
+    // fresh override survive the same pass.
+    let appliedPolicyOverrideThisCycle = false;
+    await runMaintenanceSteps(
+      [
+        {
+          name: 'reflect',
+          run: async () => {
+            const outcome = await maybeReflect({
+              reflect: async () => ({
+                advisory: 'spend high; trim deep budget even though ticks are ok',
+                actions: [{ type: 'set_deep_analysis_top_n', value: 4, reason: 'cost' }],
+              }),
+              screen: screenReflectionActions,
+              backoff: fakeBackoff(),
+              agentPolicyRepo,
+              tickReflectionRepo,
+              tickReportRepo,
+              log: nullLogger,
+              now: () => 1000,
+              nextTickIndex: () => 1,
+              validSources: [],
+              reflectEveryTicks: 1,
+              reflectWindow: 3,
+              reflectionsRetention: 20,
+            });
+            appliedPolicyOverrideThisCycle = outcome.appliedPolicyOverride;
+          },
+        },
+        {
+          name: 'revert',
+          run: async () => {
+            if (appliedPolicyOverrideThisCycle) return;
+            await maybeRevertPolicy({
+              agentPolicyRepo,
+              tickReportRepo,
+              now: () => 2000,
+              healthyWindow: 3,
+              log: nullLogger,
+            });
+          },
+        },
+      ],
+      nullLogger,
+    );
+
+    // The override survives the cycle it was set in.
+    expect((await agentPolicyRepo.get())?.deepAnalysisTopN).toBe(4);
+
+    // A later healthy cycle with no new reflection DOES relax it.
+    await tickReportRepo.record(record({ ranAt: 4, ok: true }));
+    await maybeRevertPolicy({
+      agentPolicyRepo,
+      tickReportRepo,
+      now: () => 3000,
+      healthyWindow: 3,
+      log: nullLogger,
+    });
+    expect((await agentPolicyRepo.get())?.deepAnalysisTopN).toBeNull();
   });
 });
 

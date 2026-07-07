@@ -2,7 +2,7 @@ import { extract, type SourceFailure } from './extract.js';
 import { classify } from './classify.js';
 import { embed } from './embed.js';
 import { cluster } from './cluster.js';
-import { resolve, type IdentifiedCluster } from './resolve.js';
+import { resolve } from './resolve.js';
 import { score } from './score.js';
 import { analyze } from './analyze.js';
 import { observeSignals } from './observe-signals.js';
@@ -89,10 +89,19 @@ export class TickRunner {
       /** Per-run override of the deep-analysis budget — the reflection→action
        * loop's screened policy (ADR-0053); defaults to config. */
       deepAnalysisTopN?: number;
+      /** Per-run confirm-concurrency override from the reflection policy (ADR-0061). */
+      confirmConcurrency?: number;
+      /** Per-run merge-sensitivity override from the reflection policy (ADR-0061). */
+      candidateThreshold?: number;
     } = {},
   ): Promise<TickReport> {
     const { rawItemRepo, storyRepo, llm, embedder, clock, config } = this.deps;
     const log = this.deps.log ?? nullLogger;
+    // The reflection→action loop may override these two knobs per tick (ADR-0061);
+    // absent ⇒ the configured default. Everything downstream reads the effective
+    // value so a screened policy actually changes this tick's behavior.
+    const confirmConcurrency = opts.confirmConcurrency ?? config.confirmConcurrency;
+    const candidateThreshold = opts.candidateThreshold ?? config.candidateThreshold;
 
     // Adaptive backoff (ADR-0052): the loop may ask us to skip Sources that have
     // failed repeatedly, so we don't spend a rate-limited fetch on a known-bad one.
@@ -146,12 +155,15 @@ export class TickRunner {
       }
     }
 
-    const classified = await classify(extraction.items, llm, config.confirmConcurrency);
-    const embedded = await embed(classified, embedder);
+    const classified = await classify(extraction.items, llm, confirmConcurrency);
+    // `degraded` ⇒ the embedder fell back to a non-semantic vector this tick
+    // (ADR-0065). We still cluster/resolve with these (internally consistent),
+    // but must not persist them, or hash vectors poison the neural index.
+    const { items: embedded, degraded: embedDegraded } = await embed(classified, embedder);
     const clusters = await cluster(embedded, llm, {
-      candidateThreshold: config.candidateThreshold,
+      candidateThreshold,
       ...(config.entityBlocking ? { entityBlocking: config.entityBlocking } : {}),
-      ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
+      ...(confirmConcurrency ? { confirmConcurrency } : {}),
       log,
     });
     // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017/0038).
@@ -159,10 +171,10 @@ export class TickRunner {
     // SAME config switch (dedup.entityBlocking.enabled) — one kill-switch, both layers.
     const eb = config.entityBlocking;
     const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock, log }, {
-      candidateThreshold: config.candidateThreshold,
+      candidateThreshold,
       recentWindowHours: config.recentWindowHours,
       ...(config.crossTopic ? { crossTopic: config.crossTopic } : {}),
-      ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
+      ...(confirmConcurrency ? { confirmConcurrency } : {}),
       ...(eb
         ? {
             relaxedThreshold: Math.max(0, eb.relaxedThreshold - 0.06),
@@ -171,32 +183,34 @@ export class TickRunner {
         : {}),
     });
 
-    const scored = await score(identified.map((i) => i.cluster), llm, {
+    const scored = await score(identified, llm, {
       clock,
       recencyHalfLifeHours: config.recencyHalfLifeHours,
       sourceWeights: config.sourceWeights,
       signalContext,
       maxSignalAdjustment: config.maxSignalAdjustment ?? 0,
-      ...(config.confirmConcurrency ? { concurrency: config.confirmConcurrency } : {}),
+      ...(confirmConcurrency ? { concurrency: confirmConcurrency } : {}),
     });
     const analyzed = await analyze(scored, llm, opts.deepAnalysisTopN ?? config.deepAnalysisTopN);
 
     // The deep tier only analyzes the top-N this tick; every other Story re-upserts
     // with null analysis. Read the current analysis first so a cheap re-run keeps
     // the summary/why a prior tick (or the backfill) already wrote (ADR-0047).
-    const prior = await storyRepo.existingAnalysis(identified.map((i) => i.id));
+    const prior = await storyRepo.existingAnalysis(analyzed.map((a) => a.id));
 
     try {
-      // score/analyze/resolve all preserve order, so index i lines up across them.
-      for (let i = 0; i < analyzed.length; i += 1) {
-        const { id, vector } = identified[i] as IdentifiedCluster;
-        await storyRepo.upsert(
-          toStoryUpsert(analyzed[i] as AnalyzedCluster, id, prior.get(id)),
-        );
+      // Each analyzed cluster carries its own resolved id + vector (ADR-0063), so
+      // the upsert joins by value — no positional re-zip of separate arrays that a
+      // future stage reorder could silently misalign.
+      for (const a of analyzed) {
+        await storyRepo.upsert(toStoryUpsert(a, a.id, prior.get(a.id)));
         // Skip persisting an empty vector (a missing embedding): a stored `[]`
         // has cosine 0 against everything, so the Story would silently never
         // cross-tick-merge and never surface in semantic search (ADR-0049).
-        if (vector.length > 0) await storyRepo.putVector(id, vector);
+        // Skip a degraded (fallback) vector too (ADR-0065): a hash vector in the
+        // neural index is worse than none — it mis-matches against every real
+        // embedding. The Story keeps whatever good vector a prior tick wrote.
+        if (!embedDegraded && a.vector.length > 0) await storyRepo.putVector(a.id, a.vector);
       }
     } finally {
       // Reassigning members across ticks can leave a prior Story empty; sweep the

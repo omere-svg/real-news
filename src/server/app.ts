@@ -238,7 +238,15 @@ export function createApp(
   );
 
   app.get('/api/brief', async (c) => {
-    return c.json({ brief: await queryEngine.textBrief(briefRequestOf(c, defaults, web)) });
+    // One selection, two reads: the deterministic `brief` text (shared with the
+    // bot, and the web's fallback) plus the structured `stories` the web renders
+    // as cards with an inspectable "Why this score?" breakdown (ADR-0064).
+    const request = briefRequestOf(c, defaults, web);
+    const [brief, stories] = await Promise.all([
+      queryEngine.textBrief(request),
+      queryEngine.briefStories(request),
+    ]);
+    return c.json({ brief, stories });
   });
 
   app.get('/api/podcast', async (c) => {

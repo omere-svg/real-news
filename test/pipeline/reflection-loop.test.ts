@@ -68,8 +68,8 @@ describe('reflection loop end-to-end (ADR-0042/0053)', () => {
       backoff,
       sourceIds: ['gdelt', 'hackernews'],
       policy: agentPolicyRepo,
-      maintain: () =>
-        maybeReflect({
+      maintain: async () => {
+        await maybeReflect({
           reflect: async () => reflection,
           screen: screenReflectionActions,
           backoff,
@@ -83,7 +83,8 @@ describe('reflection loop end-to-end (ADR-0042/0053)', () => {
           reflectEveryTicks: 1,
           reflectWindow: 5,
           reflectionsRetention: 20,
-        }),
+        });
+      },
       log: nullLogger,
     };
     const loop = new TickLoop(deps);

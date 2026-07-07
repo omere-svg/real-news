@@ -17,7 +17,7 @@ import type {
   TelegramTransport,
   TelegramUpdate,
 } from '../../src/telegram/telegram-transport.js';
-import type { BriefRequest, QueryEngine } from '../../src/presentation/query-engine.js';
+import type { BriefRequest, BriefStory, QueryEngine } from '../../src/presentation/query-engine.js';
 import type { Synthesizer } from '../../src/telegram/synthesizer.js';
 import type { Story } from '../../src/domain/types.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
@@ -84,6 +84,10 @@ class FakeQuery implements QueryEngine {
   async textBrief(r: BriefRequest): Promise<string> {
     this.lastRequest = r;
     return `BRIEF[${r.minutes}]`;
+  }
+  async briefStories(r: BriefRequest): Promise<readonly BriefStory[]> {
+    this.lastRequest = r;
+    return [];
   }
   async podcastScript(r: BriefRequest): Promise<string> {
     this.lastRequest = r;
@@ -695,6 +699,33 @@ describe('HorizonBot', () => {
         expect(transport.messages.at(-1)?.text).toContain('web answer');
         expect(transport.messages.at(-1)?.text).toMatch(/web search/i); // provenance note
       }
+    });
+
+    it('a degrading agent does NOT open a second, ungoverned web path (ADR-0065)', async () => {
+      // With the agent wired, web_search is the agent's budgeted/traced tool.
+      // Even when the agent degrades to the fixed discuss path, that path must
+      // stay cache-only — never fire its own deterministic web escalation.
+      const searched: string[] = [];
+      const webSearch: WebSearch = {
+        search: async (q) => {
+          searched.push(q);
+          return [{ title: 'Hit', url: 'https://x', snippet: 'fresh' }];
+        },
+      };
+      const agentTransport: ToolCapableTransport = {
+        completeWithTools: async () => {
+          throw new Error('model exploded'); // force the degrade branch
+        },
+      };
+      // The cache can't answer, which would normally trigger a web escalation.
+      const llm = new FakeLLM({ discuss: { answer: 'no cache hit', answeredFromNews: false } });
+      const { bot, transport } = await chatBuild({ agentTransport, discussant: llm, webSearch });
+
+      await bot.handle(update(5, '/chat what is the latest?'));
+
+      expect(searched).toHaveLength(0); // no ungoverned web search behind the agent
+      expect(llm.discussCalls).toBe(1); // single cache-only pass
+      expect(transport.messages.at(-1)?.text).not.toMatch(/web search/i);
     });
 
     it('weaves remembered context into the chat prompt (ADR-0028)', async () => {

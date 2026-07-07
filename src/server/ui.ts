@@ -153,6 +153,13 @@ export function renderUI(defaults: UiDefaults): string {
   .why-score summary::-webkit-details-marker { display:none; }
   .why-score summary::before { content:'▸ '; }
   .why-score[open] summary::before { content:'▾ '; }
+  /* "Why this score?" breakdown bars (ADR-0064): the exact scoring math per card. */
+  .why-score .drv { display:flex; align-items:center; gap:9px; margin:7px 0; }
+  .why-score .drv .lbl { flex:0 0 118px; color:var(--fg-dim); font-size:12.5px; }
+  .why-score .drv .track { flex:1; height:7px; background:var(--card2); border:1px solid var(--line); border-radius:999px; overflow:hidden; }
+  .why-score .drv .fill { display:block; height:100%; background:linear-gradient(90deg,var(--accent2),var(--accent)); }
+  .why-score .drv .val { flex:0 0 38px; text-align:right; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .why-score .sc-meta { margin-top:9px; color:var(--muted); font-size:12px; }
   .empty { color:var(--muted); text-align:center; padding:56px 20px; }
   .empty .big { font-size:16px; color:var(--fg-dim); }
   .skel { height:118px; border-radius:var(--radius); border:1px solid var(--line);
@@ -322,15 +329,16 @@ const HINTS = {
 };
 const DOC_FIELD = { brief: 'brief' };
 let format = 'brief';
-// Both formats cost a model call (podcast also TTS), so nothing generates on a
-// tab/topic/time change — only when the reader presses Generate. Keeps the model
-// idle until explicitly asked (ADR-0058).
+// The Brief is a DETERMINISTIC cache read — no model call — so it loads on first
+// paint and on any topic/time change, giving the reader something immediately
+// (ADR-0064). The Podcast DOES cost a model call (+ TTS), so it stays behind an
+// explicit ✨ Generate press — the model is never spent until asked (ADR-0058).
 function promptGenerate(){
   hint.textContent = HINTS[format] || '';
   list.innerHTML = emptyStateHtml('Ready when you are', 'Choose your topics and time, then press ✨ Generate.');
 }
-// Never auto-generate: a format/topic/time change just re-arms the Generate prompt.
-function render(){ promptGenerate(); }
+// Brief auto-loads (free); Podcast re-arms the explicit Generate prompt.
+function render(){ if (format === 'brief') { void load(); } else { promptGenerate(); } }
 
 // Single source of truth with the server (ui-view.ts, unit-tested there) —
 // injected verbatim so the browser runs the exact same escaping code.
@@ -511,6 +519,48 @@ function renderDoc(format, text){
   if (!cards.trim()) return emptyStateHtml(header || text, '');
   return '<div class="count">'+esc(header)+'</div>'+cards;
 }
+
+// ---- Structured brief cards with the "Why this score?" breakdown (ADR-0064) ----
+// Preferred path: the server now returns brief stories as structured JSON, so we
+// render the exact scoring math (per-axis bars + recency/corroboration/nudge) in
+// an expandable panel — the transparency the how-strip promises. renderDoc above
+// stays as the text fallback if a response ever lacks the structured stories.
+function scoreBar(label, value){
+  const pct = Math.max(0, Math.min(100, Math.round((Number(value)||0)*100)));
+  return '<div class="drv"><span class="lbl">'+esc(label)+'</span>'+
+    '<span class="track"><span class="fill" style="width:'+pct+'%"></span></span>'+
+    '<span class="val">'+pct+'%</span></div>';
+}
+function whyScoreHtml(s){
+  if (!Array.isArray(s.drivers) || !s.drivers.length) return '';
+  const bars = s.drivers.map(d => scoreBar(d.label, d.value)).join('');
+  const nudge = Number(s.signalNudge) || 0;
+  const nudgeStr = (nudge > 0 ? '+' : '') + nudge.toFixed(2);
+  const n = Number(s.corroboration) || 0;
+  const meta = 'Recency ×' + (Number(s.recencyFactor)||0).toFixed(2) +
+    ' · ' + n + ' source' + (n === 1 ? '' : 's') +
+    ' · signal nudge ' + nudgeStr;
+  return '<details class="why-score"><summary>Why this score?</summary>'+
+    bars + '<div class="sc-meta">'+esc(meta)+'</div></details>';
+}
+function renderBriefStories(header, stories){
+  const cards = stories.map(s => {
+    if (!s || !s.title) return '';
+    const su = safeUrl(s.url);
+    const titleHtml = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
+    const color = TOPIC_COLORS[s.topic] || '#8b93a7';
+    const tags = (s.tags||[]).map(t => '<span class="stag">'+esc(t)+'</span>').join('');
+    const sig = (typeof s.significance === 'number') ? s.significance.toFixed(1) : '';
+    const pill = sig ? '<span class="scorepill">'+esc(sig)+'<span class="max">/10</span></span>' : '';
+    return '<div class="card story"><div class="row"><p class="title">'+titleHtml+'</p>'+pill+'</div>'+
+      '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic||'')+'</span>'+tags+'</div>'+
+      (s.summary ? '<p class="why">'+esc(s.summary)+'</p>' : '')+
+      (s.whyItMatters ? '<p class="why"><b>Why it matters — </b>'+esc(s.whyItMatters)+'</p>' : '')+
+      whyScoreHtml(s)+'</div>';
+  }).join('');
+  if (!cards.trim()) return emptyStateHtml(header || 'Nothing to show yet', '');
+  return '<div class="count">'+esc(header)+'</div>'+cards;
+}
 // The web podcast is now real narrated audio (ADR-0020): an <audio> player, with
 // the script kept one tap away as a transcript. If TTS was unavailable the server
 // returns no audio and we fall back to showing the script to read.
@@ -545,6 +595,14 @@ async function load() {
       return;
     }
     const text = body[DOC_FIELD[format]] || '';
+    // Preferred: render the structured stories with the inspectable score
+    // breakdown (ADR-0064). Fall back to parsing the text brief if a response
+    // ever omits them (older server, or an empty selection).
+    if (Array.isArray(body.stories) && body.stories.length) {
+      const header = (text.split('\\n\\n')[0] || '').trim() || (body.stories.length + ' stories');
+      list.innerHTML = renderBriefStories(header, body.stories);
+      return;
+    }
     if (!text.trim()) { list.innerHTML = emptyStateHtml('Nothing to show yet', 'The worker fills the cache on each tick — check back shortly.'); return; }
     list.innerHTML = renderDoc(format, text);
   } catch (e) {

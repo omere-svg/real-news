@@ -125,6 +125,29 @@ export const configSchema = z.object({
       .default({}),
   }),
 
+  /**
+   * Daily model-spend ceiling (ADR-0062). A restart-safe HARD BACKSTOP against a
+   * runaway bill (a retry storm, a prompt loop, an abuse spike) — deliberately
+   * set very high so normal operation never touches it. Once the day's estimated
+   * spend (cheap + deep + embed tokens × the per-million prices below) reaches
+   * `dailyUsdCap`, every LLM call degrades to its neutral fallback until UTC
+   * midnight. TTS bills in characters and is excluded from this token model.
+   */
+  spend: z
+    .object({
+      /** USD/day ceiling; 0 disables the guard (unbounded). */
+      dailyUsdCap: z.number().nonnegative().default(1000),
+      /** Per-tier price in USD per 1,000,000 tokens — estimates, for the cap math. */
+      pricePerMillionTokens: z
+        .object({
+          cheap: z.number().nonnegative().default(0.5),
+          deep: z.number().nonnegative().default(10),
+          embed: z.number().nonnegative().default(0.02),
+        })
+        .default({}),
+    })
+    .default({}),
+
   scoring: z.object({
     /** Hours after which the floored recency factor decays one step (ADR-0034). */
     recencyHalfLifeHours: z.number().positive().default(36),

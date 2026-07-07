@@ -178,7 +178,9 @@ describe('TickLoop', () => {
     const run = vi.fn().mockResolvedValue(REPORT);
     const { deps } = makeDeps({
       runner: { run },
-      policy: { get: async () => ({ deepAnalysisTopN: 7 }) },
+      policy: {
+        get: async () => ({ deepAnalysisTopN: 7, confirmConcurrency: null, candidateThreshold: null }),
+      },
     });
     await new TickLoop(deps).runTick();
     expect(run.mock.calls[0]?.[0]).toMatchObject({ deepAnalysisTopN: 7 });

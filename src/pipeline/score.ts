@@ -12,6 +12,7 @@ import { representativeOf } from '../domain/cluster.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Cluster, Signals, SourceId } from '../domain/types.js';
+import type { IdentifiedCluster } from './resolve.js';
 import type { ScoredCluster } from './types.js';
 
 const HOUR_MS = 3_600_000;
@@ -80,7 +81,7 @@ export function assembleSignals(
  * [0, 10].
  */
 export async function score(
-  clusters: readonly Cluster[],
+  identified: readonly IdentifiedCluster[],
   llm: PipelineReasoner,
   ctx: ScoreContext,
 ): Promise<ScoredCluster[]> {
@@ -88,9 +89,9 @@ export async function score(
   // One impact call per cluster: bound the in-flight count so a large tick can't
   // fan out hundreds of model requests at once (ADR-0047).
   return mapWithConcurrency(
-    clusters,
+    identified,
     ctx.concurrency ?? DEFAULT_CONFIRM_CONCURRENCY,
-    async (cluster) => {
+    async ({ id, vector, cluster }) => {
       const signals = assembleSignals(cluster, now, ctx.sourceWeights);
 
       const lead = representativeOf(cluster);
@@ -114,6 +115,10 @@ export async function score(
       const signalNudge = Math.max(topicNudge, entityNudge);
 
       return {
+        // Carry the resolved id + vector straight through so the upsert loop
+        // joins by value, not by array index (ADR-0063).
+        id,
+        vector,
         cluster,
         significance: clamp(base + signalNudge, 0, 10),
         // The inspectable "why this score" snapshot (ADR-0032/0034).

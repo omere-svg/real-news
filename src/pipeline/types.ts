@@ -11,8 +11,18 @@ export interface EmbeddedItem extends ClassifiedItem {
   readonly vector: number[];
 }
 
-/** A Cluster after the score stage (ADR-0008). */
+/**
+ * A Cluster after the score stage (ADR-0008). Carries the resolved Story `id`
+ * and representative `vector` threaded from the resolve stage (ADR-0063): the
+ * downstream upsert reads `analyzed[i].id` directly instead of re-zipping the
+ * score/analyze/resolve arrays by positional index — a typed join that removes
+ * the latent "wrong analysis paired to wrong story" corruption seam.
+ */
 export interface ScoredCluster {
+  /** The resolved Story id this Cluster upserts under (from resolve). */
+  readonly id: string;
+  /** The Cluster's representative embedding, persisted after upsert (from resolve). */
+  readonly vector: number[];
   readonly cluster: Cluster;
   readonly significance: number;
   /** The inspectable decomposition of `significance` (ADR-0032). */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  loadConfig,
   parseConfig,
   sourceWeightsOf,
   toPresentationDefaults,
@@ -96,5 +97,30 @@ describe('toPresentationDefaults', () => {
     const defaults = toPresentationDefaults(parseConfig(valid));
     expect(defaults.minutes).toBe(3); // schema default
     expect(defaults.topics).toBeUndefined();
+  });
+});
+
+describe('multi-tenant boot (config/alt.yaml — second-tenant evidence)', () => {
+  it('the shipped alt.yaml validates and boots as an independent tenant', () => {
+    // Proves the same binary runs a DISTINCT tenant: a second config file, with
+    // its own (keyless) source set, parses and flattens through the same seams
+    // the composition root uses at boot — no code path is tenant-specific.
+    const alt = loadConfig('config/alt.yaml');
+    const main = loadConfig('config/horizon.yaml');
+
+    // A distinct, smaller source set than the primary tenant.
+    const altSources = alt.sources.map((s) => s.id).sort();
+    expect(altSources).toEqual(['hackernews', 'wikipedia']);
+    expect(alt.sources.length).toBeLessThan(main.sources.length);
+
+    // The same downstream flatteners the composition root calls succeed for it.
+    const tick = toTickConfig(alt);
+    expect(tick.deepAnalysisTopN).toBeGreaterThan(0);
+    expect(sourceWeightsOf(alt).hackernews).toBeCloseTo(0.35, 5);
+    expect(toQueryParams(alt).candidatePool).toBeGreaterThan(0);
+
+    // The daily spend guard (ADR-0062) defaults apply to a tenant that omits it.
+    expect(alt.spend.dailyUsdCap).toBeGreaterThan(0);
+    expect(alt.spend.pricePerMillionTokens.cheap).toBeGreaterThanOrEqual(0);
   });
 });

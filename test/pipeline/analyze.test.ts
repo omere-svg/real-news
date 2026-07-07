@@ -16,13 +16,15 @@ function scored(externalId: string, significance: number, title?: string): Score
     metadata: {},
   };
   return {
+    id: externalId,
+    vector: [],
     cluster: { items: [item], topic: 'AI' },
     significance,
     breakdown: fakeBreakdown(significance),
   };
 }
 
-const idOf = (c: ScoredCluster) => c.cluster.items[0]?.externalId;
+const idOf = (c: ScoredCluster) => c.id;
 
 describe('analyze stage', () => {
   it('writes why-it-matters only for the top-N most significant clusters', async () => {

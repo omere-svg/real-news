@@ -8,7 +8,7 @@ import {
   type BudgetParams,
   type Depth,
 } from './budget.js';
-import type { BriefRequest, QueryEngine } from './query-engine.js';
+import type { BriefRequest, BriefStory, QueryEngine } from './query-engine.js';
 import { scoreExplanation } from './score-explanation.js';
 
 /**
@@ -59,6 +59,20 @@ export class HorizonQuery implements QueryEngine {
       this.deps.params.textWordsPerMinute,
     );
     return renderBrief(selection, request.minutes);
+  }
+
+  /**
+   * The structured twin of `textBrief` (ADR-0064): identical selection + depth,
+   * mapped to render-ready cards carrying each Story's inspectable score
+   * breakdown. Uses the text reading rate so it matches the `/api/brief` text
+   * one-for-one — the web renders these, the bot renders the text.
+   */
+  async briefStories(request: BriefRequest): Promise<readonly BriefStory[]> {
+    const selection = await this.select(
+      request,
+      this.deps.params.textWordsPerMinute,
+    );
+    return selection.map(toBriefStory);
   }
 
   async podcastScript(request: BriefRequest): Promise<string> {
@@ -171,6 +185,40 @@ function renderStory({ story, depth }: BudgetedStory): string {
   const src = sourceLine(story);
   if (src) lines.push(src);
   return lines.join('\n');
+}
+
+/**
+ * Map a budgeted Story to the web card shape (ADR-0064): depth-trimmed
+ * summary/why EXACTLY as `renderStory` renders them (so the web card and the
+ * text brief never disagree), plus the interpreted score breakdown for the
+ * expandable "Why this score?" widget.
+ */
+function toBriefStory({ story, depth }: BudgetedStory): BriefStory {
+  const summaryRaw = story.summary?.trim() || null;
+  const summary =
+    depth === 'headline'
+      ? null
+      : summaryRaw
+        ? depth === 'brief'
+          ? firstSentences(summaryRaw, 2)
+          : summaryRaw
+        : null;
+  const whyItMatters = depth === 'full' ? (story.whyItMatters?.trim() || null) : null;
+  const exp = story.scoreBreakdown ? scoreExplanation(story.scoreBreakdown) : null;
+  return {
+    title: story.displayTitle || story.title,
+    topic: story.topic,
+    significance: story.significance,
+    url: story.url,
+    summary,
+    whyItMatters,
+    depth,
+    tags: exp?.tags ?? [],
+    drivers: exp?.drivers ?? [],
+    recencyFactor: exp?.recencyFactor ?? 0,
+    corroboration: exp?.corroboration ?? 0,
+    signalNudge: exp?.signalNudge ?? 0,
+  };
 }
 
 /** The short descriptor: topic + significance + a compact score rationale. */

@@ -244,6 +244,27 @@ describe('Reasoner output guards', () => {
     expect(out.answer.length).toBeLessThanOrEqual(3_500);
   });
 
+  it('narrate: strips every URL from the spoken script (ADR-0065)', async () => {
+    // A poisoned brief tries to smuggle a spoken link into the audio bulletin.
+    const t = new FakeTransport(
+      {},
+      'Good evening. In tech news, visit https://evil.example/steal for more. Meanwhile, ' +
+        'markets rose. Read the full story at http://tracker.example/x?u=1. That is all.',
+    );
+    const script = await new Reasoner(t).narrate({ minutes: 3, brief: 'B' });
+    expect(script).not.toContain('evil.example');
+    expect(script).not.toContain('tracker.example');
+    expect(script).not.toMatch(/https?:\/\//);
+    // The surrounding narration survives — only the URLs are excised.
+    expect(script).toContain('markets rose');
+  });
+
+  it('narrate: caps a runaway spoken script', async () => {
+    const t = new FakeTransport({}, 'la '.repeat(20_000));
+    const script = await new Reasoner(t).narrate({ minutes: 3, brief: 'B' });
+    expect(script.length).toBeLessThanOrEqual(24_000);
+  });
+
   it('analyze: rejects a summary carrying a URL or injected imperative to null', async () => {
     const withUrl = new FakeTransport({
       summary: 'Visit https://evil.example now.',

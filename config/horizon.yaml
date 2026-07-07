@@ -177,6 +177,19 @@ scoring:
   signalTrendBoost: 0.5       # extra salience for a rising signal vs its prior reading (ADR-0044)
   entitySignalWeight: 1.0     # nudge the specific story whose entities match a hot Pageviews article (ADR-0043)
 
+# Daily model-spend ceiling (ADR-0062). A restart-safe HARD BACKSTOP against a
+# runaway bill — set very high on purpose so normal operation never touches it.
+# Once the day's estimated spend (cheap+deep+embed tokens × the prices below)
+# reaches dailyUsdCap, every LLM call degrades to its neutral fallback until UTC
+# midnight, then resets. Baseline is seeded from the durable token counters so a
+# restart can't reset the day's bill. Prices are estimates for the cap math only.
+spend:
+  dailyUsdCap: 1000        # USD/day hard backstop (0 disables). Deliberately high.
+  pricePerMillionTokens:
+    cheap: 0.5
+    deep: 10
+    embed: 0.02
+
 # History retention + LLM reflection over recent ticks (ADR-0042).
 retention:
   tickReports: 5          # keep only the most recent N tick reports (0 = keep all)

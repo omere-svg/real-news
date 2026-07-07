@@ -127,6 +127,13 @@
       "when": 1783430768115,
       "tag": "0017_handy_rick_jones",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1783454126442,
+      "tag": "0018_shiny_legion",
+      "breakpoints": true
     }
   ]
 }

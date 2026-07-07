@@ -557,7 +557,12 @@ export class HorizonBot {
       const stories = await this.grounding!.stories(prefs, q);
       const base = { question: q, history, stories, ...(memory ? { memory } : {}) };
       result = await discussant.discuss(base);
-      if (!result.answeredFromNews && this.deps.webSearch) {
+      // Web escalation is the AGENT's job when the agent loop is wired (ADR-0065):
+      // web_search is one of its budgeted, grounded, traced tools. Once the agent
+      // path exists — even on the degrade branch that lands here — the fixed path
+      // must stay cache-only, or a single question opens a SECOND, ungoverned web
+      // spend path behind the agent's back (no tool budget, no trajectory).
+      if (!result.answeredFromNews && this.deps.webSearch && !this.deps.agentTransport) {
         const web = await this.deps.webSearch.search(q);
         if (web.length > 0) {
           usedWeb = true;

@@ -195,6 +195,7 @@ export interface StoredReflectionAction {
   readonly reason: string;
   readonly source?: string;
   readonly ticks?: number;
+  /** Numeric magnitude for `set_*` actions (topN / concurrency / threshold). */
   readonly value?: number;
 }
 
@@ -208,6 +209,10 @@ export const agentPolicy = sqliteTable('agent_policy', {
   id: integer('id').primaryKey(),
   /** Override for reasoner.deepAnalysisTopN; null defers to config. */
   deepAnalysisTopN: integer('deep_analysis_top_n'),
+  /** Override for dedup.confirmConcurrency — throughput/cost knob (ADR-0061); null defers to config. */
+  confirmConcurrency: integer('confirm_concurrency'),
+  /** Override for dedup.candidateThreshold — merge sensitivity (ADR-0061); null defers to config. */
+  candidateThreshold: real('candidate_threshold'),
   /** Why the current policy is what it is (from the accepted actions). */
   reason: text('reason'),
   updatedAt: integer('updated_at').notNull(),

@@ -11,16 +11,26 @@ describe('DrizzleAgentPolicyRepo (ADR-0053)', () => {
   it('persists and overwrites the single policy row', async () => {
     const repo = new DrizzleAgentPolicyRepo(await createTestDb());
 
-    await repo.set({ deepAnalysisTopN: 6, reason: 'slow ticks' }, 1000);
+    await repo.set(
+      { deepAnalysisTopN: 6, confirmConcurrency: 4, candidateThreshold: 0.85, reason: 'slow ticks' },
+      1000,
+    );
     expect(await repo.get()).toEqual({
       deepAnalysisTopN: 6,
+      confirmConcurrency: 4,
+      candidateThreshold: 0.85,
       reason: 'slow ticks',
       updatedAt: 1000,
     });
 
-    await repo.set({ deepAnalysisTopN: null, reason: null }, 2000);
+    await repo.set(
+      { deepAnalysisTopN: null, confirmConcurrency: null, candidateThreshold: null, reason: null },
+      2000,
+    );
     expect(await repo.get()).toEqual({
       deepAnalysisTopN: null,
+      confirmConcurrency: null,
+      candidateThreshold: null,
       reason: null,
       updatedAt: 2000,
     });

@@ -106,6 +106,27 @@ export type ReflectionAction =
       /** Drop the budget override so the configured default governs again. */
       readonly type: 'clear_deep_analysis_top_n';
       readonly reason: string;
+    }
+  | {
+      /**
+       * Re-aim the cluster/resolve confirm concurrency (ADR-0061): tighten it
+       * when ticks run long / cost too much, widen it when there's headroom.
+       * Clamped to the guard's bounds; auto-reverts to config when ticks are
+       * healthy again.
+       */
+      readonly type: 'set_confirm_concurrency';
+      readonly value: number;
+      readonly reason: string;
+    }
+  | {
+      /**
+       * Re-aim the cross-tick merge sensitivity (ADR-0061): raise the cosine bar
+       * when the model sees over-merging, lower it (bounded) when developing
+       * events aren't corroborating. Clamped by the guard; auto-reverts.
+       */
+      readonly type: 'set_candidate_threshold';
+      readonly value: number;
+      readonly reason: string;
     };
 
 /** What a reflection returns: the human-readable advisory + proposed actions. */

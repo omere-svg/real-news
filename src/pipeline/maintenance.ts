@@ -41,8 +41,17 @@ export interface ReflectionDeps {
   readonly reflectionsRetention: number;
 }
 
-const POLICY_BOUNDS: Pick<PolicyContext, 'topN' | 'maxBackoffTicks'> = {
+const POLICY_BOUNDS: Pick<
+  PolicyContext,
+  'topN' | 'confirmConcurrency' | 'candidateThreshold' | 'maxBackoffTicks'
+> = {
   topN: { min: 3, max: 15 },
+  // Concurrency floor of 1 keeps the pipeline making progress; the ceiling
+  // matches the practical upper bound on in-flight confirm calls (ADR-0061).
+  confirmConcurrency: { min: 1, max: 16 },
+  // The merge bar can be tightened toward 0.95 or relaxed toward 0.5, but never
+  // so low it would fuse unrelated stories nor so high nothing ever merges.
+  candidateThreshold: { min: 0.5, max: 0.95 },
   maxBackoffTicks: 10,
 };
 
@@ -87,10 +96,18 @@ export function toTickDigest(r: TickRecord): TickDigest {
  * the public /api/reflection feed showed nothing despite the loop having
  * changed behavior.
  */
-export async function maybeReflect(deps: ReflectionDeps): Promise<void> {
-  if (deps.reflectEveryTicks <= 0) return;
+/** What a reflection cycle did, so the caller can coordinate the auto-revert. */
+export interface ReflectionOutcome {
+  /** True when this cycle set at least one policy knob to a non-null value —
+   *  the revert step must then stand down for this cycle so the fresh override
+   *  survives to the next tick instead of being cleared in the same pass. */
+  readonly appliedPolicyOverride: boolean;
+}
+
+export async function maybeReflect(deps: ReflectionDeps): Promise<ReflectionOutcome> {
+  if (deps.reflectEveryTicks <= 0) return { appliedPolicyOverride: false };
   const id = await deps.tickReportRepo.maxId();
-  if (id === 0 || id % deps.reflectEveryTicks !== 0) return;
+  if (id === 0 || id % deps.reflectEveryTicks !== 0) return { appliedPolicyOverride: false };
 
   const recent = await deps.tickReportRepo.recent(deps.reflectWindow);
   const reflection = await deps.reflect({ ticks: recent.map(toTickDigest) });
@@ -103,15 +120,46 @@ export async function maybeReflect(deps: ReflectionDeps): Promise<void> {
     deps.backoff.force(b.source, deps.nextTickIndex(), b.ticks);
     deps.log.info('reflect.backoff_forced', { source: b.source, ticks: b.ticks, reason: b.reason });
   }
-  if (accepted.deepAnalysisTopN) {
+  // The three numeric overrides are merged onto the persisted policy (ADR-0061):
+  // a reflection that touches only one knob must not clobber the others. Read the
+  // current row, apply just the accepted deltas, and write back atomically.
+  let appliedPolicyOverride = false;
+  if (accepted.deepAnalysisTopN || accepted.confirmConcurrency || accepted.candidateThreshold) {
+    const current = await deps.agentPolicyRepo.get();
+    const reason = [
+      accepted.deepAnalysisTopN?.reason,
+      accepted.confirmConcurrency?.reason,
+      accepted.candidateThreshold?.reason,
+    ]
+      .filter((r): r is string => Boolean(r))
+      .join('; ');
     await deps.agentPolicyRepo.set(
-      { deepAnalysisTopN: accepted.deepAnalysisTopN.value, reason: accepted.deepAnalysisTopN.reason },
+      {
+        deepAnalysisTopN: accepted.deepAnalysisTopN
+          ? accepted.deepAnalysisTopN.value
+          : (current?.deepAnalysisTopN ?? null),
+        confirmConcurrency: accepted.confirmConcurrency
+          ? accepted.confirmConcurrency.value
+          : (current?.confirmConcurrency ?? null),
+        candidateThreshold: accepted.candidateThreshold
+          ? accepted.candidateThreshold.value
+          : (current?.candidateThreshold ?? null),
+        reason: reason || (current?.reason ?? null),
+      },
       deps.now(),
     );
-    deps.log.info('reflect.deep_analysis_top_n', {
-      value: accepted.deepAnalysisTopN.value,
-      reason: accepted.deepAnalysisTopN.reason,
+    deps.log.info('reflect.policy', {
+      ...(accepted.deepAnalysisTopN ? { deepAnalysisTopN: accepted.deepAnalysisTopN.value } : {}),
+      ...(accepted.confirmConcurrency ? { confirmConcurrency: accepted.confirmConcurrency.value } : {}),
+      ...(accepted.candidateThreshold ? { candidateThreshold: accepted.candidateThreshold.value } : {}),
+      reason,
     });
+    // A pure "clear" (deepAnalysisTopN → null) aligns with reverting, so it does
+    // not block the auto-revert; only setting a knob to a live value does.
+    appliedPolicyOverride =
+      (accepted.deepAnalysisTopN?.value ?? null) !== null ||
+      (accepted.confirmConcurrency?.value ?? null) !== null ||
+      (accepted.candidateThreshold?.value ?? null) !== null;
   }
   for (const r of accepted.rejected) {
     deps.log.warn('reflect.action_rejected', { why: r.why, action: r.action });
@@ -131,6 +179,7 @@ export async function maybeReflect(deps: ReflectionDeps): Promise<void> {
     }
     deps.log.info('reflect.advisory_written', { ticksCovered: recent.length });
   }
+  return { appliedPolicyOverride };
 }
 
 /** One unit of the maintenance sequence — a name for logging plus the work itself. */
@@ -180,5 +229,68 @@ function actionsFor(
             : {}),
         }]
       : []),
+    ...(accepted.confirmConcurrency
+      ? [{
+          type: 'set_confirm_concurrency',
+          reason: accepted.confirmConcurrency.reason,
+          value: accepted.confirmConcurrency.value,
+        }]
+      : []),
+    ...(accepted.candidateThreshold
+      ? [{
+          type: 'set_candidate_threshold',
+          reason: accepted.candidateThreshold.reason,
+          value: accepted.candidateThreshold.value,
+        }]
+      : []),
   ];
+}
+
+/** Everything the deterministic policy auto-revert needs (ADR-0061). */
+export interface PolicyRevertDeps {
+  readonly agentPolicyRepo: AgentPolicyRepo;
+  readonly tickReportRepo: TickReportRepo;
+  readonly now: () => number;
+  /** Consecutive fully-successful ticks required before overrides are relaxed. */
+  readonly healthyWindow: number;
+  readonly log: Logger;
+}
+
+/**
+ * Close the adaptation loop (ADR-0061). A reflection tightens a knob (a lower
+ * deep-analysis budget, a narrower confirm concurrency, a stricter merge bar)
+ * when ticks struggle — but nothing walked those overrides back once conditions
+ * recovered, so a one-off stress response could persist indefinitely. This
+ * deterministic step clears ALL persisted overrides once the last
+ * `healthyWindow` ticks each ran `ok` (the pipeline itself succeeded — per-source
+ * skips/failures are handled separately by adaptive backoff and don't block a
+ * revert). The model can always re-impose an override on the next reflection if
+ * the stress returns; the cadence bounds any oscillation.
+ */
+export async function maybeRevertPolicy(deps: PolicyRevertDeps): Promise<void> {
+  if (deps.healthyWindow <= 0) return;
+  const current = await deps.agentPolicyRepo.get();
+  if (!current) return;
+  const hasOverride =
+    current.deepAnalysisTopN !== null ||
+    current.confirmConcurrency !== null ||
+    current.candidateThreshold !== null;
+  if (!hasOverride) return;
+
+  const recent = await deps.tickReportRepo.recent(deps.healthyWindow);
+  // Demand a full window of evidence — fewer rows than the window means we
+  // haven't yet observed a sustained recovery.
+  if (recent.length < deps.healthyWindow) return;
+  if (!recent.every((r) => r.ok)) return;
+
+  await deps.agentPolicyRepo.set(
+    {
+      deepAnalysisTopN: null,
+      confirmConcurrency: null,
+      candidateThreshold: null,
+      reason: `auto-reverted to config after ${deps.healthyWindow} healthy ticks`,
+    },
+    deps.now(),
+  );
+  deps.log.info('reflect.policy_auto_reverted', { healthyWindow: deps.healthyWindow });
 }

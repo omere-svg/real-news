@@ -1,4 +1,4 @@
-import type { Embedder } from '../embedding/embedder.js';
+import { isDegradeAware, type Embedder } from '../embedding/embedder.js';
 import type { RawItem } from '../domain/types.js';
 import type { ClassifiedItem, EmbeddedItem } from './types.js';
 
@@ -22,15 +22,30 @@ export function dedupText(item: Pick<RawItem, 'title' | 'text'>): string {
   return `${title}. ${body.slice(0, DEDUP_LEAD_CHARS)}`;
 }
 
+/** The embedded items plus whether this batch fell back to a degraded embedder. */
+export interface EmbedResult {
+  readonly items: EmbeddedItem[];
+  /**
+   * True when the vectors came from a fallback (non-semantic) embedder (ADR-0065).
+   * They're internally consistent — fine for this tick's blocking — but the tick
+   * must NOT persist them, or hash vectors would poison the durable neural index.
+   */
+  readonly degraded: boolean;
+}
+
 /**
  * Embed stage (ADR-0007/0035). Vectorizes each item's title + body lead in one
  * batch for the dedup blocking step. Order is preserved so each vector lines up
- * with its item.
+ * with its item. When the embedder can report degradation (ADR-0065), the flag
+ * is threaded out so the tick declines to persist fallback vectors.
  */
 export async function embed(
   items: readonly ClassifiedItem[],
   embedder: Embedder,
-): Promise<EmbeddedItem[]> {
-  const vectors = await embedder.embed(items.map((c) => dedupText(c.item)));
-  return items.map((c, i) => ({ ...c, vector: vectors[i] ?? [] }));
+): Promise<EmbedResult> {
+  const texts = items.map((c) => dedupText(c.item));
+  const { vectors, degraded } = isDegradeAware(embedder)
+    ? await embedder.embedBatch(texts)
+    : { vectors: await embedder.embed(texts), degraded: false };
+  return { items: items.map((c, i) => ({ ...c, vector: vectors[i] ?? [] })), degraded };
 }
