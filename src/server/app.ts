@@ -46,6 +46,10 @@ export interface WebOptions {
    */
   readonly usage?: UsageRepo;
   readonly globalPodcastPerDay?: number;
+  /** Per-IP budget for `/api/podcast` (an LLM cost vector); default 10 per minute. */
+  readonly podcastIpLimit?: number;
+  /** Window for `podcastIpLimit`; default 60s. */
+  readonly podcastIpWindowMs?: number;
 }
 
 /**
@@ -85,6 +89,8 @@ const DEFAULT_SESSION_TTL_MS = 30 * 24 * 3600_000;
 const DEFAULT_CODE_TTL_MS = 10 * 60_000;
 const DEFAULT_AUTH_START_LIMIT = 5;
 const DEFAULT_AUTH_START_WINDOW_MS = 60_000;
+const DEFAULT_PODCAST_IP_LIMIT = 10;
+const DEFAULT_PODCAST_IP_WINDOW_MS = 60_000;
 
 /**
  * Best-effort client IP for rate limiting. The deploy sits behind Caddy
@@ -130,6 +136,14 @@ export function createApp(
   chatTraces?: ChatTraceRepo,
 ): Hono {
   const app = new Hono();
+
+  // /api/podcast is an LLM-backed cost vector reachable without auth — cap it per
+  // IP so a script can't grief the shared global budget with rapid-fire requests
+  // (mirrors the /api/auth/start per-IP limiter below, ADR-0052).
+  const podcastIpLimiter: RateLimiter = new FixedWindowLimiter(
+    web.podcastIpLimit ?? DEFAULT_PODCAST_IP_LIMIT,
+    web.podcastIpWindowMs ?? DEFAULT_PODCAST_IP_WINDOW_MS,
+  );
 
   app.get('/health', (c) => c.json({ ok: true }));
 
@@ -252,16 +266,28 @@ export function createApp(
     // process-wide daily podcast budget so open web access can't run up OpenAI spend
     // (ADR-0052) — the last uncapped cost vector, now closed.
     if (!web.podcastEnabled) return c.json({ error: 'not found' }, 404);
+    if (!podcastIpLimiter.allow(clientIp(c), Date.now())) {
+      return c.json({ error: 'too many requests; try again later' }, 429);
+    }
+    // Peek (no charge) the global ceiling: a refused request must not itself burn
+    // budget, else a flood of already-over-cap requests keeps draining a counter
+    // that's already exhausted for no reason (mirrors quota-guard's peek-then-charge
+    // shape, ADR-0051/ADR-0052 hardening). Only a successful script generation
+    // charges the counter, below.
     if (web.usage && web.globalPodcastPerDay !== undefined) {
       const day = utcDay(Date.now());
-      const count = await web.usage.incrementAndGet('global:podcast', day);
-      if (count > web.globalPodcastPerDay) {
+      const current = await web.usage.peek('global:podcast', day);
+      if (current >= web.globalPodcastPerDay) {
         return c.json({ error: 'daily podcast limit reached; try again tomorrow (UTC)' }, 429);
       }
     }
     // Podcasts get the tighter audio cap, not the general maxMinutes.
     const podcastWeb = { ...web, maxMinutes: Math.min(web.maxMinutes, web.maxPodcastMinutes) };
-    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults, podcastWeb)) });
+    const script = await queryEngine.podcastScript(briefRequestOf(c, defaults, podcastWeb));
+    if (web.usage && web.globalPodcastPerDay !== undefined) {
+      await web.usage.incrementAndGet('global:podcast', utcDay(Date.now()));
+    }
+    return c.json({ script });
   });
 
   app.get('/api/outline', async (c) => {

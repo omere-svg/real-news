@@ -7,7 +7,7 @@ import { DrizzleSignalObservationRepo } from '../../src/db/signal-observation-re
 import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report-repo.js';
 import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 import { DrizzleWebAuthRepo } from '../../src/db/web-auth-repo.js';
-import { DrizzleUsageRepo } from '../../src/db/usage-repo.js';
+import { DrizzleUsageRepo, utcDay } from '../../src/db/usage-repo.js';
 import { DrizzleChatTraceRepo } from '../../src/db/chat-trace-repo.js';
 import { HorizonQuery, type QueryParams } from '../../src/presentation/horizon-query.js';
 import { createTestDb } from '../helpers/test-db.js';
@@ -191,6 +191,65 @@ describe('HTTP API', () => {
     });
     expect((await app.request('/api/podcast?minutes=5')).status).toBe(200); // 1st allowed
     expect((await app.request('/api/podcast?minutes=5')).status).toBe(429); // 2nd over the cap
+  });
+
+  it('podcast refusals do not consume the global budget', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const usage = new DrizzleUsageRepo(db);
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      usage, globalPodcastPerDay: 1,
+      // A generous per-IP allowance so this test exercises the global-budget path,
+      // not the per-IP limiter — each call uses a distinct IP for the same reason.
+      podcastIpLimit: 100,
+    });
+    const day = utcDay(Date.now());
+
+    const first = await app.request('/api/podcast?minutes=5', { headers: { 'x-forwarded-for': '1.1.1.1' } });
+    expect(first.status).toBe(200); // charges the budget to 1 on success
+    expect(await usage.peek('global:podcast', day)).toBe(1);
+
+    // Every subsequent refusal (already at cap) must leave the counter untouched.
+    const refused1 = await app.request('/api/podcast?minutes=5', { headers: { 'x-forwarded-for': '1.1.1.2' } });
+    expect(refused1.status).toBe(429);
+    expect(await usage.peek('global:podcast', day)).toBe(1);
+
+    const refused2 = await app.request('/api/podcast?minutes=5', { headers: { 'x-forwarded-for': '1.1.1.3' } });
+    expect(refused2.status).toBe(429);
+    expect(await usage.peek('global:podcast', day)).toBe(1);
+  });
+
+  it('per-IP limit returns 429', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      podcastIpLimit: 2, podcastIpWindowMs: 60_000,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.50' };
+
+    expect((await app.request('/api/podcast?minutes=5', { headers })).status).toBe(200);
+    expect((await app.request('/api/podcast?minutes=5', { headers })).status).toBe(200);
+    const limited = await app.request('/api/podcast?minutes=5', { headers });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'too many requests; try again later' });
+
+    // A different IP is unaffected by the first IP's budget.
+    const other = await app.request('/api/podcast?minutes=5', {
+      headers: { 'x-forwarded-for': '198.51.100.9' },
+    });
+    expect(other.status).toBe(200);
   });
 
   it('clamps an oversized minutes query param', async () => {
