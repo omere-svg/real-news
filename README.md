@@ -31,7 +31,7 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
    time-budgeted briefs, topic outlines, podcast audio, and chat about the news from the
    pre-digested cache.
 
-Tiered OpenAI (gpt-4o-mini + gpt-4o) does the reasoning, embeddings, and TTS; **if no API key
+Tiered OpenAI models (configured in `config/horizon.yaml`) do the reasoning, embeddings, and TTS; **if no API key
 is set, the loop degrades gracefully** — real data + signal scoring, no AI enrichment.
 Full status in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 

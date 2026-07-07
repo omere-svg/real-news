@@ -26,8 +26,8 @@ export interface BackfillOptions {
   /** Cap how many Stories to process; 0/undefined means no cap. */
   readonly max?: number;
   /**
-   * Max concurrent deep-tier analyze calls (ADR-0039). Each target is one gpt-4o
-   * round-trip; running them serially makes a 500-Story boot heal take many
+   * Max concurrent deep-tier analyze calls (ADR-0039). Each target is one
+   * deep-tier round-trip; running them serially makes a 500-Story boot heal take many
    * minutes. Bounded concurrency keeps the heal fast without a request flood.
    */
   readonly concurrency?: number;

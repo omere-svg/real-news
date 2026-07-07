@@ -9,7 +9,7 @@ export interface TtsUsageReport {
 }
 
 export interface OpenAITTSDeps {
-  /** TTS model, e.g. `gpt-4o-mini-tts` (ADR-0020). */
+  /** TTS model (ADR-0020). */
   readonly model: string;
   /** Voice id, e.g. `alloy`. */
   readonly voice: string;
