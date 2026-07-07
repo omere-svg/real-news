@@ -47,7 +47,10 @@ sources:
     weight: 0.5
     maxItems: 20
   - id: knesset-votes   # recorded Knesset vote tallies (for/against/abstain)
-    enabled: true
+    # DISABLED (ADR-0049): the upstream OData view stopped updating — its newest
+    # "approved vote" is 2021-07-13, so it re-ingested 5-year-old votes as fresh
+    # news every tick. Re-enable if/when Knesset repopulates the feed.
+    enabled: false
     weight: 0.7
     maxItems: 20
   - id: hf-papers       # Hugging Face Daily Papers — trending AI (upvotes/comments); Tier C
