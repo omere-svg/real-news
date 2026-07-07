@@ -34,6 +34,18 @@ describe('fetchJson (hardened)', () => {
     );
   });
 
+  it('sends a descriptive User-Agent by default, overridable by the caller (ADR-0049)', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => response('{"ok":true}'));
+    const fetchJson = makeFetchJson(fetchImpl, { timeoutMs: 5000, maxBytes: 1_000_000 });
+
+    await fetchJson('https://x/api');
+    const ua = (fetchImpl.mock.calls[0]?.[1].headers as Record<string, string>)['user-agent'];
+    expect(ua).toMatch(/project-horizon/);
+
+    await fetchJson('https://x/api', { headers: { 'user-agent': 'custom/1' } });
+    expect((fetchImpl.mock.calls[1]?.[1].headers as Record<string, string>)['user-agent']).toBe('custom/1');
+  });
+
   it('throws on a non-2xx response', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('nope', { status: 503 }));
     const fetchJson = makeFetchJson(fetchImpl, { timeoutMs: 5000, maxBytes: 1_000_000 });

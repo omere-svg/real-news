@@ -87,17 +87,18 @@ export class WikipediaSource implements SourceAdapter {
 
     return (parsed.news ?? [])
       .slice(0, this.deps.maxItems)
-      .map((item, i): RawItem | null => {
+      .map((item): RawItem | null => {
         const lead = item.links?.[0];
         const title = plainText(item.story);
         if (!title) return null;
         return {
           source: 'wikipedia' as const,
           // Prefer the lead article title (stable). Only when a blurb has no
-          // linked article, key off the headline text — NOT the wall-clock time,
-          // which would mint a brand-new id every tick and re-ingest the same
-          // blurb forever (ADR-0047). Index disambiguates same-headline blurbs.
-          externalId: lead?.title ?? `news:${stableId(title)}:${i}`,
+          // linked article, key off the headline text — NOT the wall-clock time
+          // (mints a new id every tick, ADR-0047) and NOT the list index (ADR-0049:
+          // the featured-news list reorders within a day, so the index minted a
+          // duplicate of the same blurb). Hash the headline text alone.
+          externalId: lead?.title ?? `news:${stableId(title)}`,
           title,
           url: lead?.content_urls?.desktop?.page ?? null,
           text: title,

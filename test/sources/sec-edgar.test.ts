@@ -49,4 +49,20 @@ describe('SecEdgarSource', () => {
     });
     await expect(s.healthCheck()).resolves.toBe(false);
   });
+
+  it('bounds the query to a recent date window when a clock is given (ADR-0049)', async () => {
+    let seenUrl = '';
+    const fetchJson: JsonFetcher = async (url) => {
+      seenUrl = url;
+      return HITS;
+    };
+    const now = Date.parse('2026-07-07T00:00:00Z');
+    await new SecEdgarSource({
+      fetchJson,
+      maxItems: 10,
+      clock: { now: () => now },
+    }).extract();
+    expect(seenUrl).toContain('enddt=2026-07-07');
+    expect(seenUrl).toContain('startdt=2026-06-23'); // 14 days back
+  });
 });

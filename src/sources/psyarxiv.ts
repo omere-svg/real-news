@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseDateOrNull } from './date.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
@@ -62,9 +63,7 @@ export class PsyArxivSource implements SourceAdapter {
         title: p.attributes.title as string,
         url: p.links?.html ?? null,
         text: p.attributes.description ?? null,
-        publishedAt: p.attributes.date_published
-          ? Date.parse(p.attributes.date_published)
-          : null,
+        publishedAt: parseDateOrNull(p.attributes.date_published),
         metadata: { topic: 'Science' as const },
       }));
   }

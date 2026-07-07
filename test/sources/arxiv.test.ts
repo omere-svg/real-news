@@ -25,9 +25,10 @@ describe('ArxivSource', () => {
     const [raw] = await source.extract();
 
     expect(raw?.source).toBe('arxiv');
-    expect(raw?.externalId).toBe('2401.01234v1');
+    // Version suffix stripped so a revised paper keeps one identity (ADR-0049).
+    expect(raw?.externalId).toBe('2401.01234');
     expect(raw?.title).toBe('A Study of Large Language Models'); // whitespace collapsed
-    expect(raw?.url).toBe('http://arxiv.org/abs/2401.01234v1');
+    expect(raw?.url).toBe('http://arxiv.org/abs/2401.01234v1'); // url keeps the exact version
     expect(raw?.text).toBe('We study LLMs in depth.');
     expect(raw?.publishedAt).toBe(Date.parse('2026-06-10T12:00:00Z'));
     expect(raw?.metadata.topic).toBe('AI');

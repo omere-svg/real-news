@@ -104,7 +104,7 @@ function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | n
     case 'knesset':
       return new KnessetSource(base);
     case 'secedgar':
-      return new SecEdgarSource(base);
+      return new SecEdgarSource({ ...base, clock: systemClock });
     case 'wikipedia':
       return new WikipediaSource({ ...base, clock: systemClock });
     // Phase 4 — media + thematic anchors (ADR-0021).

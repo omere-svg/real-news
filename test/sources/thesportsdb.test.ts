@@ -71,4 +71,27 @@ describe('TheSportsDbSource', () => {
     });
     await expect(broken.healthCheck()).resolves.toBe(false);
   });
+
+  it('caps items round-robin so a later sport is not starved (ADR-0049)', async () => {
+    // Soccer alone would fill maxItems; basketball must still appear.
+    const soccer = {
+      events: Array.from({ length: 5 }, (_, i) => ({
+        idEvent: `s${i}`, strSport: 'Soccer', strHomeTeam: 'A', strAwayTeam: 'B',
+      })),
+    };
+    const basketball = {
+      events: [{ idEvent: 'b0', strSport: 'Basketball', strHomeTeam: 'C', strAwayTeam: 'D' }],
+    };
+    const fetcher: JsonFetcher = async (url) =>
+      url.includes('Basketball') ? basketball : soccer;
+    const items = await new TheSportsDbSource({
+      fetchJson: fetcher,
+      maxItems: 3,
+      clock: CLOCK,
+      sports: ['Soccer', 'Basketball'],
+    }).extract();
+
+    expect(items).toHaveLength(3);
+    expect(items.some((i) => i.externalId === 'b0')).toBe(true); // basketball not starved
+  });
 });

@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { parseDateOrNull } from './date.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
@@ -62,14 +63,19 @@ export class ArxivSource implements SourceAdapter {
 
   private toRawItem(entry: AtomEntry): RawItem | null {
     if (!entry.id || !entry.title) return null;
-    const externalId = entry.id.replace(/^https?:\/\/arxiv\.org\/abs\//, '');
+    // Strip both the abs/ prefix AND the trailing version (v1/v2/…): a paper
+    // revised inside the recent-submissions window keeps its identity instead of
+    // arriving as a duplicate raw_item that only cluster-merge can reunite (ADR-0049).
+    const externalId = entry.id
+      .replace(/^https?:\/\/arxiv\.org\/abs\//, '')
+      .replace(/v\d+$/, '');
     return {
       source: 'arxiv',
       externalId,
       title: collapse(entry.title),
       url: entry.id,
       text: entry.summary ? collapse(entry.summary) : null,
-      publishedAt: entry.published ? Date.parse(entry.published) : null,
+      publishedAt: parseDateOrNull(entry.published),
       metadata: { topic: 'AI' },
     };
   }

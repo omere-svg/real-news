@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseDateOrNull } from './date.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem, SourceMetadata } from '../domain/types.js';
@@ -64,7 +65,7 @@ export class HfPapersSource implements SourceAdapter {
           title: p.title as string,
           url: `https://huggingface.co/papers/${p.id}`,
           text: p.ai_summary ?? p.summary ?? null,
-          publishedAt: p.publishedAt ? Date.parse(p.publishedAt) : null,
+          publishedAt: parseDateOrNull(p.publishedAt),
           metadata,
         };
       });

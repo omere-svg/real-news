@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseDateOrNull } from './date.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem, SourceMetadata } from '../domain/types.js';
@@ -94,7 +95,7 @@ export class KnessetVotesSource implements SourceAdapter {
       title,
       url: null,
       text,
-      publishedAt: v.vote_date ? Date.parse(v.vote_date) : null,
+      publishedAt: parseDateOrNull(v.vote_date),
       metadata,
     };
   }

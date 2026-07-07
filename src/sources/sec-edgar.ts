@@ -2,11 +2,18 @@ import { z } from 'zod';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
+import type { Clock } from '../scheduler/clock.js';
+import { parseDateOrNull, isoDate } from './date.js';
 
 const BASE = 'https://efts.sec.gov/LATEST/search-index';
 const DEFAULT_QUERY = 'acquisition OR merger OR earnings OR offering';
 // SEC requires a descriptive User-Agent with contact info.
 const HEADERS = { 'user-agent': 'project-horizon (horizon@example.com)' };
+const DAY_MS = 86_400_000;
+// EDGAR full-text search defaults to RELEVANCE ranking over the whole corpus, so
+// an unbounded query returns filings from 2009-2025, not current news (ADR-0049).
+// Bound the query to a recent window so only fresh 8-Ks surface.
+const WINDOW_DAYS = 14;
 
 const responseSchema = z.object({
   hits: z.object({
@@ -43,6 +50,8 @@ export interface SecEdgarDeps {
   readonly maxItems: number;
   /** Full-text search query (defaults to broad finance terms). */
   readonly query?: string;
+  /** Clock for the recent-window bound; absent ⇒ unbounded (legacy). */
+  readonly clock?: Clock;
 }
 
 /**
@@ -57,7 +66,12 @@ export class SecEdgarSource implements SourceAdapter {
 
   private url(): string {
     const q = encodeURIComponent(this.deps.query ?? DEFAULT_QUERY);
-    return `${BASE}?q=${q}&forms=8-K`;
+    let range = '';
+    if (this.deps.clock) {
+      const now = this.deps.clock.now();
+      range = `&startdt=${isoDate(now - WINDOW_DAYS * DAY_MS)}&enddt=${isoDate(now)}`;
+    }
+    return `${BASE}?q=${q}&forms=8-K${range}`;
   }
 
   async healthCheck(): Promise<boolean> {
@@ -89,7 +103,7 @@ export class SecEdgarSource implements SourceAdapter {
         title: `${company}: ${form} filing${date ? ` (${date})` : ''}`,
         url: edgarUrl(hit._id, s.ciks?.[0]),
         text: `${company} filed a ${form} with the SEC${date ? ` on ${date}` : ''} (accession ${accession}).`,
-        publishedAt: s.file_date ? Date.parse(s.file_date) : null,
+        publishedAt: parseDateOrNull(s.file_date),
         metadata: { topic: 'Business' as const },
       };
     });

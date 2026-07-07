@@ -36,6 +36,10 @@ export const DEFAULT_FETCH_LIMITS: FetchLimits = {
   maxBytes: 5_000_000,
 };
 
+/** Descriptive UA so bot-manager CDNs don't 403 the anonymous Node default (ADR-0049). */
+export const DEFAULT_USER_AGENT =
+  'project-horizon/1.0 (+https://github.com/omere-svg/real-news; horizon@example.com)';
+
 type FetchImpl = typeof fetch;
 
 /**
@@ -51,8 +55,11 @@ export function makeFetchJson(
     // Default Accept follows the parse mode: text feeds (RSS/Atom) must not claim
     // application/json — some servers (e.g. GDACS) 406 on it. A caller header wins.
     const defaultAccept = options?.as === 'text' ? '*/*' : 'application/json';
+    // A descriptive User-Agent: Node's default `User-Agent: node` is 403'd by
+    // bot-manager CDNs (Akamai/Cloudflare) that front some feeds — NBER returned
+    // 403 without a UA and 200 with one (ADR-0049). A caller header still wins.
     const res = await fetchImpl(url, {
-      headers: { accept: defaultAccept, ...options?.headers },
+      headers: { accept: defaultAccept, 'user-agent': DEFAULT_USER_AGENT, ...options?.headers },
       signal: AbortSignal.timeout(options?.timeoutMs ?? limits.timeoutMs),
     });
     if (!res.ok) {

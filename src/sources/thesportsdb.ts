@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseDateOrNull } from './date.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -85,7 +86,10 @@ export class TheSportsDbSource implements SourceAdapter {
       }),
     );
 
-    return perSport.flat().slice(0, this.deps.maxItems);
+    // Round-robin across sports so the cap doesn't starve later sports: a normal
+    // day has >maxItems soccer matches, and a flat().slice() would truncate
+    // basketball to zero every tick (ADR-0049).
+    return interleave(perSport).slice(0, this.deps.maxItems);
   }
 
   private toRawItem(e: Event): RawItem {
@@ -96,10 +100,24 @@ export class TheSportsDbSource implements SourceAdapter {
       title,
       url: null, // no canonical event page on the free tier
       text: scoreLine(e),
-      publishedAt: e.strTimestamp ? Date.parse(e.strTimestamp) : null,
+      publishedAt: parseDateOrNull(e.strTimestamp),
       metadata: { topic: 'Sports' },
     };
   }
+}
+
+/** Flatten per-group arrays round-robin (one from each group per pass), so a cap
+ * applied afterward represents every group instead of exhausting the first. */
+function interleave<T>(groups: readonly T[][]): T[] {
+  const out: T[] = [];
+  const max = Math.max(0, ...groups.map((g) => g.length));
+  for (let i = 0; i < max; i += 1) {
+    for (const g of groups) {
+      const item = g[i];
+      if (item !== undefined) out.push(item);
+    }
+  }
+  return out;
 }
 
 /** A deterministic "what happened": final score + league, when present. */
