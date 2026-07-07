@@ -130,7 +130,7 @@ async function main(): Promise<void> {
 
   await run('/start', 'help');
   // /start shows the tap-to-run menu (ADR-0030): assert the Brief affordance, not a slash command.
-  checks.push({ name: 'help shows the menu', ok: /Brief/.test(transport.lastText), note: '' });
+  checks.push({ name: 'help shows the menu', ok: /brief/i.test(transport.lastText), note: '' });
 
   await run('/prefs topics AI,Geopolitics', 'set topics');
   const saved = await prefs.get(CHAT);
