@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { ChatAgent, type ChatTool } from '../../src/telegram/chat-agent.js';
+import { ChatAgent, buildChatTools, type ChatTool } from '../../src/telegram/chat-agent.js';
 import type {
   AgentMessage,
   CompletionOptions,
   ToolCompletion,
   ToolSpec,
 } from '../../src/llm/chat-transport.js';
+import { createTestDb } from '../helpers/test-db.js';
+import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 
 /**
  * The chat agent loop (ADR-0053): the MODEL drives — it chooses which tools to
@@ -256,6 +258,48 @@ describe('ChatAgent (ADR-0053)', () => {
     expect(out.steps[0]?.tool).toBe('save_memory');
     expect(out.steps[0]?.args).toBe('(private note)');
     expect(JSON.stringify(out.steps)).not.toContain('Tel Aviv');
+  });
+
+  it('a memory saved on one turn is injected as reader context on the next (save_memory → repo → prompt)', async () => {
+    // Real seam (mirrors horizon-bot's wiring): buildChatTools' save_memory
+    // persists into an actual ChatPreferencesRepo backed by an in-memory DB —
+    // not a mock echo — and the second, unrelated conversation reads it back
+    // and passes it in as `memory`, exactly as the composition root does.
+    const db = await createTestDb();
+    const prefs = new DrizzleChatPreferencesRepo(db);
+    const chatId = 42;
+    const saveMemory = async (note: string): Promise<void> => {
+      const existing = (await prefs.get(chatId))?.memory;
+      await prefs.set(chatId, { memory: existing ? `${existing}\n${note}` : note });
+    };
+    const tools = buildChatTools({ reader: { topStories: async () => [] }, saveMemory });
+
+    // Turn 1: the model calls save_memory with durable personal context.
+    const transport1 = new ScriptedTransport([
+      callTool('c1', 'save_memory', { note: 'I trade commodities' }),
+      finalAnswer('Got it, noted!', true),
+    ]);
+    const agent1 = new ChatAgent({ transport: transport1, tools });
+    await agent1.answer({ question: 'remember that I trade commodities', history: [] });
+
+    const stored = await prefs.get(chatId);
+    expect(stored?.memory).toBe('I trade commodities');
+
+    // Turn 2: a fresh conversation (fresh transport, no history) hydrates
+    // memory from the repo and passes it into the agent, as handleChat does.
+    const transport2 = new ScriptedTransport([finalAnswer('Here is the latest.', true)]);
+    const agent2 = new ChatAgent({ transport: transport2, tools });
+    await agent2.answer({
+      question: "what's new today?",
+      history: [],
+      ...(stored?.memory ? { memory: stored.memory } : {}),
+    });
+
+    const firstTurnMessages = transport2.turns[0]!.messages;
+    const userMsg = firstTurnMessages.find((m) => m.role === 'user');
+    const content = userMsg && 'content' in userMsg ? (userMsg.content ?? '') : '';
+    expect(content).toContain('I trade commodities');
+    expect(content).toMatch(/<reader_context>/);
   });
 
   it('executes at most 3 tool calls per turn', async () => {
