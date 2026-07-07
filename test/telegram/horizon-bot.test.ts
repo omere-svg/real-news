@@ -692,6 +692,16 @@ describe('HorizonBot', () => {
       expect(transport.messages.at(-1)?.text).toMatch(/limit/i);
     });
 
+    it('charges a routed message even when it resolves to a free command (ADR-0051)', async () => {
+      // "show my prefs" routes (LLM spend) to prefsShow, which is a free command —
+      // withinQuota wouldn't charge it, so the routing spend must be counted here.
+      const router = intentRouter({ action: 'prefs', minutes: null, topic: null });
+      const { bot, usage } = await build({ router });
+      await bot.handle(update(5, 'show my preferences'));
+      expect(await usage.peek('chat:5:cmd', '1970-01-01')).toBe(1); // routing charged
+      expect(await usage.peek('global:cmd', '1970-01-01')).toBe(1);
+    });
+
     it('attaches the menu button under generated content when routing is on', async () => {
       const { bot, transport } = await build({ router: intentRouter(help()) });
       await bot.handle(update(5, '/brief'));

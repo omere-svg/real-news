@@ -285,7 +285,9 @@ function wireAuth(
 function normalizeLimit(raw: string | undefined, fallback: number): number {
   const n = raw ? Number(raw) : fallback;
   if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.min(200, Math.floor(n));
+  // Floor to an int but never to 0 (e.g. limit=0.5) — that would return an empty
+  // page rather than a sane one (ADR-0051).
+  return Math.min(200, Math.max(1, Math.floor(n)));
 }
 
 /** Build a BriefRequest from query params, falling back to defaults, clamping minutes. */

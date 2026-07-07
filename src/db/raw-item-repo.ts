@@ -45,6 +45,10 @@ export class DrizzleRawItemRepo implements RawItemRepo {
     // extraction persists hundreds of items/tick — serial writes to remote Turso were
     // the largest remaining tick-latency source. Chunked to stay within libsql's
     // batch statement cap.
+    // Defense-in-depth (ADR-0051): a non-finite publishedAt (NaN from a bad upstream
+    // date) is rejected by libsql and would fail the whole tick's persist. Adapters
+    // should guard, but coerce here too so one malformed date can never abort the tick.
+    const at = (n: number | null): number | null => (n !== null && Number.isFinite(n) ? n : null);
     const stmt = (item: RawItem) =>
       this.db
         .insert(rawItems)
@@ -54,7 +58,7 @@ export class DrizzleRawItemRepo implements RawItemRepo {
           title: item.title,
           url: item.url,
           text: item.text,
-          publishedAt: item.publishedAt,
+          publishedAt: at(item.publishedAt),
           metadata: item.metadata,
         })
         .onConflictDoUpdate({
@@ -63,7 +67,7 @@ export class DrizzleRawItemRepo implements RawItemRepo {
             title: item.title,
             url: item.url,
             text: item.text,
-            publishedAt: item.publishedAt,
+            publishedAt: at(item.publishedAt),
             metadata: item.metadata,
           },
         });

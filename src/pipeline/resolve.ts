@@ -154,7 +154,9 @@ function dedupeById(resolved: readonly IdentifiedCluster[]): IdentifiedCluster[]
     byId.set(r.id, {
       id: r.id,
       cluster: { topic: existing.cluster.topic, items: mergeItems(existing.cluster.items, r.cluster.items) },
-      vector: existing.vector,
+      // Prefer a non-empty vector: if the first cluster had no embedding, take the
+      // second's, so the merged story stays cross-tick-matchable (ADR-0051).
+      vector: existing.vector.length ? existing.vector : r.vector,
     });
   }
   return [...byId.values()];

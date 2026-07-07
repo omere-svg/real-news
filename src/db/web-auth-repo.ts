@@ -95,7 +95,7 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
     // The guard lives in the WHERE too (not just the SELECT above): the update
     // only binds a still-unclaimed code or the original claimant, so two
     // concurrent claims can't both pass the check-then-act and clobber (ADR-0049).
-    await this.db
+    const res = await this.db
       .update(linkCodes)
       .set({ chatId, name })
       .where(
@@ -104,7 +104,9 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
           or(isNull(linkCodes.chatId), eq(linkCodes.chatId, chatId)),
         ),
       );
-    return 'linked';
+    // Only report 'linked' if we actually bound the code. A concurrent claimant that
+    // lost the WHERE race affected 0 rows and must not be told it linked (ADR-0051).
+    return res.rowsAffected > 0 ? 'linked' : 'unknown';
   }
 
   async resolve(token: string, now: number, sessionTtlMs: number): Promise<WebSession | null> {

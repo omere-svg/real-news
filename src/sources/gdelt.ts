@@ -20,12 +20,15 @@ const responseSchema = z.object({
     .optional(),
 });
 
-/** GDELT seendate "YYYYMMDDTHHMMSSZ" → epoch ms (null if unparseable). */
+/** GDELT seendate "YYYYMMDDTHHMMSSZ" → epoch ms (null if unparseable). The regex
+ * checks format, not calendar validity, so an impossible date (month 13) parses to
+ * NaN — which libsql rejects and would fail the whole tick's persist (ADR-0051). */
 function parseSeenDate(s: string | undefined): number | null {
   if (!s) return null;
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(s);
   if (!m) return null;
-  return Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
+  const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
+  return Number.isFinite(t) ? t : null;
 }
 
 /**

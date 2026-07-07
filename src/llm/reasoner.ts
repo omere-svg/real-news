@@ -82,13 +82,16 @@ const prefsPatchSchema = z.object({
   summary: z.string().default(''),
 });
 
-const weightDirectionSchema = z.enum(['more', 'less', 'mute', 'reset']);
-const lengthDirectionSchema = z.enum(['shorter', 'longer', 'reset']);
-// Lenient: topic is a free string here, then filtered to the controlled
-// vocabulary below — an unknown name is dropped, never a parse failure (ADR-0026).
+const WEIGHT_DIRECTIONS = ['more', 'less', 'mute', 'reset'] as const;
+const LENGTH_DIRECTIONS = ['shorter', 'longer', 'reset'] as const;
+type WeightDir = (typeof WEIGHT_DIRECTIONS)[number];
+type LengthDir = (typeof LENGTH_DIRECTIONS)[number];
+// Lenient: topic AND direction are free strings here, filtered to the controlled
+// vocabulary below — one out-of-vocab value drops that entry, it never throws the
+// whole parse and silently discards the user's valid feedback (ADR-0026/0051).
 const feedbackIntentSchema = z.object({
-  topics: z.array(z.object({ topic: z.string(), direction: weightDirectionSchema })).default([]),
-  length: lengthDirectionSchema.nullable().default(null),
+  topics: z.array(z.object({ topic: z.string(), direction: z.string() })).default([]),
+  length: z.string().nullable().catch(null).default(null),
   summary: z.string().default(''),
 });
 
@@ -304,12 +307,17 @@ export class Reasoner implements LLMClient {
     );
 
     const parsed = feedbackIntentSchema.parse(json);
-    // Drop entries outside the controlled vocabulary (ADR-0026).
+    // Drop entries outside the controlled vocabulary — both topic and direction
+    // (ADR-0026/0051): one bad direction must not discard the user's valid feedback.
     const topics = parsed.topics
       .map((t) => ({ topic: canonical(TOPICS as readonly Topic[], t.topic), direction: t.direction }))
-      .filter((t): t is { topic: Topic; direction: typeof t.direction } => t.topic !== null);
+      .filter((t): t is { topic: Topic; direction: WeightDir } =>
+        t.topic !== null && (WEIGHT_DIRECTIONS as readonly string[]).includes(t.direction));
+    const length = (LENGTH_DIRECTIONS as readonly string[]).includes(parsed.length ?? '')
+      ? (parsed.length as LengthDir)
+      : null;
 
-    return { topics, length: parsed.length, summary: parsed.summary };
+    return { topics, length, summary: parsed.summary };
   }
 
   async routeIntent(input: RouteInput): Promise<RouterIntent> {

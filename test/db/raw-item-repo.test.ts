@@ -47,6 +47,15 @@ describe('RawItemRepo', () => {
     await new DrizzleRawItemRepo(db).upsert([]); // must not throw on empty
   });
 
+  it('coerces a non-finite publishedAt to null instead of failing the bind (ADR-0051)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleRawItemRepo(db);
+    // A NaN date (from a bad upstream value) must not crash the persist — libsql
+    // rejects a NaN bind, which would fail the whole tick.
+    await repo.upsert([rawItem({ publishedAt: Number.NaN })]);
+    expect((await repo.get({ source: 'hackernews', externalId: '1' }))?.publishedAt).toBeNull();
+  });
+
   it('is idempotent: re-upserting the same (source, externalId) does not duplicate', async () => {
     const db = await createTestDb();
     const repo = new DrizzleRawItemRepo(db);

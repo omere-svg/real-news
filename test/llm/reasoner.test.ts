@@ -238,6 +238,20 @@ describe('Reasoner', () => {
     expect(intent.topics).toEqual([{ topic: 'AI', direction: 'more' }]);
   });
 
+  it('interpretFeedback: one out-of-vocab direction/length drops only that entry, not all (ADR-0051)', async () => {
+    const t = new FakeTransport({
+      topics: [
+        { topic: 'AI', direction: 'more' },
+        { topic: 'Sports', direction: 'increase' }, // invalid direction
+      ],
+      length: 'bogus', // invalid length
+      summary: 'More AI.',
+    });
+    const intent = await new Reasoner(t).interpretFeedback({ text: 'lots more ai' });
+    expect(intent.topics).toEqual([{ topic: 'AI', direction: 'more' }]); // valid entry survives
+    expect(intent.length).toBeNull(); // bad length coerced to null, not a throw
+  });
+
   it('reflect: summarizes recent ticks on the deep tier (ADR-0042)', async () => {
     const t = new FakeTransport({}, 'GDELT keeps failing — check its rate limit.');
     const out = await new Reasoner(t).reflect({

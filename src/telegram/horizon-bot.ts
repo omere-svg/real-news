@@ -210,7 +210,9 @@ export class HorizonBot {
     // is bypassed one route call at a time (ADR-0049). Slash/known commands and
     // free navigation don't need this pre-gate; withinQuota still does the real
     // (single) accounting below.
-    if (parseCommand(update.text).kind === 'unknown' && !awaitingFeedback && this.deps.router) {
+    const willRoute =
+      parseCommand(update.text).kind === 'unknown' && !awaitingFeedback && this.deps.router !== undefined;
+    if (willRoute) {
       if (await this.overCommandQuota(chatId, now)) {
         await this.deps.transport.sendMessage(chatId, LIMIT_MSG.commands);
         return;
@@ -220,10 +222,24 @@ export class HorizonBot {
     const command = await this.interpret(session, update.text);
     if (!(await this.withinQuota(chatId, command, now))) return;
 
+    // A routed message spent a cheap-tier LLM call even when it resolved to a
+    // "free" command (help/prefs/remember). withinQuota didn't charge those, so
+    // count the routing spend once here — else open access is uncapped for the
+    // routing tier (ADR-0051). Non-free routes were already charged by withinQuota.
+    if (willRoute && isFreeCommand(command.kind)) await this.chargeCommand(chatId, now);
+
     await this.dispatch(chatId, command, update.senderName);
 
     // A button-initiated feedback message returns the chat to conversation mode.
     if (awaitingFeedback && session.mode === 'feedback') session.mode = 'chat';
+  }
+
+  /** Charge one command against the per-chat + global daily counters (no gating —
+   * used to bill a routed message whose resolved command is otherwise free, ADR-0051). */
+  private async chargeCommand(chatId: number, now: number): Promise<void> {
+    const day = utcDay(now);
+    await this.deps.usage.incrementAndGet(`chat:${chatId}:cmd`, day);
+    await this.deps.usage.incrementAndGet('global:cmd', day);
   }
 
   /** Read-only: is the chat or the process already at/over the daily command cap?
@@ -403,6 +419,13 @@ export class HorizonBot {
     }
 
     if (command.kind === 'podcast') {
+      // Check the global ceiling before charging this chat's personal podcast
+      // counter, so a globally-blocked request doesn't waste the user's own daily
+      // allowance (ADR-0051).
+      if ((await usage.peek('global:podcast', day)) >= limits.globalPodcastPerDay) {
+        await transport.sendMessage(chatId, LIMIT_MSG.global);
+        return false;
+      }
       const mine = await usage.incrementAndGet(`chat:${chatId}:podcast`, day);
       if (mine > limits.podcastPerDay) {
         if (mine === limits.podcastPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.podcast);

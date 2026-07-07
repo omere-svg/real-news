@@ -58,7 +58,15 @@ export class HackerNewsSource implements SourceAdapter {
   }
 
   private async fetchItem(id: number): Promise<RawItem | null> {
-    const parsed = hnItemSchema.safeParse(await this.deps.fetchJson(itemUrl(id)));
+    // Isolate a single item's fetch/parse failure — one timed-out item must not
+    // reject Promise.all and lose the whole HN batch this tick (ADR-0051).
+    let raw: unknown;
+    try {
+      raw = await this.deps.fetchJson(itemUrl(id));
+    } catch {
+      return null;
+    }
+    const parsed = hnItemSchema.safeParse(raw);
     if (!parsed.success || parsed.data === null) return null;
 
     const item = parsed.data;
