@@ -346,6 +346,7 @@ describe('HTTP API', () => {
     const fullQuestion = 'q'.repeat(300);
     await chatTraces.record({
       createdAt: 1000, question: fullQuestion, steps: [], answeredFromNews: false,
+      plan: 'search then answer', path: 'agent',
     });
     const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
     const app = createApp(
@@ -356,10 +357,13 @@ describe('HTTP API', () => {
 
     const res = await app.request('/api/chat-traces');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { traces: { question: string }[] };
+    const body = (await res.json()) as { traces: { question: string; plan: string; path: string }[] };
     expect(body.traces).toHaveLength(1);
     expect(body.traces[0]?.question).not.toBe(fullQuestion);
     expect(body.traces[0]?.question.length).toBeLessThanOrEqual(80);
+    // The rubric plan→act→observe evidence is exposed alongside the trajectory.
+    expect(body.traces[0]?.plan).toBe('search then answer');
+    expect(body.traces[0]?.path).toBe('agent');
   });
 
   it("GET /api/stats surfaces today's durable LLM token counters", async () => {

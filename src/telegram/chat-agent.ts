@@ -58,6 +58,12 @@ export interface ChatAgentInput {
 
 export interface ChatAgentAnswer extends DiscussResult {
   readonly steps: readonly TraceStep[];
+  /**
+   * A one-line plan the model stated on its first turn (ADR-0053/rubric
+   * plan→act→observe). Best-effort: '' when the model omitted it — a missing
+   * plan never fails the answer.
+   */
+  readonly plan: string;
 }
 
 export interface ChatAgentDeps {
@@ -71,6 +77,7 @@ const DEFAULT_MAX_STEPS = 5;
 const OPTS: CompletionOptions = { tier: 'deep', maxTokens: 700 };
 const PREVIEW_CHARS = 200;
 const ARGS_CHARS = 200;
+const PLAN_CHARS = 200;
 const MAX_ANSWER_CHARS = 3_500;
 const URL_RE = /https?:\/\/[^\s)\]}>"'<‹]+/gi;
 // Hard spend ceiling (§5): a model emitting a burst of tool calls can't turn
@@ -102,7 +109,13 @@ const SYSTEM_PROMPT =
   `object: {"answer": <conversational reply>, "answeredFromNews": <true only ` +
   `if the tool results actually contained the answer>}. Ground the answer in ` +
   `what the tools returned; if they didn't contain it, say so plainly instead ` +
-  `of inventing facts.`;
+  `of inventing facts.\n\n` +
+  `On your VERY FIRST turn only, state your plan in one short line before ` +
+  `anything else: if you are calling tools this turn, put that one-line plan ` +
+  `as your ordinary message text alongside the tool calls (e.g. "Plan: search ` +
+  `the cache, then answer."); if you can already answer, add a "plan" field ` +
+  `to the JSON object next to "answer". Keep it to one short sentence; it's ` +
+  `fine to omit it if you have nothing useful to say.`;
 
 export class ChatAgent {
   private readonly maxSteps: number;
@@ -124,6 +137,7 @@ export class ChatAgent {
     // an attacker link that never grounded anything.
     const groundedUrls = new Set<string>();
     let trajectoryToolCalls = 0;
+    let plan = '';
 
     for (let turn = 0; turn <= this.maxSteps; turn += 1) {
       // On the last permitted turn the tools are withdrawn: answer NOW.
@@ -134,9 +148,14 @@ export class ChatAgent {
         OPTS,
       );
 
+      // Rubric plan→act→observe: capture the model's stated plan from its
+      // very first turn, whichever shape it arrives in (never fails on a
+      // missing/malformed plan — see extractPlan).
+      if (turn === 0) plan = extractPlan(res.text);
+
       if (res.toolCalls.length === 0) {
         const final = parseFinal(res.text);
-        return { ...final, answer: groundAnswer(final.answer, groundedUrls), steps };
+        return { ...final, answer: groundAnswer(final.answer, groundedUrls), steps, plan };
       }
 
       messages.push({ role: 'assistant', content: res.text, toolCalls: res.toolCalls });
@@ -183,6 +202,7 @@ export class ChatAgent {
       answer: "I couldn't finish looking into that — please try again in a moment.",
       answeredFromNews: false,
       steps,
+      plan,
     };
   }
 }
@@ -218,6 +238,28 @@ function groundAnswer(answer: string, grounded: ReadonlySet<string>): string {
     return isGroundedUrl(url, grounded) ? url + trailing : '';
   });
   return cleaned.slice(0, MAX_ANSWER_CHARS);
+}
+
+/**
+ * Best-effort extraction of the model's stated one-line plan from its first
+ * turn (rubric plan→act→observe). Two shapes are tolerated: a `"plan"` field
+ * on a JSON final answer, or plain leading text sent alongside tool calls.
+ * Never throws; '' when the model didn't state one.
+ */
+function extractPlan(text: string | null): string {
+  const raw = (text ?? '').trim();
+  if (!raw) return '';
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof (parsed as { plan?: unknown }).plan === 'string') {
+      return (parsed as { plan: string }).plan.trim().slice(0, PLAN_CHARS);
+    }
+    // Valid JSON but no plan field — tolerate, don't guess from the answer body.
+    return '';
+  } catch {
+    // Not JSON: plain leading text sent alongside a first-turn tool call.
+    return raw.split('\n')[0]!.trim().slice(0, PLAN_CHARS);
+  }
 }
 
 function parseFinal(text: string | null): DiscussResult {

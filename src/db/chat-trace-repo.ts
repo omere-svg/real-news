@@ -8,6 +8,9 @@ import { chatTraces, type StoredTraceStep } from './schema.js';
  * The inspectable "how I answered" evidence, publicly surfaced; no chat
  * identity is stored, and text fields are clamped at the writer.
  */
+/** Which code path produced an answer (ADR-0053 / rubric plan→act→observe). */
+export type ChatTracePath = 'agent' | 'fallback';
+
 export interface ChatTrace {
   readonly id: number;
   readonly createdAt: number;
@@ -15,6 +18,10 @@ export interface ChatTrace {
   readonly question: string;
   readonly steps: readonly StoredTraceStep[];
   readonly answeredFromNews: boolean;
+  /** The model's one-line stated plan; '' if it didn't state one. */
+  readonly plan: string;
+  /** `'agent'` for the model-driven tool loop, `'fallback'` for the fixed degrade path. */
+  readonly path: ChatTracePath;
 }
 
 export interface ChatTraceInput {
@@ -22,6 +29,10 @@ export interface ChatTraceInput {
   readonly question: string;
   readonly steps: readonly StoredTraceStep[];
   readonly answeredFromNews: boolean;
+  /** The model's one-line stated plan; '' if it didn't state one. */
+  readonly plan: string;
+  /** `'agent'` for the model-driven tool loop, `'fallback'` for the fixed degrade path. */
+  readonly path: ChatTracePath;
 }
 
 /**
@@ -54,6 +65,8 @@ export class DrizzleChatTraceRepo implements ChatTraceRepo {
       question: previewOf(rec.question),
       steps: [...rec.steps],
       answeredFromNews: rec.answeredFromNews,
+      plan: rec.plan,
+      path: rec.path,
     });
   }
 
@@ -69,6 +82,9 @@ export class DrizzleChatTraceRepo implements ChatTraceRepo {
       question: r.question,
       steps: r.steps ?? [],
       answeredFromNews: r.answeredFromNews,
+      plan: r.plan,
+      // Older rows predate `path` (backfilled to 'agent' by the column default).
+      path: (r.path === 'fallback' ? 'fallback' : 'agent') as ChatTracePath,
     }));
   }
 

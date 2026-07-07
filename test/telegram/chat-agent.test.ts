@@ -347,6 +347,36 @@ describe('ChatAgent (ADR-0053)', () => {
     expect(content.length).toBeLessThan(huge.length);
   });
 
+  it("captures the model's plan from a JSON final answer on the first turn", async () => {
+    const transport = new ScriptedTransport([
+      { text: JSON.stringify({ answer: 'ok', answeredFromNews: true, plan: 'Answer directly.' }), toolCalls: [] },
+    ]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.plan).toBe('Answer directly.');
+  });
+
+  it("captures the model's plan from leading text sent alongside a first-turn tool call", async () => {
+    const search = tool('search_stories', 'ok');
+    const transport = new ScriptedTransport([
+      { text: 'Plan: search the cache, then answer.', toolCalls: [{ id: 'c1', name: 'search_stories', args: {} }] },
+      finalAnswer('done', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.plan).toBe('Plan: search the cache, then answer.');
+    // The plan is captured once from turn 0, not re-derived from later tool steps.
+    expect(out.steps.map((s) => s.tool)).toEqual(['search_stories']);
+  });
+
+  it('tolerates a missing plan — never fails the answer', async () => {
+    const transport = new ScriptedTransport([finalAnswer('ok', true)]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.plan).toBe('');
+    expect(out.answer).toBe('ok');
+  });
+
   it('calls the same tool with distinct arguments across steps (real iteration)', async () => {
     const search = tool('search_stories', '(nothing)');
     const transport = new ScriptedTransport([

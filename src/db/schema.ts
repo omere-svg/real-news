@@ -234,10 +234,14 @@ export const chatTraces = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** An 80-char preview of the reader's question, never the verbatim text (privacy). */
     question: text('question').notNull(),
-    /** The trajectory: [{step, tool, args, resultPreview}]. */
+    /** The trajectory: [{step, tool, args, resultPreview}] — step 0 is the plan, when stated. */
     steps: text('steps', { mode: 'json' }).$type<StoredTraceStep[]>().notNull(),
     /** Whether the final answer was grounded in the news cache / web results. */
     answeredFromNews: integer('answered_from_news', { mode: 'boolean' }).notNull(),
+    /** The model's one-line stated plan (rubric plan→act→observe); '' if omitted. */
+    plan: text('plan').notNull().default(''),
+    /** Which code path produced this answer: the model-driven loop, or the fixed degrade (ADR-0053). */
+    path: text('path').notNull().default('agent'),
   },
   (t) => [index('chat_traces_created_idx').on(t.createdAt)],
 );
