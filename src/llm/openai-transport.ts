@@ -81,19 +81,24 @@ export class OpenAITransport implements ChatTransport, ToolCapableTransport {
   }
 
   async completeJson(prompt: string, opts: CompletionOptions): Promise<unknown> {
-    const res = await withRetry(() =>
-      this.client.chat.completions.create({
+    // The JSON.parse lives inside withRetry (and its SyntaxError is classified
+    // transient there): a truncated/garbled body is a genuine provider fault
+    // — the stream got cut mid-object — so it deserves the same retry as a
+    // dropped connection instead of throwing straight through to the caller.
+    const { res, parsed } = await withRetry(async () => {
+      const r = await this.client.chat.completions.create({
         model: this.model(opts.tier),
         max_tokens: opts.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: prompt }],
-      }),
-    );
+      });
+      const content = r.choices[0]?.message?.content;
+      if (!content) throw new Error('openai: empty response');
+      return { res: r, parsed: JSON.parse(content) as unknown };
+    });
     this.reportUsage(opts.tier, res);
-    const content = res.choices[0]?.message?.content;
-    if (!content) throw new Error('openai: empty response');
-    return JSON.parse(content);
+    return parsed;
   }
 
   /** Tool-selection completion for the chat agent loop (ADR-0053). */
