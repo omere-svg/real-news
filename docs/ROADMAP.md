@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-07-06 (**431 tests green, 50 ADRs**; live on an Oracle Cloud VM +
+the plan to finish it. Updated 2026-07-06 (**444 tests green, 52 ADRs**; live on an Oracle Cloud VM +
 Turso). Latest: a **Log in with Telegram** web-auth (ADR-0040, no passwords/emails), all
 five optional deepenings shipped (ADR-0041–0045), and web-session security hardening
 (ADR-0046). See §"Optional deepening — DONE" below. A production-DB review drove a throughput/dedup/integrity hardening pass
@@ -63,7 +63,7 @@ Principles 1–5 are realized. Decisions are in `docs/adr/0001–0024`; domain l
 | **Structured story cards (what-happened + why-it-matters)** | ✅ deep tier writes a factual `summary` alongside `whyItMatters`; for non-top-N stories a deterministic `summary` falls back to the source text (markup-stripped, ≤2 sentences) so every text-bearing story has a "what happened"; renderer = 📰 headline → what happened → 💡 why it matters → 🏷 tag → 🔗 link; upsert always keeps a member's article URL; cache **self-heals on boot** for stories missing a summary (`reasoner.backfillOnBoot`) + `npm run backfill:summaries` |
 | **Knesset bill provenance** | ✅ bills now carry a real link (`BillID`=site `lawitemid`) + `SummaryLaw` text when present; Hebrew titles get a plain-English "what happened" via the backfill |
 | **Inspectable score breakdown** ("why this score") | ✅ persisted `scoreBreakdown` per Story, surfaced in the web viewer (expandable) + a compact rationale in the brief/bot (ADR-0032) |
-| Real deployment (Turso + host) | ✅ **live in production** on Render free tier + hosted Turso; push-to-`main` auto-redeploys (ADR-0031, `docs/DEPLOY-RENDER.md`) |
+| Real deployment (Turso + host) | ✅ **live in production** on an always-on Oracle Cloud VM + hosted Turso; push-to-`main` CI-builds `dist/` and redeploys (ADR-0047, `docs/DEPLOY-ORACLE-CLOUD.md`) |
 | Observability (persist `TickReport`, dashboard) | ✅ `tick_reports` table + `TickReportRepo`; `/dashboard` health page + `/api/ticks` JSON; failed ticks recorded too (ADR-0033) |
 | **Impact-first Significance** (real-world impact beats popularity) | ✅ noisy-OR of impact + corroboration + authority, popularity a bounded booster, floored recency (ADR-0034) |
 | **Dedup quality** (same-event articles merge) | ✅ title+body-lead embeddings (ADR-0035) + toggleable entity-aware blocking (ADR-0036) + generic-title fixes (Knesset/GDACS/SEC); dedicated `GdacsSource` |
@@ -90,7 +90,7 @@ Second Presentation adapter (ADR-0019/0020): command kernel, dispatcher, Bot API
 
 ### ✅ Security & resource hardening *(DONE)*
 Default-deny access, burst limit + persisted daily quotas (per-chat + global ceiling), minutes
-clamp, web `/api/podcast` off by default, localhost bind, `fetchJson` timeout/size caps, DB
+clamp, web `/api/podcast` on but script-only + capped, localhost bind, `fetchJson` timeout/size caps, DB
 `0600`, per-chat preference isolation (ADR-0022/0023).
 
 ### ✅ Phase 4 — Breadth *(DONE)*
@@ -127,7 +127,7 @@ the rest PARKed in `docs/research/` as reference.*
     `telegram.naturalLanguage` (default on).
 
 ### ✅ Phase 5 — Productionize *(DONE)*
-11. ✅ **Deploy** (Turso + Render) — live, push-to-`main` auto-redeploys (ADR-0031).
+11. ✅ **Deploy** (Turso + Oracle Cloud VM) — live; push-to-`main` CI-builds dist and redeploys (ADR-0047).
 12. ✅ **Observability** (ADR-0033) — every tick's outcome persisted to `tick_reports`
     (success *and* failure), surfaced on a self-refreshing `/dashboard` health page +
     `/api/ticks` JSON feed.
@@ -192,7 +192,7 @@ Every change is behind a config flag with a safe default and needs no migration
 
 **Residual (not blocking):** classification still has rare edge cases (a sports
 retrospective that mentioned an earthquake landed in `Climate`). **Deploy note:** the live
-prod DB keeps the old behaviour until Render redeploys the new code (push to `main`).
+prod DB keeps the old behaviour until the VM redeploys the new code (push to `main`).
 
 ## 5. Follow-up hardening — ADR-0039 (resolved 2026-07-05)
 

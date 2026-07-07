@@ -12,7 +12,8 @@ domain language lives in [`CONTEXT.md`](CONTEXT.md).
 1. **Extraction worker** — pulls from **18 Story APIs/feeds** behind one `SourceAdapter`
    contract (Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, Guardian, Times
    of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv, plus TheSportsDB→Sports,
-   WHO Outbreaks→Health, and NASA EONET / USGS / GDACS→Climate — ADR-0031) plus **6 numeric
+   WHO Outbreaks→Health, and NASA EONET / USGS / GDACS→Climate — ADR-0031; `knesset-votes` is
+   currently disabled because its upstream feed froze in 2021 — ADR-0049) plus **6 numeric
    Signal sources** behind a sibling `SignalSource` seam (Wikipedia Pageviews attention, World
    Bank macro — ADR-0025; CoinGecko + Frankfurter FX → Business, OpenAlex → Science — ADR-0031;
    GDELT aggregate tone → Geopolitics — ADR-0041), with per-source health checks so a dead
@@ -108,9 +109,10 @@ writes the podcast to `/tmp/horizon-podcast.mp3`.
   user-driven OpenAI costs are the **podcast** (LLM + TTS) and **chat** (deep tier) paths — text
   briefs/outlines and the whole web viewer are deterministic cache reads that spend **zero** tokens.
 - **`minutes` is clamped** to `presentation.maxMinutes`, with a **tighter
-  `presentation.maxPodcastMinutes`** cap on the expensive audio path; the LLM-backed web
-  `/api/podcast` is **off by default** (`presentation.webPodcastEnabled`). The server binds
-  to localhost unless you set `HOST`.
+  `presentation.maxPodcastMinutes`** cap on the expensive audio path. The LLM-backed web
+  `/api/podcast` is **on** (`presentation.webPodcastEnabled: true`, ADR-0050) but returns the
+  script only (no web TTS) and is bounded by `maxPodcastMinutes`; flip it off to make the web
+  a pure zero-token surface. The server binds to localhost unless you set `HOST`.
 
 ## Configuration
 
@@ -133,7 +135,7 @@ boot). Secrets and deploy knobs come from the environment:
 - `GET /api/stories?topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
 - `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
 - `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
-- `GET /api/podcast?minutes=3` → `{ script }` — **off by default** (`presentation.webPodcastEnabled`, ADR-0023)
+- `GET /api/podcast?minutes=3` → `{ script }` — on (`presentation.webPodcastEnabled`, ADR-0050); script-only, `maxPodcastMinutes`-capped
 - `GET /api/ticks?limit=50` → `{ ticks: [...] }` — recent tick outcomes (ADR-0033)
 - `GET /dashboard` → HTML ops dashboard: tick health, throughput, failing sources (ADR-0033)
 - `GET /health` → `{ ok: true }`
