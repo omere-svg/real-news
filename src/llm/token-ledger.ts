@@ -1,7 +1,11 @@
 import { utcDay } from '../db/usage-repo.js';
 
-/** The model tiers the transports bill against (ADR-0006/0012). */
-export type TokenTier = 'cheap' | 'deep';
+/**
+ * The model tiers the transports bill against (ADR-0006/0012). `embed` and
+ * `tts` bill in provider-specific units (total tokens, characters
+ * respectively) but share the same daily-counter accounting (Task 15).
+ */
+export type TokenTier = 'cheap' | 'deep' | 'embed' | 'tts';
 
 /** One completion's token usage, as reported by the provider transport. */
 export interface TokenUsageEvent {
@@ -44,7 +48,19 @@ export interface DailyTokenTotals {
   readonly day: string;
   readonly cheap: TierTokenTotals;
   readonly deep: TierTokenTotals;
+  readonly embed: TierTokenTotals;
+  readonly tts: TierTokenTotals;
   readonly totalTokens: number;
+}
+
+/** A fresh zeroed totals bucket per tier — shared by construction and day-roll. */
+function zeroTotals(): Record<TokenTier, { prompt: number; completion: number }> {
+  return {
+    cheap: { prompt: 0, completion: 0 },
+    deep: { prompt: 0, completion: 0 },
+    embed: { prompt: 0, completion: 0 },
+    tts: { prompt: 0, completion: 0 },
+  };
 }
 
 /**
@@ -56,10 +72,7 @@ export interface DailyTokenTotals {
  */
 export class TokenLedger {
   private day: string;
-  private totals: Record<TokenTier, { prompt: number; completion: number }> = {
-    cheap: { prompt: 0, completion: 0 },
-    deep: { prompt: 0, completion: 0 },
-  };
+  private totals: Record<TokenTier, { prompt: number; completion: number }> = zeroTotals();
 
   constructor(private readonly deps: TokenLedgerDeps) {
     this.day = utcDay(deps.now());
@@ -70,7 +83,7 @@ export class TokenLedger {
     const today = utcDay(this.deps.now());
     if (today === this.day) return;
     this.day = today;
-    this.totals = { cheap: { prompt: 0, completion: 0 }, deep: { prompt: 0, completion: 0 } };
+    this.totals = zeroTotals();
   }
 
   record(u: TokenUsageEvent): void {
@@ -97,6 +110,15 @@ export class TokenLedger {
     });
     const cheap = tier(this.totals.cheap);
     const deep = tier(this.totals.deep);
-    return { day: this.day, cheap, deep, totalTokens: cheap.totalTokens + deep.totalTokens };
+    const embed = tier(this.totals.embed);
+    const tts = tier(this.totals.tts);
+    return {
+      day: this.day,
+      cheap,
+      deep,
+      embed,
+      tts,
+      totalTokens: cheap.totalTokens + deep.totalTokens + embed.totalTokens + tts.totalTokens,
+    };
   }
 }

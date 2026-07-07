@@ -29,6 +29,30 @@ describe('OpenAITTS', () => {
     expect(sent.length).toBeLessThanOrEqual(4000);
     expect(sent.endsWith('.')).toBe(true); // cut at a sentence boundary
   });
+
+  it('reports the billed character count to onUsage', async () => {
+    const create = vi.fn().mockResolvedValue({ arrayBuffer: async () => new Uint8Array([1]).buffer });
+    const client = { audio: { speech: { create } } } as unknown as OpenAI;
+    const onUsage = vi.fn();
+    const tts = new OpenAITTS({ model: 'm', voice: 'v', client, onUsage });
+
+    await tts.synthesize('hello world');
+
+    expect(onUsage).toHaveBeenCalledWith({ characters: 'hello world'.length });
+  });
+
+  it('reports the clamped (billed), not the original, character count', async () => {
+    const create = vi.fn().mockResolvedValue({ arrayBuffer: async () => new Uint8Array([1]).buffer });
+    const client = { audio: { speech: { create } } } as unknown as OpenAI;
+    const onUsage = vi.fn();
+    const long = 'This is a sentence. '.repeat(400);
+    const tts = new OpenAITTS({ model: 'm', voice: 'v', client, onUsage });
+
+    await tts.synthesize(long);
+
+    const sent = (create.mock.calls[0]?.[0] as { input: string }).input;
+    expect(onUsage).toHaveBeenCalledWith({ characters: sent.length });
+  });
 });
 
 describe('clampForTts', () => {

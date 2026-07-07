@@ -51,6 +51,7 @@ import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import type { LLMClient } from './llm/llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { OpenAIEmbedder } from './embedding/openai-embedder.js';
+import type { EmbeddingUsageReport } from './embedding/openai-embedder.js';
 import { ResilientEmbedder } from './embedding/resilient-embedder.js';
 import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
@@ -157,12 +158,16 @@ function buildSource(id: StorySourceId, s: SourceConfig, fetchJson: JsonFetcher)
 }
 
 /** Build the Embedder seam from config — neural with a hashing fallback (ADR-0018). */
-function buildEmbedder(config: Config): Embedder {
+function buildEmbedder(
+  config: Config,
+  /** Reports embeddings-call token usage to the ledger (Task 15); omitted ⇒ no accounting. */
+  onUsage?: (usage: EmbeddingUsageReport) => void,
+): Embedder {
   const { provider, model, dimensions } = config.embedder;
   const hashing = new HashingEmbedder(dimensions);
   if (provider === 'hashing') return hashing;
   return new ResilientEmbedder(
-    new OpenAIEmbedder({ model, dimensions }),
+    new OpenAIEmbedder({ model, dimensions, ...(onUsage ? { onUsage } : {}) }),
     hashing,
   );
 }
@@ -288,7 +293,9 @@ async function main(): Promise<void> {
   );
   // One embedder, shared by the tick pipeline (dedup) and — when semantic chat is
   // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
-  const embedder = buildEmbedder(config);
+  const embedder = buildEmbedder(config, (u) =>
+    tokenLedger.record({ tier: 'embed', promptTokens: u.totalTokens, completionTokens: 0 }),
+  );
   const storySources = buildSources(config, fetchJson);
   const signalSources = buildSignalSources(config, fetchJson);
   const storySourceIds = storySources.map((s) => s.id);
@@ -526,7 +533,7 @@ async function main(): Promise<void> {
   if (config.telegram.enabled) {
     startTelegramBot(
       config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage,
-      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
+      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo, tokenLedger,
     );
   }
 }
@@ -567,6 +574,8 @@ function startTelegramBot(
   traces?: ChatTraceRepo,
   /** Durable chat sessions — conversations survive deploys (ADR-0053). */
   sessionRepo?: ChatSessionRepo,
+  /** Token accounting sink for TTS spend (Task 15); omitted ⇒ no accounting. */
+  tokenLedger?: TokenLedger,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -583,7 +592,14 @@ function startTelegramBot(
 
   const tts = tg.tts;
   const synthesizer: Synthesizer | null = tts.enabled
-    ? new ResilientSynthesizer(new OpenAITTS({ model: tts.model, voice: tts.voice }))
+    ? new ResilientSynthesizer(
+        new OpenAITTS({
+          model: tts.model,
+          voice: tts.voice,
+          onUsage: (u) =>
+            tokenLedger?.record({ tier: 'tts', promptTokens: u.characters, completionTokens: 0 }),
+        }),
+      )
     : null;
 
   // Chat about the news (ADR-0029): wired only when enabled; web search stays

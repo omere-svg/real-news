@@ -335,7 +335,7 @@ describe('HTTP API', () => {
     const body = (await (await app.request('/api/stats')).json()) as Record<string, unknown>;
     expect(body).toMatchObject({
       stories: 2, signalObservations: 0, oldestSignalAt: null, ticksRecorded: 0,
-      tokens: { cheap: 0, deep: 0, total: 0 }, // no usage store wired
+      tokens: { cheap: 0, deep: 0, embed: 0, tts: 0, total: 0 }, // no usage store wired
     });
   });
 
@@ -377,9 +377,29 @@ describe('HTTP API', () => {
     });
 
     const body = (await (await app.request('/api/stats')).json()) as {
-      tokens: { day: string; cheap: number; deep: number; total: number };
+      tokens: { day: string; cheap: number; deep: number; embed: number; tts: number; total: number };
     };
-    expect(body.tokens).toEqual({ day: today, cheap: 1500, deep: 400, total: 1900 });
+    expect(body.tokens).toEqual({ day: today, cheap: 1500, deep: 400, embed: 0, tts: 0, total: 1900 });
+  });
+
+  it("GET /api/stats surfaces today's embed and tts token counters", async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const usage = new DrizzleUsageRepo(db);
+    const today = new Date().toISOString().slice(0, 10);
+    await usage.add('global:tokens:embed', today, 300);
+    await usage.add('global:tokens:tts', today, 900);
+
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false, usage,
+    });
+
+    const body = (await (await app.request('/api/stats')).json()) as {
+      tokens: { embed: number; tts: number };
+    };
+    expect(body.tokens.embed).toBe(300);
+    expect(body.tokens.tts).toBe(900);
   });
 
   it('a first-time visitor (no saved prefs) defaults to ALL topics, so the global lead is visible', async () => {

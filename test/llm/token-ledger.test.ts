@@ -15,6 +15,8 @@ describe('TokenLedger', () => {
       day: '2026-01-15',
       cheap: { promptTokens: 150, completionTokens: 30, totalTokens: 180 },
       deep: { promptTokens: 1000, completionTokens: 200, totalTokens: 1200 },
+      embed: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      tts: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       totalTokens: 1380,
     });
   });
@@ -60,5 +62,30 @@ describe('TokenLedger', () => {
     const ledger = new TokenLedger({ now: () => DAY1, store: { add } });
     ledger.record({ tier: 'cheap', promptTokens: 0, completionTokens: 0 });
     expect(add).not.toHaveBeenCalled();
+  });
+
+  it('accumulates embed and tts tiers alongside cheap/deep', () => {
+    const ledger = new TokenLedger({ now: () => DAY1 });
+    ledger.record({ tier: 'embed', promptTokens: 42, completionTokens: 0 });
+    ledger.record({ tier: 'tts', promptTokens: 500, completionTokens: 0 });
+
+    expect(ledger.today()).toEqual({
+      day: '2026-01-15',
+      cheap: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      deep: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      embed: { promptTokens: 42, completionTokens: 0, totalTokens: 42 },
+      tts: { promptTokens: 500, completionTokens: 0, totalTokens: 500 },
+      totalTokens: 542,
+    });
+  });
+
+  it('persists a durable per-tier counter for embed and tts', async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const ledger = new TokenLedger({ now: () => DAY1, store: { add } });
+    ledger.record({ tier: 'embed', promptTokens: 42, completionTokens: 0 });
+    ledger.record({ tier: 'tts', promptTokens: 500, completionTokens: 0 });
+
+    expect(add).toHaveBeenCalledWith(tokenUsageKey('embed'), '2026-01-15', 42);
+    expect(add).toHaveBeenCalledWith(tokenUsageKey('tts'), '2026-01-15', 500);
   });
 });
