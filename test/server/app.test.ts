@@ -191,6 +191,9 @@ describe('HTTP API', () => {
     // Backend is made legible (sources / zero-scraping / live freshness).
     expect(html).toContain('zero scraping');
     expect(html).toContain('loadFreshness');
+    // The signature "what changed since last update" editor's note.
+    expect(html).toContain('function editorsNote');
+    expect(html).toContain('Editor’s note');
   });
 
   it('the viewer routes story links through a scheme-checked safeUrl, never a raw href (ADR-0049)', async () => {

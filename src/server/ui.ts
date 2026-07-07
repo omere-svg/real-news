@@ -153,6 +153,11 @@ export function renderUI(defaults: UiDefaults): string {
   .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--td,#8b93a7); }
   .stag { font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft);
     border-radius:999px; padding:3px 9px; }
+  .note-card { background:color-mix(in srgb, var(--accent) 10%, var(--card)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+    border-radius:14px; padding:12px 15px; margin:4px 0 14px; font-size:13.5px; color:var(--fg-dim); line-height:1.55; }
+  .note-card .nb { font-weight:800; color:var(--accent); margin-right:4px; }
+  .note-card b { color:var(--fg); font-weight:700; }
+  .note-card.steady { background:var(--card); border-color:var(--line); color:var(--muted); }
   .why { color:var(--fg-dim); margin:12px 0 0; }
   .why-score { margin-top:12px; font-size:13px; color:var(--muted); }
   .why-score summary { cursor:pointer; color:var(--accent); list-style:none; font-weight:600; width:max-content; }
@@ -553,7 +558,7 @@ async function loadStories(topics) {
   try {
     const params = new URLSearchParams({ limit: '50' });
     for (const t of topics) params.append('topic', t);
-    const res = await fetch('/api/stories?' + params);
+    const [res] = await Promise.all([fetch('/api/stories?' + params), getLastTickAt()]);
     stories = (await res.json()).stories;
   } catch (e) {
     list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load stories</div>Check your connection and try again.</div>';
@@ -564,7 +569,7 @@ async function loadStories(topics) {
       (topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.') + '</div>';
     return;
   }
-  list.innerHTML = '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map((s, i) => {
+  list.innerHTML = editorsNote(stories) + '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map((s, i) => {
     const color = TOPIC_COLORS[s.topic] || '#8b93a7';
     const su = s.url ? safeUrl(s.url) : null;
     const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
@@ -592,17 +597,41 @@ topicsBox.addEventListener('change', onPrefChanged);
 minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + ' min'; };
 minutesInput.onchange = onPrefChanged;
 
-// ---- Live freshness stat (backend-visible): when did the worker last run? ----
-async function loadFreshness(){
+// ---- Latest tick (shared): freshness stat + the "what changed" editor's note. ----
+let lastTickAtCache = null; // ms epoch of the most recent tick, fetched once
+async function getLastTickAt(){
+  if (lastTickAtCache !== null) return lastTickAtCache;
   try {
-    const r = await fetch('/api/ticks?limit=1');
-    const t = (await r.json()).ticks?.[0];
-    if (!t) return;
-    const secs = Math.max(0, Math.round((Date.now() - t.ranAt) / 1000));
-    const ago = secs < 90 ? secs+'s' : secs < 5400 ? Math.round(secs/60)+'m' : Math.round(secs/3600)+'h';
-    const el = document.getElementById('freshness');
-    if (el) el.textContent = ' · updated ' + ago + ' ago';
-  } catch (e) { /* freshness is a nicety; ignore */ }
+    const t = (await (await fetch('/api/ticks?limit=1')).json()).ticks?.[0];
+    lastTickAtCache = t ? t.ranAt : 0;
+  } catch (e) { lastTickAtCache = 0; }
+  return lastTickAtCache;
+}
+function agoStr(ms){
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return s < 90 ? s+'s' : s < 5400 ? Math.round(s/60)+'m' : Math.round(s/3600)+'h';
+}
+async function loadFreshness(){
+  const at = await getLastTickAt();
+  if (!at) return;
+  const el = document.getElementById('freshness');
+  if (el) el.textContent = ' · updated ' + agoStr(at) + ' ago';
+}
+
+// The signature "autonomy" touch: what the last worker run changed on the front page.
+// Purely client-side from each story's firstSeenAt vs the latest tick time — no new
+// endpoint. New entrants = stories first seen during the most recent tick.
+function editorsNote(stories){
+  const at = lastTickAtCache;
+  if (!at) return '';
+  const fresh = stories.filter(s => s.firstSeenAt && s.firstSeenAt >= at)
+                       .sort((a,b) => b.significance - a.significance);
+  if (!fresh.length) return '<div class="note-card steady">✅ Front page steady — no new stories in the last update ('+agoStr(at)+' ago).</div>';
+  const n = fresh.length;
+  const lead = fresh[0];
+  const more = n > 1 ? ' and '+(n-1)+' more' : '';
+  return '<div class="note-card"><span class="nb">🆕 Editor’s note</span> '+n+' new '+(n===1?'story':'stories')+
+    ' entered the front page in the last update ('+agoStr(at)+' ago) — led by <b>'+esc(lead.title)+'</b>'+more+'.</div>';
 }
 
 // ---- Init: seed controls from cache, then let the server (if linked) win. ----
