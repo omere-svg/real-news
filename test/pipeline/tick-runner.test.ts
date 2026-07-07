@@ -482,6 +482,57 @@ describe('TickRunner', () => {
     expect(afterSecond?.whyItMatters).toBe('The deep why.'); // preserved
   });
 
+  it('the tick persists the analyzed displayTitle on the story', async () => {
+    const db = await createTestDb();
+    const rawItemRepo = new DrizzleRawItemRepo(db);
+    const clock = new FakeClock(1000 * 3_600_000);
+    const storyRepo = new DrizzleStoryRepo(db, clock);
+    const embedder = new FakeEmbedder({ 'Deep story': [1, 0, 0] });
+
+    // Tick 1: the story is in top-N, so the deep tier writes a real displayTitle.
+    await new TickRunner({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Deep story', { topic: 'AI' })],
+        }),
+      ],
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM({
+        analyze: {
+          summary: 'The deep summary.',
+          whyItMatters: 'The deep why.',
+          displayTitle: 'The Deep Story, Explained',
+        },
+      }),
+      embedder,
+      clock,
+      config: { ...config, deepAnalysisTopN: 5, maxSignalAdjustment: 0 },
+    }).run();
+
+    const [afterFirst] = await storyRepo.all();
+    expect(afterFirst?.displayTitle).toBe('The Deep Story, Explained');
+
+    // Tick 2: same story, but NOT deep-analyzed this time (topN = 0). The cheap
+    // re-upsert must not clobber the prior deep displayTitle with null.
+    await new TickRunner({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Deep story', { topic: 'AI' })],
+        }),
+      ],
+      rawItemRepo,
+      storyRepo,
+      llm: new FakeLLM(),
+      embedder,
+      clock,
+      config: { ...config, deepAnalysisTopN: 0, maxSignalAdjustment: 0 },
+    }).run();
+
+    const [afterSecond] = await storyRepo.all();
+    expect(afterSecond?.displayTitle).toBe('The Deep Story, Explained'); // preserved
+  });
+
   it('is idempotent across ticks — re-running does not duplicate stories', async () => {
     const { runner, storyRepo } = await build({
       sources: [

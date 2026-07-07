@@ -12,7 +12,7 @@ import { decodeEntities, stripHtml, collapseWhitespace } from '../text/clean.js'
 import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { SignalSource } from '../sources/signal-source.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
-import type { StoryRepo, StoryUpsert } from '../db/story-repo.js';
+import type { StoryRepo, StoryUpsert, StoryAnalysisFields } from '../db/story-repo.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Embedder } from '../embedding/embedder.js';
@@ -220,8 +220,9 @@ export class TickRunner {
 /**
  * Build a StoryUpsert from an analyzed Cluster under its resolved Story id
  * (ADR-0017). `prior` is the Story's current analysis (if it already exists), so
- * a cheap re-upsert never downgrades a good summary/why (ADR-0047):
+ * a cheap re-upsert never downgrades a good summary/why/displayTitle (ADR-0047):
  *  - whyItMatters: this tick's deep value → else the prior value → else null.
+ *  - displayTitle: this tick's deep value → else the prior value → else null.
  *  - summary: this tick's deep value → else the prior value → else a
  *    deterministic lead from the source text (the readability floor for a
  *    brand-new, not-yet-analyzed Story, ADR-0006/0024).
@@ -229,9 +230,9 @@ export class TickRunner {
 function toStoryUpsert(
   analyzed: AnalyzedCluster,
   id: string,
-  prior?: { summary: string | null; whyItMatters: string | null },
+  prior?: StoryAnalysisFields,
 ): StoryUpsert {
-  const { cluster, significance, summary, whyItMatters, breakdown } = analyzed;
+  const { cluster, significance, summary, whyItMatters, displayTitle, breakdown } = analyzed;
   const rep = representativeOf(cluster);
   return {
     id,
@@ -244,6 +245,7 @@ function toStoryUpsert(
     significance,
     summary: summary ?? prior?.summary ?? leadSummary(rep.text),
     whyItMatters: whyItMatters ?? prior?.whyItMatters ?? null,
+    displayTitle: displayTitle ?? prior?.displayTitle ?? null,
     memberRefs: cluster.items.map((i) => ({
       source: i.source,
       externalId: i.externalId,
