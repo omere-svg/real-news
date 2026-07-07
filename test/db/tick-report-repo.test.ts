@@ -70,6 +70,14 @@ describe('TickReportRepo (ADR-0033)', () => {
     expect(await repo.recent(10)).toHaveLength(1);
   });
 
+  it('counts persisted rows, surviving what an in-memory counter would not (ADR-0042)', async () => {
+    const repo = new DrizzleTickReportRepo(await createTestDb());
+    expect(await repo.count()).toBe(0);
+    await repo.record(record({ ranAt: 100 }));
+    await repo.record(record({ ranAt: 200 }));
+    expect(await repo.count()).toBe(2);
+  });
+
   it('lockSkipRecord marks a lock-skip visibly without alarming counts (ADR-0048)', () => {
     const r = lockSkipRecord(1234);
     expect(r.ranAt).toBe(1234);

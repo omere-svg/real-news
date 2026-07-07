@@ -1,4 +1,4 @@
-import { desc, notInArray } from 'drizzle-orm';
+import { count, desc, notInArray } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { tickReports } from './schema.js';
 import type { SourceId } from '../domain/types.js';
@@ -51,6 +51,9 @@ export interface TickReportRepo {
   recent(limit: number): Promise<TickRecord[]>;
   /** Delete all but the most recent `keep` records (ADR-0042). Returns rows removed. */
   pruneToRecent(keep: number): Promise<number>;
+  /** Total persisted rows — the durable cadence source for reflection (ADR-0042);
+   * unlike an in-memory tick counter it survives restarts and deploys. */
+  count(): Promise<number>;
 }
 
 export class DrizzleTickReportRepo implements TickReportRepo {
@@ -98,6 +101,11 @@ export class DrizzleTickReportRepo implements TickReportRepo {
     if (stale.length === 0) return 0;
     await this.db.delete(tickReports).where(notInArray(tickReports.id, keepIds));
     return stale.length;
+  }
+
+  async count(): Promise<number> {
+    const [row] = await this.db.select({ n: count() }).from(tickReports);
+    return row?.n ?? 0;
   }
 }
 

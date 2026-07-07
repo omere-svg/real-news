@@ -12,14 +12,12 @@ import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
 import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
-import type { TickRecord } from './db/tick-report-repo.js';
 import { DrizzleSignalObservationRepo, type SignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
 import { DrizzleAgentPolicyRepo } from './db/agent-policy-repo.js';
 import { DrizzleChatTraceRepo, type ChatTraceRepo } from './db/chat-trace-repo.js';
 import { DrizzleChatSessionRepo, type ChatSessionRepo } from './db/chat-session-repo.js';
 import { DrizzleTickLock } from './db/tick-lock-repo.js';
-import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
 import { ArxivSource } from './sources/arxiv.js';
 import { GdeltSource } from './sources/gdelt.js';
@@ -61,6 +59,7 @@ import { ConsoleLogger, type Logger } from './log/logger.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
 import { screenReflectionActions } from './pipeline/reflection-policy.js';
+import { maybeReflect } from './pipeline/maintenance.js';
 import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
@@ -318,9 +317,7 @@ async function main(): Promise<void> {
   // below, before the first tick can ever invoke `maintain`.
   // eslint-disable-next-line prefer-const -- assigned exactly once below; declared early so `maintain` can close over it
   let tickLoop: TickLoop;
-  let tickCount = 0;
   const maintain = async (): Promise<void> => {
-    tickCount += 1;
     if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
     if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
     // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
@@ -329,64 +326,26 @@ async function main(): Promise<void> {
     await chatTraceRepo.pruneToRecent(200);
     await chatSessionRepo.pruneIdleSince(systemClock.now() - 7 * 24 * 3600_000);
 
-    if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
-      // Reason over the trailing window of ticks as a group; persist the note
-      // AND act on it (ADR-0053): the model proposes bounded corrections, the
-      // deterministic policy guard screens them, the loop applies what survives.
-      const recent = await tickReportRepo.recent(retention.reflectWindow);
-      const reflection = await llm.reflect({ ticks: recent.map(toTickDigest) });
-      const accepted = screenReflectionActions(reflection.actions, {
-        validSources: allSourceIds,
-        topN: { min: 3, max: 15 },
-        maxBackoffTicks: 10,
-      });
-      for (const b of accepted.backoffs) {
-        backoff.force(b.source, tickLoop.tickIndex() + 1, b.ticks);
-        log.info('reflect.backoff_forced', { source: b.source, ticks: b.ticks, reason: b.reason });
-      }
-      if (accepted.deepAnalysisTopN) {
-        await agentPolicyRepo.set(
-          { deepAnalysisTopN: accepted.deepAnalysisTopN.value, reason: accepted.deepAnalysisTopN.reason },
-          systemClock.now(),
-        );
-        log.info('reflect.deep_analysis_top_n', {
-          value: accepted.deepAnalysisTopN.value,
-          reason: accepted.deepAnalysisTopN.reason,
-        });
-      }
-      for (const r of accepted.rejected) {
-        log.warn('reflect.action_rejected', { why: r.why, action: r.action });
-      }
-      const text = reflection.advisory.trim();
-      if (text) {
-        await tickReflectionRepo.record({
-          createdAt: systemClock.now(),
-          ticksCovered: recent.length,
-          text,
-          actions: [
-            ...accepted.backoffs.map((b) => ({
-              type: 'backoff_source', reason: b.reason, source: b.source, ticks: b.ticks,
-            })),
-            ...(accepted.deepAnalysisTopN
-              ? [{
-                  type:
-                    accepted.deepAnalysisTopN.value === null
-                      ? 'clear_deep_analysis_top_n'
-                      : 'set_deep_analysis_top_n',
-                  reason: accepted.deepAnalysisTopN.reason,
-                  ...(accepted.deepAnalysisTopN.value !== null
-                    ? { value: accepted.deepAnalysisTopN.value }
-                    : {}),
-                }]
-              : []),
-          ],
-        });
-        if (retention.reflections > 0) {
-          await tickReflectionRepo.pruneToRecent(retention.reflections);
-        }
-        log.info('reflect.advisory_written', { ticksCovered: recent.length });
-      }
-    }
+    // Reason over the trailing window of ticks as a group; persist the note
+    // AND act on it (ADR-0053): the model proposes bounded corrections, the
+    // deterministic policy guard screens them, the loop applies what survives.
+    // Cadence is derived from the durable tick_reports count, not an
+    // in-memory counter, so it survives restarts/deploys (ADR-0042).
+    await maybeReflect({
+      reflect: (input) => llm.reflect(input),
+      screen: screenReflectionActions,
+      backoff,
+      agentPolicyRepo,
+      tickReflectionRepo,
+      tickReportRepo,
+      log,
+      now: () => systemClock.now(),
+      nextTickIndex: () => tickLoop.tickIndex() + 1,
+      validSources: allSourceIds,
+      reflectEveryTicks: retention.reflectEveryTicks,
+      reflectWindow: retention.reflectWindow,
+      reflectionsRetention: retention.reflections,
+    });
   };
 
   // Optional cross-process advisory lock (ADR-0047): when two processes point at
@@ -527,21 +486,6 @@ async function main(): Promise<void> {
       openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
     );
   }
-}
-
-/** Flatten a persisted tick record into the reflection prompt's digest (ADR-0042). */
-function toTickDigest(r: TickRecord): TickDigest {
-  return {
-    ranAt: r.ranAt,
-    ok: r.ok,
-    durationMs: r.durationMs,
-    extracted: r.extracted,
-    storiesUpserted: r.storiesUpserted,
-    signalsObserved: r.signalsObserved,
-    skipped: [...r.skipped, ...r.signalsSkipped],
-    failed: [...r.failed, ...r.signalsFailed],
-    error: r.error,
-  };
 }
 
 /** Build the web-search fallback for chat (ADR-0029), or null when off / unkeyed. */
