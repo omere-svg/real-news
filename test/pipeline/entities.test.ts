@@ -93,4 +93,16 @@ describe('extractEntities (ADR-0036)', () => {
     expect(e.has('0.25')).toBe(false); // sub-1 decimal (rates)
     expect(e.has('1.5')).toBe(true); // >= 1 decimal still counts
   });
+
+  it('keeps uppercase acronyms WHO and US as entities while lowercase who/us remain stopwords', () => {
+    // Uppercase WHO/US (acronyms) should be kept
+    const upper = extractEntities('WHO declares outbreak; US responds');
+    expect(upper.has('who')).toBe(true);
+    expect(upper.has('us')).toBe(true);
+
+    // Lowercase who/us (common words) should be filtered
+    const lower = extractEntities('who said this is what the us is doing');
+    expect(lower.has('who')).toBe(false);
+    expect(lower.has('us')).toBe(false);
+  });
 });

@@ -23,10 +23,12 @@ export function extractEntities(text: string): Set<string> {
   const out = new Set<string>();
 
   // Capitalized proper-noun phrases (one or more capitalized words in a row).
-  const proper = text.match(/[A-ZÀ-Þ][\wÀ-ÿ'’-]+(?:\s+[A-ZÀ-Þ][\wÀ-ÿ'’-]+)*/g) ?? [];
+  const proper = text.match(/[A-ZÀ-Þ][\wÀ-ÿ’’-]+(?:\s+[A-ZÀ-Þ][\wÀ-ÿ’’-]+)*/g) ?? [];
   for (const m of proper) {
     const norm = m.toLowerCase().trim();
-    if (norm.length >= 3 && !STOPWORDS.has(norm)) out.add(norm);
+    // Exempt all-uppercase acronyms (e.g. "US", "WHO") from stopword filter.
+    const isAllUppercase = /^[A-Z]+$/.test(m.trim());
+    if (norm.length >= 3 && (!STOPWORDS.has(norm) || isAllUppercase)) out.add(norm);
     // Also index each constituent word: cross-outlet phrasings rarely agree on
     // phrase boundaries ("Western Venezuela" vs "Venezuela", or a Title-Case
     // headline that greedily matches as ONE long phrase), and a phrase-only set
@@ -35,16 +37,23 @@ export function extractEntities(text: string): Set<string> {
     const words = norm.split(/\s+/);
     if (words.length > 1) {
       for (const w of words) {
-        if (w.length >= 3 && !STOPWORDS.has(w)) out.add(w);
+        // Check if the original word is all-uppercase before normalization.
+        const originalWords = m.trim().split(/\s+/);
+        const originalWord = originalWords.find((ow) => ow.toLowerCase() === w);
+        const wasAllUppercase = originalWord && /^[A-Z]+$/.test(originalWord);
+        if (w.length >= 3 && (!STOPWORDS.has(w) || wasAllUppercase)) out.add(w);
       }
     }
   }
 
   // Short all-caps acronyms (AI, WHO, SEC, NASA, GLM).
+  // All-uppercase tokens are exempt from stopword filtering — the uppercase
+  // pattern itself is the signal (ADR-0036). This keeps WHO, US, etc. even
+  // when their lowercase versions are stopwords.
   const acronyms = text.match(/\b[A-Z]{2,6}\b/g) ?? [];
   for (const m of acronyms) {
     const norm = m.toLowerCase();
-    if (!STOPWORDS.has(norm)) out.add(norm);
+    out.add(norm);
   }
 
   // Salient numbers — death tolls ("3,500"), magnitudes ("7.1"), quantities.
