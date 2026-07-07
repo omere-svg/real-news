@@ -3,6 +3,7 @@ import type {
   SendMessageOptions,
   TelegramTransport,
   TelegramUpdate,
+  UpdateBatch,
 } from './telegram-transport.js';
 
 /**
@@ -75,6 +76,19 @@ export function splitForTelegram(text: string, limit = TELEGRAM_TEXT_LIMIT): str
  * button taps (callback queries, ADR-0028) carried as updates with empty text
  * plus `callbackData`/`callbackQueryId`.
  */
+/** The highest raw `update_id` in a getUpdates response, or null if none — used to
+ * advance the poll offset past dropped updates too, so they can't re-deliver (ADR-0051). */
+export function maxUpdateId(raw: unknown): number | null {
+  const result = (raw as { result?: unknown[] } | null)?.result;
+  if (!Array.isArray(result)) return null;
+  let max: number | null = null;
+  for (const entry of result) {
+    const id = (entry as { update_id?: number }).update_id;
+    if (typeof id === 'number') max = max === null ? id : Math.max(max, id);
+  }
+  return max;
+}
+
 export function toUpdates(raw: unknown): TelegramUpdate[] {
   const result = (raw as { result?: unknown[] } | null)?.result;
   if (!Array.isArray(result)) return [];
@@ -159,13 +173,14 @@ export class BotApiTransport implements TelegramTransport {
     if (!res.ok) throw new Error(`telegram sendAudio ${res.status}`);
   }
 
-  async getUpdates(offset: number, timeoutSec: number): Promise<TelegramUpdate[]> {
+  async getUpdates(offset: number, timeoutSec: number): Promise<UpdateBatch> {
     const raw = await this.post('getUpdates', {
       offset,
       timeout: timeoutSec,
       allowed_updates: ['message', 'callback_query'],
     });
-    return toUpdates(raw);
+    const max = maxUpdateId(raw);
+    return { updates: toUpdates(raw), ...(max !== null ? { ackOffset: max + 1 } : {}) };
   }
 
   private async post(method: string, body: unknown): Promise<unknown> {

@@ -35,11 +35,24 @@ export interface SendMessageOptions {
   readonly buttons?: readonly InlineButton[];
 }
 
+/** A batch of long-polled updates plus how far to advance the poll offset. */
+export interface UpdateBatch {
+  /** The domain updates we handle (text messages + button taps). */
+  readonly updates: TelegramUpdate[];
+  /**
+   * One past the highest RAW `update_id` in the batch — including updates we drop
+   * (photos, stickers, voice, service messages). The offset must advance past these
+   * too, or Telegram re-delivers a dropped update forever and the loop busy-hammers
+   * the API into a 429/ban (ADR-0051). Undefined when the batch was empty.
+   */
+  readonly ackOffset?: number;
+}
+
 export interface TelegramTransport {
   sendMessage(chatId: number, text: string, opts?: SendMessageOptions): Promise<void>;
   sendAudio(chatId: number, audio: Buffer, opts?: SendAudioOptions): Promise<void>;
   /** Long-poll updates after `offset`, waiting up to `timeoutSec` server-side. */
-  getUpdates(offset: number, timeoutSec: number): Promise<TelegramUpdate[]>;
+  getUpdates(offset: number, timeoutSec: number): Promise<UpdateBatch>;
   /** Acknowledge a button tap so Telegram stops the client's loading spinner. */
   answerCallback(callbackQueryId: string): Promise<void>;
 }

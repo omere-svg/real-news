@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { pollOnce } from '../../src/telegram/poll.js';
 import type { TelegramTransport, TelegramUpdate } from '../../src/telegram/telegram-transport.js';
 
-function transportReturning(updates: TelegramUpdate[]): TelegramTransport {
+function transportReturning(updates: TelegramUpdate[], ackOffset?: number): TelegramTransport {
   return {
     sendMessage: async () => {},
     sendAudio: async () => {},
-    getUpdates: async () => updates,
+    getUpdates: async () => (ackOffset !== undefined ? { updates, ackOffset } : { updates }),
     answerCallback: async () => {},
   };
 }
@@ -30,6 +30,14 @@ describe('pollOnce', () => {
     const bot = { handle: async () => {} };
     const next = await pollOnce(transportReturning([]), bot, 7, 30);
     expect(next).toBe(7);
+  });
+
+  it('advances past a dropped (non-text) update via ackOffset — no busy-loop (ADR-0051)', async () => {
+    // A sticker at update_id 7 maps to no domain update, but ackOffset=8 must still
+    // advance the offset so Telegram does not re-deliver it forever.
+    const bot = { handle: async () => {} };
+    const next = await pollOnce(transportReturning([], 8), bot, 7, 30);
+    expect(next).toBe(8); // moved past the dropped update, not stuck at 7
   });
 
   it('does not let one failing handler stop the batch', async () => {

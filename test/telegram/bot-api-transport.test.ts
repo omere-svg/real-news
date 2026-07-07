@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   toInlineKeyboard,
   toUpdates,
+  maxUpdateId,
   splitForTelegram,
 } from '../../src/telegram/bot-api-transport.js';
 
@@ -86,5 +87,22 @@ describe('toUpdates', () => {
   it('tolerates a missing or empty result', () => {
     expect(toUpdates({})).toEqual([]);
     expect(toUpdates({ result: [] })).toEqual([]);
+  });
+});
+
+describe('maxUpdateId (ADR-0051)', () => {
+  it('returns the highest raw update_id incl. updates that map to nothing', () => {
+    // update 6 is a sticker (no text) — dropped by toUpdates but must still count.
+    const raw = { result: [
+      { update_id: 5, message: { chat: { id: 1 }, text: 'hi' } },
+      { update_id: 6, message: { chat: { id: 1 }, sticker: {} } },
+    ] };
+    expect(toUpdates(raw)).toHaveLength(1); // only the text one maps
+    expect(maxUpdateId(raw)).toBe(6);       // but the offset must advance past 6
+  });
+
+  it('is null on an empty or malformed batch', () => {
+    expect(maxUpdateId({ result: [] })).toBeNull();
+    expect(maxUpdateId({})).toBeNull();
   });
 });

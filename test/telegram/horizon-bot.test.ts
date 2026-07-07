@@ -46,8 +46,8 @@ class FakeTransport implements TelegramTransport {
   async sendAudio(chatId: number, audio: Buffer, opts?: SendAudioOptions): Promise<void> {
     this.audios.push({ chatId, audio, opts });
   }
-  async getUpdates(): Promise<TelegramUpdate[]> {
-    return [];
+  async getUpdates(): Promise<{ updates: TelegramUpdate[] }> {
+    return { updates: [] };
   }
   async answerCallback(id: string): Promise<void> {
     this.acked.push(id);

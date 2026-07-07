@@ -20,8 +20,10 @@ export async function pollOnce(
   onError: (err: unknown) => void = (err) =>
     console.error('[telegram] handler failed:', err),
 ): Promise<number> {
-  const updates = await transport.getUpdates(offset, timeoutSec);
-  let next = offset;
+  const { updates, ackOffset } = await transport.getUpdates(offset, timeoutSec);
+  // Advance past every RAW update in the batch (ackOffset), not just the ones we
+  // mapped — a dropped sticker/photo would otherwise re-deliver forever (ADR-0051).
+  let next = ackOffset ?? offset;
   for (const update of updates) {
     next = Math.max(next, update.updateId + 1);
     try {

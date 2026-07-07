@@ -46,8 +46,8 @@ class CapturingTransport implements TelegramTransport {
     writeFileSync(AUDIO_OUT, audio);
     console.log(`\n  ↳ AUDIO: ${audio.length} bytes → ${AUDIO_OUT} (caption: ${opts?.caption ?? '—'})`);
   }
-  async getUpdates(): Promise<TelegramUpdate[]> {
-    return [];
+  async getUpdates(): Promise<{ updates: TelegramUpdate[] }> {
+    return { updates: [] };
   }
 }
 
