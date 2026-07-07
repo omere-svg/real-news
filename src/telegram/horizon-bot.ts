@@ -138,29 +138,45 @@ export interface HorizonBotDeps {
 }
 
 const LIMIT_MSG = {
-  commands: 'Daily command limit reached. Try again tomorrow (UTC).',
-  podcast: 'Daily podcast limit reached. Try again tomorrow (UTC).',
-  global: 'The podcast service is busy right now. Please try again later.',
-  globalCommands: 'Daily service limit reached across all users. Please try again tomorrow (UTC).',
+  commands:
+    'You’ve hit today’s limit for briefs and questions — it resets at midnight UTC. ' +
+    'Menus and preferences still work in the meantime.',
+  podcast:
+    'You’ve used today’s podcast allowance — it resets at midnight UTC. A text brief is ' +
+    'still free anytime: /brief.',
+  global:
+    'The podcast service is busy right now (lots of listeners). Please try again shortly — ' +
+    'a text brief works instantly: /brief.',
+  globalCommands:
+    'Horizon has reached its daily total across all readers — it resets at midnight UTC. ' +
+    'Thanks for your patience.',
 } as const;
 
 /** Followable topics, newest-vocabulary order, minus the `Other` catch-all. */
 const FOLLOWABLE_TOPICS = TOPICS.filter((t) => t !== 'Other').join(' · ');
 
 const HELP = [
-  '🌅 Horizon — your background news editor.',
+  '🌅 Horizon — your world, already read.',
   '',
-  'What I can do:',
-  '📰 Brief — a quick rundown, sized to your time',
-  '🎧 Podcast — a narrated audio episode',
-  '🔎 Topic deep-dive — zoom in on one subject',
-  '🎛 Set your preferences — favorite topics & default brief length',
-  '🧠 Remember you — keep personal context in mind',
+  'I read thousands of items from official news APIs every few minutes and keep only ' +
+    'what matters — scored, de-duplicated, and explained. Ask in plain English, or use a command:',
   '',
-  'Just ask in plain English — e.g. “give me a 5-minute brief on AI”, or “remember I like AI and want 5-minute briefs”.',
-  '…or tap a button below 👇',
+  '📰  A brief, sized to your time',
+  '      “give me a 5-minute brief on AI”  ·  /brief 5',
+  '🔎  A deep dive on one topic',
+  '      “what’s happening in Israel?”  ·  /outline Israel',
+  '🎧  A narrated podcast episode',
+  '      “make me a 3-minute podcast”  ·  /podcast 3',
+  '💬  Ask about the news',
+  '      “why did markets drop today?”',
+  '🎛  Tune it to you',
+  '      “more AI, less sports, keep it short”  ·  /prefs',
+  '🧠  Remember you',
+  '      “remember I’m a backend dev in Tel Aviv”  ·  /forget',
   '',
-  `Subjects I follow: ${FOLLOWABLE_TOPICS}`,
+  `I follow: ${FOLLOWABLE_TOPICS}`,
+  '',
+  'Tap a button to start 👇',
 ].join('\n');
 
 export class HorizonBot {
@@ -420,7 +436,8 @@ export class HorizonBot {
         if (!topic) {
           return transport.sendMessage(
             chatId,
-            `Unknown topic. Try one of: ${TOPICS.join(', ')}.`,
+            `I don’t follow “${command.topic}”. Pick one of: ${TOPICS.join(', ')} — ` +
+              `e.g. /outline AI. Or just tap 🔎 By topic.`,
           );
         }
         const req = await this.request(chatId, command.minutes);
