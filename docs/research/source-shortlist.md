@@ -6,7 +6,7 @@
 > **per-bloc Region plan** and several entries here (incl. **USGS Earthquakes**) are **PARKed /
 > deferred** — kept below for reference only. For what to build, read ADR-0021.
 
-Synthesis of 41 probed candidates (one spec sheet each in [`source-sheets/`](./source-sheets/)).
+Synthesis of 41 probed candidates (per-source spec sheets have been archived out of the repo).
 Probed read-only, 2026-06-17. Verdicts below are the *research* verdicts; the *build* set is ADR-0021's.
 Probe outcomes: 32 LIVE-CONFIRMED · 5 DOCS-ONLY · 4 FAILED.
 
