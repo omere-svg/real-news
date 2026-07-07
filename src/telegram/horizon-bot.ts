@@ -37,6 +37,16 @@ import { normalizeMinutes } from '../presentation/minutes.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import { canonical } from '../domain/vocab.js';
 
+/** 'H:MM'/'HH:MM' (24h) → canonical 'HH:MM', or null when unparseable. */
+function normalizeHHMM(raw: string): string | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
 /**
  * The slice of the Story store the chat feature reads for grounding (ADR-0029).
  * `semanticSearch` is optional: when it AND an `embedder` are wired, chat grounds
@@ -153,6 +163,8 @@ const HELP = [
   '      “more AI, less sports, keep it short”  ·  /prefs',
   '🧠  Remember you',
   '      “remember I’m a backend dev in Tel Aviv”  ·  /forget',
+  '☀️  A daily brief, on your schedule',
+  '      /subscribe 08:00 (UTC)  ·  /subscribe off',
   '',
   `I follow: ${FOLLOWABLE_TOPICS}`,
   '',
@@ -415,7 +427,69 @@ export class HorizonBot {
 
       case 'chat':
         return this.handleChat(chatId, command.text);
+
+      case 'subscribe':
+        return this.handleSubscribe(chatId, command);
     }
+  }
+
+  /** Manage the scheduled daily brief subscription (ADR-0053). */
+  private async handleSubscribe(
+    chatId: number,
+    command: { time?: string; off?: boolean },
+  ): Promise<void> {
+    const { transport, prefs } = this.deps;
+    if (command.off) {
+      await prefs.set(chatId, { briefAt: undefined, briefLastSentDay: undefined });
+      return transport.sendMessage(chatId, 'Scheduled brief off. /subscribe HH:MM to restart.');
+    }
+    if (command.time === undefined) {
+      const current = (await prefs.get(chatId))?.briefAt;
+      return transport.sendMessage(
+        chatId,
+        current
+          ? `Your daily brief is scheduled at ${current} UTC. /subscribe off to stop.`
+          : 'No scheduled brief yet. /subscribe 08:00 (UTC) gets you one every morning.',
+      );
+    }
+    const time = normalizeHHMM(command.time);
+    if (!time) {
+      return transport.sendMessage(
+        chatId,
+        `“${command.time}” isn't a time I understand — use 24h HH:MM (UTC), e.g. /subscribe 06:30.`,
+      );
+    }
+    await prefs.set(chatId, { briefAt: time, briefLastSentDay: undefined });
+    return transport.sendMessage(
+      chatId,
+      `Done — your personalized brief arrives daily at ${time} UTC. /subscribe off to stop.`,
+    );
+  }
+
+  /**
+   * Deliver due scheduled briefs (ADR-0053). Called by the composition root on
+   * a timer; idempotent per UTC day (`markBriefSent` before the send, so a
+   * mid-send crash skips rather than double-sends). Per-chat failures are
+   * isolated. Deterministic cache reads — zero model spend.
+   */
+  async deliverScheduledBriefs(): Promise<number> {
+    const now = new Date(this.deps.clock.now());
+    const hhmm = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+    const utcDay = now.toISOString().slice(0, 10);
+    const due = await this.deps.prefs.dueBriefs(hhmm, utcDay);
+    let sent = 0;
+    for (const chatId of due) {
+      try {
+        await this.deps.prefs.markBriefSent(chatId, utcDay);
+        const req = await this.request(chatId, undefined);
+        const brief = await this.deps.query.textBrief(req);
+        await this.sendContent(chatId, `☀️ Your scheduled brief\n\n${brief}`);
+        sent += 1;
+      } catch (err) {
+        console.warn(`[telegram] scheduled brief for ${chatId} failed:`, err);
+      }
+    }
+    return sent;
   }
 
   /**

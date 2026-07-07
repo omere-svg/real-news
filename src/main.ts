@@ -685,6 +685,18 @@ function startTelegramBot(
   };
   void loop();
   console.log('[telegram] bot polling for updates.');
+
+  // Scheduled personalized briefs (ADR-0053): a minute-cadence check delivers
+  // each subscribed chat its brief at its chosen UTC time — deterministic cache
+  // reads, zero model spend, idempotent per day.
+  setInterval(() => {
+    void bot
+      .deliverScheduledBriefs()
+      .then((sent) => {
+        if (sent > 0) console.log(`[telegram] delivered ${sent} scheduled brief(s).`);
+      })
+      .catch((err) => console.error('[telegram] scheduled briefs failed:', err));
+  }, 60_000);
 }
 
 main().catch((err) => {

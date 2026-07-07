@@ -447,6 +447,51 @@ describe('HorizonBot', () => {
     });
   });
 
+  // --- Scheduled daily briefs (ADR-0053) ---
+
+  describe('scheduled briefs', () => {
+    it('/subscribe HH:MM saves the schedule; /subscribe off clears it', async () => {
+      const { bot, transport, prefs } = await build();
+
+      await bot.handle(update(5, '/subscribe 8:30'));
+      expect((await prefs.get(5))?.briefAt).toBe('08:30'); // normalized
+      expect(transport.messages.at(-1)?.text).toContain('08:30 UTC');
+
+      await bot.handle(update(5, '/subscribe off'));
+      expect((await prefs.get(5))?.briefAt).toBeUndefined();
+    });
+
+    it('rejects a nonsense time with usage help', async () => {
+      const { bot, transport, prefs } = await build();
+      await bot.handle(update(5, '/subscribe 25:99'));
+      expect((await prefs.get(5))?.briefAt).toBeUndefined();
+      expect(transport.messages.at(-1)?.text).toContain('HH:MM');
+    });
+
+    it('delivers due briefs once per UTC day, personalized per chat', async () => {
+      const { bot, transport, prefs, clock } = await build();
+      // 09:00 UTC on day one.
+      clock.advance(Date.UTC(2026, 6, 7, 9, 0));
+      await prefs.set(5, { briefAt: '08:00', defaultMinutes: 7 });
+      await prefs.set(6, { briefAt: '23:00' }); // not due within this test
+
+      const sent = await bot.deliverScheduledBriefs();
+
+      expect(sent).toBe(1);
+      expect(transport.messages.at(-1)?.chatId).toBe(5);
+      expect(transport.messages.at(-1)?.text).toContain('☀️ Your scheduled brief');
+      expect(transport.messages.at(-1)?.text).toContain('BRIEF[7]'); // chat 5's own minutes
+
+      // Same day, later check: idempotent — nothing re-sent.
+      clock.advance(3600_000);
+      expect(await bot.deliverScheduledBriefs()).toBe(0);
+
+      // Next day it fires again.
+      clock.advance(24 * 3600_000);
+      expect(await bot.deliverScheduledBriefs()).toBe(1);
+    });
+  });
+
   // --- Chat about the news (ADR-0029) ---
 
   describe('chat mode', () => {

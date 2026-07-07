@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, lte, ne, or } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { chatPreferences } from './schema.js';
 import type { Topic } from '../domain/types.js';
@@ -23,6 +23,10 @@ export interface ChatPreferences {
   readonly prev?: PreviousPreferences;
   /** Free-text personal context injected into the LLM content paths (ADR-0028). */
   readonly memory?: string;
+  /** Scheduled daily brief, 'HH:MM' UTC (ADR-0053); unset ≡ not subscribed. */
+  readonly briefAt?: string;
+  /** UTC day ('YYYY-MM-DD') the scheduled brief last went out (idempotence). */
+  readonly briefLastSentDay?: string;
 }
 
 /**
@@ -40,6 +44,13 @@ export interface ChatPreferencesRepo {
   set(chatId: number, patch: ChatPreferencesPatch): Promise<ChatPreferences>;
   /** Forget a chat's preferences so it reverts to the config defaults. */
   clear(chatId: number): Promise<void>;
+  /**
+   * Chats whose scheduled brief is due (ADR-0053): subscribed, `briefAt` at or
+   * before `hhmm` (UTC), and not already delivered on `utcDay`.
+   */
+  dueBriefs(hhmm: string, utcDay: string): Promise<number[]>;
+  /** Stamp today's delivery so a restart can't double-send (ADR-0053). */
+  markBriefSent(chatId: number, utcDay: string): Promise<void>;
 }
 
 type Row = typeof chatPreferences.$inferSelect;
@@ -53,6 +64,8 @@ function toDomain(row: Row): ChatPreferences {
     ...(row.topicWeights ? { topicWeights: row.topicWeights } : {}),
     ...(row.prev ? { prev: row.prev } : {}),
     ...(row.memory ? { memory: row.memory } : {}),
+    ...(row.briefAt ? { briefAt: row.briefAt } : {}),
+    ...(row.briefLastSentDay ? { briefLastSentDay: row.briefLastSentDay } : {}),
   };
 }
 
@@ -84,6 +97,8 @@ export class DrizzleChatPreferencesRepo implements ChatPreferencesRepo {
       topicWeights: field('topicWeights'),
       prev: field('prev'),
       memory: field('memory'),
+      briefAt: field('briefAt'),
+      briefLastSentDay: field('briefLastSentDay'),
     };
     await this.db
       .insert(chatPreferences)
@@ -96,6 +111,8 @@ export class DrizzleChatPreferencesRepo implements ChatPreferencesRepo {
           topicWeights: values.topicWeights,
           prev: values.prev,
           memory: values.memory,
+          briefAt: values.briefAt,
+          briefLastSentDay: values.briefLastSentDay,
         },
       });
     // Read back so the returned shape exactly matches storage (drops cleared fields).
@@ -105,6 +122,30 @@ export class DrizzleChatPreferencesRepo implements ChatPreferencesRepo {
   async clear(chatId: number): Promise<void> {
     await this.db
       .delete(chatPreferences)
+      .where(eq(chatPreferences.chatId, chatId));
+  }
+
+  async dueBriefs(hhmm: string, utcDay: string): Promise<number[]> {
+    const rows = await this.db
+      .select({ chatId: chatPreferences.chatId })
+      .from(chatPreferences)
+      .where(
+        and(
+          isNotNull(chatPreferences.briefAt),
+          lte(chatPreferences.briefAt, hhmm),
+          or(
+            isNull(chatPreferences.briefLastSentDay),
+            ne(chatPreferences.briefLastSentDay, utcDay),
+          ),
+        ),
+      );
+    return rows.map((r) => r.chatId);
+  }
+
+  async markBriefSent(chatId: number, utcDay: string): Promise<void> {
+    await this.db
+      .update(chatPreferences)
+      .set({ briefLastSentDay: utcDay })
       .where(eq(chatPreferences.chatId, chatId));
   }
 }

@@ -24,6 +24,8 @@ export type Command =
   | { kind: 'remember'; text: string }
   | { kind: 'forget' }
   | { kind: 'chat'; text: string }
+  /** Scheduled daily brief (ADR-0053): `/subscribe 08:00`, `/subscribe off`, bare shows status. */
+  | { kind: 'subscribe'; time?: string; off?: boolean }
   | { kind: 'unknown'; text: string };
 
 const PREFS_FIELDS: readonly PrefsField[] = ['topics', 'minutes'];
@@ -95,6 +97,14 @@ export function parseCommand(text: string): Command {
     case 'chat':
     case 'ask':
       return { kind: 'chat', text: args.join(' ') };
+    case 'subscribe': {
+      const arg = args[0]?.toLowerCase();
+      if (arg === undefined) return { kind: 'subscribe' };
+      if (arg === 'off' || arg === 'stop') return { kind: 'subscribe', off: true };
+      return { kind: 'subscribe', time: arg };
+    }
+    case 'unsubscribe':
+      return { kind: 'subscribe', off: true };
     default:
       return { kind: 'unknown', text };
   }

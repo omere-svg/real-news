@@ -103,6 +103,11 @@ export const chatPreferences = sqliteTable('chat_preferences', {
   // Free-text "things that matter to me" injected into the LLM content paths
   // (podcast narration, chat) on every request (ADR-0028); absent ≡ none.
   memory: text('memory'),
+  // Scheduled daily brief (ADR-0053): 'HH:MM' UTC, null ≡ not subscribed.
+  briefAt: text('brief_at'),
+  // The UTC day ('YYYY-MM-DD') the scheduled brief was last delivered — the
+  // idempotence marker so a restart can't double-send today's brief.
+  briefLastSentDay: text('brief_last_sent_day'),
 });
 
 /**
