@@ -67,7 +67,7 @@ Cross-tick, cross-outlet identity + impact-first scoring: deciding that N differ
 - [x] **Cross-agent / sub-agents** — used in the *build* (parallel review/QA agents; see `reports/CODE-REVIEW.md`), deliberately not in the runtime product.
 
 ## 10. Evidence index  *(curated)*
-- **Runnable test suite (strongest):** `npm test` — the printed count is the proof (576+ green, ~3s, real migrations, adversarial injection + scripted agent-trajectory tests included). `npm run verify:bot` drives the real bot end-to-end.
+- **Runnable test suite (strongest):** `npm test` — the printed count is the proof (582 green, ~3s, real migrations, adversarial injection + scripted agent-trajectory tests included). `npm run verify:bot` drives the real bot end-to-end.
 - **Live URLs:** https://horizon-news.duckdns.org — ranked stories + "Why this score?" · `/dashboard` — autonomous tick health + reflections **and the actions they imposed** · `/api/chat-traces` — the chat agent's tool trajectories · `/api/stats` — the accumulating corpus + today's token spend, live.
 - **Try the agent:** https://t.me/OmerNewsBot — ask a question, then open `/api/chat-traces` to see how it answered.
 - **Repo:** https://github.com/omere-svg/real-news — start at `src/telegram/chat-agent.ts` (the tool loop), `src/pipeline/reflection-policy.ts` (reflection→action), `src/llm/fence.ts` + `test/llm/reasoner-injection.test.ts` (injection defense), `docs/adr/` (54 ADRs).
