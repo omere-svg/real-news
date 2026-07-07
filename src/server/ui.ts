@@ -1,7 +1,7 @@
-import { TOPICS } from '../domain/types.js';
 import type { TickRecord } from '../db/tick-report-repo.js';
 import type { TickReflection } from '../db/tick-reflection-repo.js';
 import { COMPONENT_LABELS } from '../presentation/score-explanation.js';
+import { ago, breakdownHtml, escHtml, fmtDuration, topicChips } from './ui-view.js';
 
 /** Defaults the viewer seeds its controls from (ADR-0015). */
 export interface UiDefaults {
@@ -14,17 +14,6 @@ export interface UiDefaults {
   readonly authEnabled?: boolean;
   /** Bot username (no `@`) for a one-tap `t.me` deep link; absent ⇒ show the code only. */
   readonly botUsername?: string;
-}
-
-/** Render the topic filter as a group of pill toggles, pre-selecting defaults. */
-function topicChips(checked: readonly string[]): string {
-  const set = new Set(checked);
-  return TOPICS.map(
-    (t) =>
-      `<label class="chip" data-topic="${t}"><input type="checkbox" name="topic" value="${t}"${
-        set.has(t) ? ' checked' : ''
-      } /><span class="dot"></span>${t}</label>`,
-  ).join('');
 }
 
 /**
@@ -334,7 +323,10 @@ const HINTS = {
 const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 let format = 'stories';
 
-function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// Single source of truth with the server (ui-view.ts, unit-tested there) —
+// injected verbatim so the browser runs the exact same escaping code.
+const escHtml = ${escHtml.toString()};
+function esc(s){ return escHtml(s); }
 // Only allow http(s) links; a feed-controlled url must never reach an href raw
 // (a " breaks out of the attribute; a javascript: scheme runs on click). Returns
 // a safe absolute url or null (drop the link, keep the title).
@@ -468,25 +460,10 @@ if (CFG.authEnabled) {
 }
 
 // ---- "Why this score?" — persisted breakdown as labelled bars (ADR-0037). ----
+// breakdownHtml is injected verbatim from ui-view.ts (unit-tested there) — one
+// implementation, shipped unchanged to the browser (same pattern as escHtml above).
 const SCORE_LABELS = ${JSON.stringify(COMPONENT_LABELS)};
-function pct(v){ return Math.round(Number(v)*100) + '%'; }
-function breakdownHtml(b, open){
-  if(!b) return '';
-  const bars = (b.components||[]).map(c =>
-    '<div class="lbl">'+esc(SCORE_LABELS[c.key]||c.key)+'</div>'+
-    '<div class="track"><div class="fill" style="width:'+pct(c.value)+'"></div></div>'+
-    '<div class="val">'+pct(c.value)+'</div>'
-  ).join('');
-  const s = b.signals||{};
-  const recency = b.recencyFactor!=null ? pct(b.recencyFactor) : '100%';
-  const nudge = Math.abs(b.signalNudge) > 0.05 ? ' · attention/macro nudge '+(b.signalNudge>=0?'+':'')+Number(b.signalNudge).toFixed(1) : '';
-  // Corroboration only when it says something ("0 sources" is noise, not a fact).
-  const cor = Number(s.corroboration) || 0;
-  const facts = (cor >= 1 ? cor+' source'+(cor===1?'':'s')+' · ' : '')+'recency '+recency+nudge;
-  return '<details class="why-score"'+(open?' open':'')+'><summary>Why this score?</summary>'+
-    '<div class="bars">'+bars+'</div>'+
-    '<div class="meta">'+esc(facts)+'</div></details>';
-}
+const breakdownHtml = ${breakdownHtml.toString()};
 
 function skeletons(n){ let h=''; for(let i=0;i<n;i++) h+='<div class="skel"></div>'; return h; }
 
@@ -587,7 +564,11 @@ async function loadStories(topics) {
     const params = new URLSearchParams({ limit: '50' });
     for (const t of topics) params.append('topic', t);
     const [res] = await Promise.all([fetch('/api/stories?' + params), getLastTickAt()]);
-    stories = (await res.json()).stories;
+    const body = await res.json();
+    // A bad/error payload (e.g. a non-2xx JSON error body with no \`.stories\`) must
+    // fall through to the empty state below, never leave the skeletons spinning
+    // forever — the shape check has to live inside this try, not after it.
+    stories = Array.isArray(body.stories) ? body.stories : [];
   } catch (e) {
     list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load stories</div>Check your connection and try again.</div>';
     return;
@@ -610,7 +591,7 @@ async function loadStories(topics) {
       '<span class="scorepill">'+s.significance.toFixed(1)+'<span class="max">/10</span></span></div>'+
       '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic)+'</span>'+tags+'</div>'+
       (s.whyItMatters ? '<p class="why">'+esc(s.whyItMatters)+'</p>' : '')+
-      breakdownHtml(s.scoreBreakdown, i === 0)+
+      breakdownHtml(s.scoreBreakdown, i === 0, SCORE_LABELS)+
       '<div class="meta">'+s.memberRefs.length+' source'+(s.memberRefs.length===1?'':'s')+': '+esc(sources)+'</div></div>';
   }).join('');
 }
@@ -686,26 +667,6 @@ function editorsNote(stories){
 
 // --- Observability dashboard (ADR-0033) ---
 
-function escHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => {
-    switch (c) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      default: return '&quot;';
-    }
-  });
-}
-
-/** Short "Nm ago" / "Nh ago" age from a past epoch-ms to a reference now. */
-function ago(thenMs: number, nowMs: number): string {
-  const s = Math.max(0, Math.round((nowMs - thenMs) / 1000));
-  if (s < 90) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 90) return `${m}m ago`;
-  return `${Math.round(m / 60)}h ago`;
-}
-
 /**
  * Expected worker cadence (~one tick). A last tick older than ~2× this means the
  * worker is presumably stuck or dead — the only tick-timing state that is truly
@@ -713,14 +674,6 @@ function ago(thenMs: number, nowMs: number): string {
  * alarm.
  */
 const EXPECTED_TICK_MS = 25 * 60_000;
-
-/** Humanize a millisecond duration: "480ms" / "12.4s" / "4m 08s". */
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
-}
 
 /**
  * The server-rendered observability dashboard (ADR-0033): a health banner plus a

@@ -217,7 +217,7 @@ describe('HTTP API', () => {
     expect(html).toContain('function renderScript');
     // Score rationale is surfaced always-visible + the top breakdown auto-opens.
     expect(html).toContain('scoreTags');
-    expect(html).toContain('breakdownHtml(s.scoreBreakdown, i === 0)');
+    expect(html).toContain('breakdownHtml(s.scoreBreakdown, i === 0, SCORE_LABELS)');
     // Backend is made legible (sources / zero-scraping / live freshness).
     expect(html).toContain('zero scraping');
     expect(html).toContain('loadFreshness');
