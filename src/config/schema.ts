@@ -30,9 +30,9 @@ export const configSchema = z.object({
 
   reasoner: z.object({
     /** Cheap high-volume tier (ADR-0006/0012). */
-    cheapModel: z.string().default('gpt-4o-mini'),
+    cheapModel: z.string().default('gpt-5.4-mini'),
     /** Expensive analysis tier. */
-    deepModel: z.string().default('gpt-4o'),
+    deepModel: z.string().default('gpt-5.5'),
     /** Only the top-N most significant Clusters get the deep tier. */
     deepAnalysisTopN: z.number().int().positive().default(10),
     /**

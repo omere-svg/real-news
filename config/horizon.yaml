@@ -117,10 +117,10 @@ sources:
     weight: 0.5
     maxItems: 1
 
-# The Reasoner tiers (ADR-0006/0012). OpenAI models — change to any your key can access.
+# The Reasoner tiers (ADR-0006/0012).
 reasoner:
-  cheapModel: gpt-4o-mini
-  deepModel: gpt-4o
+  cheapModel: gpt-5.4-mini
+  deepModel: gpt-5.5
   deepAnalysisTopN: 10
   backfillMaxOnBoot: 500   # heal more of the cache on boot (ADR-0038); now parallel (ADR-0039)
   backfillPerTick: 12      # steady-state: heal summary/why-null stories each tick, parallel (ADR-0038/0039)
