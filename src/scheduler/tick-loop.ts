@@ -149,8 +149,12 @@ export class TickLoop {
         signalsSkipped: [],
         signalsFailed: [],
       });
-      // The lock was never acquired, so there's nothing to release and no
-      // maintenance to run for a tick that made zero attempt.
+      // An acquire-throw is not a lock-skip (that's `acquire()` resolving
+      // false) — it's a failed attempt, so maintain still runs (ADR-0042).
+      await deps.maintain().catch((err) => deps.log.error('maintain.failed', { err }));
+      // The lock was never acquired, so there's nothing to release. The
+      // backoff clock does not advance here either: no sources were
+      // attempted this tick, unlike the failed-run path below.
       return;
     }
     if (!acquired) {

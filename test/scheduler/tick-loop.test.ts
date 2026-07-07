@@ -261,7 +261,8 @@ describe('TickLoop', () => {
       return true;
     });
     const release = vi.fn().mockResolvedValue(undefined);
-    const { deps, recorded, log } = makeDeps({ lock: { acquire, release } });
+    const maintain = vi.fn().mockResolvedValue(undefined);
+    const { deps, recorded, log } = makeDeps({ lock: { acquire, release }, maintain });
     const loop = new TickLoop(deps);
 
     // The first tick's lock.acquire rejects — runTick must not itself reject
@@ -270,6 +271,9 @@ describe('TickLoop', () => {
     expect(log.events('error')).toContain('tick.failed');
     expect(recorded).toHaveLength(1);
     expect(recorded[0]).toMatchObject({ ok: false, error: expect.stringMatching(/DB connection reset/) });
+    // An acquire-throw is not a lock-skip: maintain still runs, per the
+    // class's maintain-always-runs invariant (ADR-0042).
+    expect(maintain).toHaveBeenCalledTimes(1);
 
     // The loop is still alive: the next tick acquires the lock and runs normally.
     await loop.runTick();
