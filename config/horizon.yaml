@@ -203,10 +203,11 @@ http:
   fetchTimeoutMs: 10000
   maxResponseBytes: 5000000
 
-# Web surface (ADR-0040). Set secureCookie:true once the site is served over HTTPS
-# so the login session cookie is never sent over plain http.
+# Web surface (ADR-0040). secureCookie:true because the site is served over HTTPS
+# (Caddy/Let's Encrypt) — the login session cookie is never sent over plain http.
+# Set false only for plain-http local development (or export WEB_SECURE_COOKIE=false).
 web:
-  secureCookie: false
+  secureCookie: true
 
 # Presentation / query layer (ADR-0013/0014/0015). Attention budgeting + preferences.
 presentation:
@@ -215,9 +216,10 @@ presentation:
   maxMinutes: 60            # hard cap on requested minutes (cost guard, ADR-0023)
   maxPodcastMinutes: 20     # tighter cap for podcasts (TTS cost guard) — clamps the audio path
   webPodcastEnabled: true   # expose the LLM-backed /api/podcast on the web (ADR-0023/0050).
-                            # Bounded per call by maxPodcastMinutes; script-only (no web TTS).
-                            # NOTE: the web path has no per-user quota — fine for the demo; add a
-                            # global web cap before long-term public exposure.
+                            # Bounded per call by maxPodcastMinutes; script-only (no web TTS);
+                            # draws from the same global daily podcast budget as the bot
+                            # (telegram.limits.globalPodcastPerDay, ADR-0052) — every cost
+                            # vector shares one hard ceiling.
   # Readability floor (ADR-0024): prefer few, fully-explained stories over many headlines.
   minDepth: full           # headline | brief | full — minimum depth every story gets
   minStories: 3            # always show at least this many, even at /brief 1
