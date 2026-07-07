@@ -57,7 +57,7 @@ import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
 import { DrizzleChatPreferencesRepo } from './db/chat-preferences-repo.js';
 import type { ChatPreferencesRepo } from './db/chat-preferences-repo.js';
-import { DrizzleUsageRepo } from './db/usage-repo.js';
+import { DrizzleUsageRepo, type UsageRepo } from './db/usage-repo.js';
 import { DrizzleWebAuthRepo } from './db/web-auth-repo.js';
 import type { WebAuthRepo } from './db/web-auth-repo.js';
 import { FixedWindowLimiter } from './telegram/rate-limiter.js';
@@ -433,6 +433,9 @@ async function main(): Promise<void> {
   // Bot username (no `@`) powers the one-tap `t.me/<bot>?start=…` deep link on
   // the web login. Optional: without it the web shows the pairing code to type.
   const botUsername = process.env.TELEGRAM_BOT_USERNAME;
+  // One usage store shared by the web podcast cap and the bot's quotas, so both
+  // surfaces draw down the SAME daily podcast budget (ADR-0052).
+  const usage = new DrizzleUsageRepo(db);
   const app = createApp(
     storyRepo,
     queryEngine,
@@ -441,6 +444,8 @@ async function main(): Promise<void> {
       maxMinutes: config.presentation.maxMinutes,
       maxPodcastMinutes: config.presentation.maxPodcastMinutes,
       podcastEnabled: config.presentation.webPodcastEnabled,
+      usage,
+      globalPodcastPerDay: config.telegram.limits.globalPodcastPerDay,
     },
     tickReportRepo,
     {
@@ -457,7 +462,7 @@ async function main(): Promise<void> {
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);
 
   if (config.telegram.enabled) {
-    startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder);
+    startTelegramBot(config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage);
   }
 }
 
@@ -501,6 +506,7 @@ function startTelegramBot(
   prefs: ChatPreferencesRepo,
   webAuth: WebAuthRepo,
   embedder: Embedder,
+  usage: UsageRepo,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -540,7 +546,7 @@ function startTelegramBot(
     prefs,
     // Lets a `t.me/<bot>?start=link_<code>` deep link connect the web app (ADR-0040).
     webLink: webAuth,
-    usage: new DrizzleUsageRepo(db),
+    usage,
     clock: systemClock,
     limiter: new FixedWindowLimiter(tg.limits.perMinute, 60_000),
     limits: tg.limits,

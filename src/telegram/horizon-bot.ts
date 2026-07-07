@@ -8,7 +8,7 @@ import type {
   PreviousPreferences,
 } from '../db/chat-preferences-repo.js';
 import type { StoryRepo } from '../db/story-repo.js';
-import type { UsageRepo } from '../db/usage-repo.js';
+import { utcDay, type UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -940,11 +940,6 @@ function callbackCommand(data: string): Command | null {
     return topic ? { kind: 'outline', topic } : null;
   }
   return null;
-}
-
-/** The UTC day key (YYYY-MM-DD) for a quota bucket. */
-function utcDay(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
 }
 
 /**

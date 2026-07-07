@@ -8,6 +8,12 @@ import { usage } from './schema.js';
  * the process-wide `global:podcast`. Persisted so a restart can't reset a
  * chat's daily budget.
  */
+/** The UTC day key (YYYY-MM-DD) for a quota bucket — shared by every surface that
+ * charges the daily counters (the bot and the web podcast) so they agree (ADR-0052). */
+export function utcDay(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
 export interface UsageRepo {
   /** Atomically add 1 to `(key, day)` and return the resulting count. */
   incrementAndGet(key: string, day: string): Promise<number>;

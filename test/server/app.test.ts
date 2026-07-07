@@ -4,6 +4,7 @@ import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
 import { DrizzleTickReportRepo } from '../../src/db/tick-report-repo.js';
 import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 import { DrizzleWebAuthRepo } from '../../src/db/web-auth-repo.js';
+import { DrizzleUsageRepo } from '../../src/db/usage-repo.js';
 import { HorizonQuery, type QueryParams } from '../../src/presentation/horizon-query.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
@@ -161,6 +162,23 @@ describe('HTTP API', () => {
     const app = await appWith({ maxMinutes: 60, podcastEnabled: false });
     const res = await app.request('/api/podcast?minutes=5');
     expect(res.status).toBe(404);
+  });
+
+  it('GET /api/podcast enforces the shared global daily cap (ADR-0052)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const usage = new DrizzleUsageRepo(db);
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      usage, globalPodcastPerDay: 1,
+    });
+    expect((await app.request('/api/podcast?minutes=5')).status).toBe(200); // 1st allowed
+    expect((await app.request('/api/podcast?minutes=5')).status).toBe(429); // 2nd over the cap
   });
 
   it('clamps an oversized minutes query param', async () => {

@@ -6,6 +6,7 @@ import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
 import type { TickReportRepo } from '../db/tick-report-repo.js';
 import type { TickReflectionRepo } from '../db/tick-reflection-repo.js';
 import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
+import { utcDay, type UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
@@ -34,6 +35,13 @@ export interface WebOptions {
   readonly maxPodcastMinutes: number;
   /** Expose the LLM-backed /api/podcast endpoint. Off by default. */
   readonly podcastEnabled: boolean;
+  /**
+   * Durable usage counters + the process-wide daily podcast ceiling, so the public
+   * web podcast (an LLM cost vector) shares the SAME `global:podcast` budget as the
+   * Telegram bot — no cost vector is uncapped (ADR-0052). Omit ⇒ no web cap.
+   */
+  readonly usage?: UsageRepo;
+  readonly globalPodcastPerDay?: number;
 }
 
 /**
@@ -148,8 +156,17 @@ export function createApp(
   });
 
   app.get('/api/podcast', async (c) => {
-    // LLM-backed cost vector — off by default (ADR-0023). Telegram is the audited surface.
+    // LLM-backed cost vector (ADR-0023). When enabled on the web it shares the bot's
+    // process-wide daily podcast budget so open web access can't run up OpenAI spend
+    // (ADR-0052) — the last uncapped cost vector, now closed.
     if (!web.podcastEnabled) return c.json({ error: 'not found' }, 404);
+    if (web.usage && web.globalPodcastPerDay !== undefined) {
+      const day = utcDay(Date.now());
+      const count = await web.usage.incrementAndGet('global:podcast', day);
+      if (count > web.globalPodcastPerDay) {
+        return c.json({ error: 'daily podcast limit reached; try again tomorrow (UTC)' }, 429);
+      }
+    }
     // Podcasts get the tighter audio cap, not the general maxMinutes.
     const podcastWeb = { ...web, maxMinutes: Math.min(web.maxMinutes, web.maxPodcastMinutes) };
     return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults, podcastWeb)) });
