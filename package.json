@@ -19,7 +19,6 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.0",
     "@hono/node-server": "^1.13.0",
     "@libsql/client": "^0.14.0",
     "drizzle-orm": "^0.39.0",

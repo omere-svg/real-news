@@ -36,9 +36,16 @@ export const DEFAULT_FETCH_LIMITS: FetchLimits = {
   maxBytes: 5_000_000,
 };
 
+/** Real outbound contact for polite-pool / fair-access APIs (SEC EDGAR, OpenAlex,
+ * Wikimedia all require or reward a genuine reachable contact). One constant so
+ * every adapter identifies the same way. */
+export const CONTACT = 'omer.e@fellowship.masterschool.com';
+
+/** The project's public repository, sent alongside the contact in User-Agents. */
+export const REPO_URL = 'https://github.com/omere-svg/real-news';
+
 /** Descriptive UA so bot-manager CDNs don't 403 the anonymous Node default (ADR-0049). */
-export const DEFAULT_USER_AGENT =
-  'project-horizon/1.0 (+https://github.com/omere-svg/real-news; horizon@example.com)';
+export const DEFAULT_USER_AGENT = `project-horizon/1.0 (+${REPO_URL}; ${CONTACT})`;
 
 type FetchImpl = typeof fetch;
 

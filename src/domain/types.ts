@@ -43,7 +43,6 @@ export const TOPICS: readonly Topic[] = [
 export const STORY_SOURCE_IDS = [
   'hackernews',
   'gdelt',
-  'datagovil',
   'arxiv',
   'knesset',
   'secedgar',

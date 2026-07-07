@@ -26,10 +26,19 @@ jobs:
           node-version: '20'
           cache: npm
 
-      - name: Install deps + compile (in CI, not on the tiny VM)
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+
+      # Gate the deploy on the same checks as ci.yml — never ship code that
+      # doesn't typecheck or fails tests.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Compile (in CI, not on the tiny VM)
+        run: npm run build
 
       - name: Configure SSH
         run: |
@@ -48,8 +57,9 @@ jobs:
           git reset --hard origin/main
           AFTER=$(git rev-parse HEAD)
           echo "source: $BEFORE -> $AFTER"
-          # Runtime deps only (no tsx/tsc needed on the box anymore). Reinstall only on
-          # a lockfile change — npm ci is heavy on this small VM.
+          # Runtime deps only (no tsx/tsc needed on the box anymore). Reinstall when the
+          # lockfile changed in this deploy, or on a manual re-run of the same commit
+          # (BEFORE = AFTER, e.g. to repair node_modules) — npm ci is heavy on this small VM.
           if [ "$BEFORE" = "$AFTER" ] || git diff --name-only "$BEFORE" "$AFTER" | grep -qx 'package-lock.json'; then
             echo "running npm ci (prod deps only)"
             npm ci --omit=dev --no-audit --no-fund

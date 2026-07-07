@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import type { SignalSource } from './signal-source.js';
-import type { JsonFetcher } from './http.js';
+import { CONTACT, type JsonFetcher } from './http.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SignalObservation, Topic } from '../domain/types.js';
 
 const BASE = 'https://wikimedia.org/api/rest_v1/metrics/pageviews/top';
 
 // Wikimedia requires a descriptive User-Agent; omitting it can get the IP blocked.
-const HEADERS = { 'user-agent': 'project-horizon (horizon@example.com)' };
+const HEADERS = { 'user-agent': `project-horizon (${CONTACT})` };
 
 /**
  * Wikipedia language editions we poll, and the Topic each informs (ADR-0025).

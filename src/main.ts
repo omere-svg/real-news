@@ -71,7 +71,7 @@ import { TavilyWebSearch } from './web/tavily-web-search.js';
 import { ResilientWebSearch } from './web/resilient-web-search.js';
 import type { WebSearch } from './web/web-search.js';
 import { SIGNAL_SOURCE_IDS } from './domain/types.js';
-import type { SignalSourceId, SourceId } from './domain/types.js';
+import type { SignalSourceId, SourceId, StorySourceId } from './domain/types.js';
 import type { Synthesizer } from './telegram/synthesizer.js';
 import type { QueryEngine } from './presentation/query-engine.js';
 import type { Db } from './db/client.js';
@@ -92,10 +92,14 @@ const HOST = process.env.HOST ?? '127.0.0.1';
 /** Signal-source ids (ADR-0025) — routed to buildSignalSource, not the Story pipeline. */
 const signalSourceIds = new Set<SourceId>(SIGNAL_SOURCE_IDS);
 
-/** Build the concrete SourceAdapter for one enabled source config. */
-function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | null {
+/**
+ * Build the concrete SourceAdapter for one enabled source config. The `id` is a
+ * `StorySourceId` (the caller filters out Signal sources), so the switch is
+ * exhaustive — a new Story source without a builder is a compile error.
+ */
+function buildSource(id: StorySourceId, s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter {
   const base = { fetchJson, maxItems: s.maxItems };
-  switch (s.id) {
+  switch (id) {
     case 'hackernews':
       return new HackerNewsSource(base);
     case 'arxiv':
@@ -137,9 +141,10 @@ function buildSource(s: SourceConfig, fetchJson: JsonFetcher): SourceAdapter | n
       return new UsgsQuakesSource(base);
     case 'gdacs':
       return new GdacsSource(base);
-    default:
-      console.warn(`[horizon] source "${s.id}" has no adapter yet — skipping.`);
-      return null;
+    default: {
+      const _exhaustive: never = id;
+      return _exhaustive;
+    }
   }
 }
 
@@ -157,8 +162,7 @@ function buildEmbedder(config: Config): Embedder {
 function buildSources(config: Config, fetchJson: JsonFetcher): SourceAdapter[] {
   return (config.sources as SourceConfig[])
     .filter((s) => s.enabled && !signalSourceIds.has(s.id))
-    .map((s) => buildSource(s, fetchJson))
-    .filter((a): a is SourceAdapter => a !== null);
+    .map((s) => buildSource(s.id as StorySourceId, s, fetchJson));
 }
 
 /**

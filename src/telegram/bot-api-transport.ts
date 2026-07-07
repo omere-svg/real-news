@@ -19,6 +19,12 @@ export interface BotApiTransportDeps {
 /** Telegram's hard cap on a single text message. */
 export const TELEGRAM_TEXT_LIMIT = 4096;
 
+/** Abort an ordinary Bot API call after this long — a hung socket must not
+ * stall the poll loop forever. getUpdates long-polls get a larger budget:
+ * the server-side wait window plus this slack. */
+const REQUEST_TIMEOUT_MS = 30_000;
+const LONG_POLL_SLACK_MS = 15_000;
+
 /** Inline buttons per row — keeps menus readable on a phone (ADR-0030). */
 export const BUTTONS_PER_ROW = 3;
 
@@ -169,25 +175,36 @@ export class BotApiTransport implements TelegramTransport {
       new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }),
       opts.filename ?? 'horizon.mp3',
     );
-    const res = await fetch(`${this.base}/sendAudio`, { method: 'POST', body: form });
+    const res = await fetch(`${this.base}/sendAudio`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`telegram sendAudio ${res.status}`);
   }
 
   async getUpdates(offset: number, timeoutSec: number): Promise<UpdateBatch> {
-    const raw = await this.post('getUpdates', {
-      offset,
-      timeout: timeoutSec,
-      allowed_updates: ['message', 'callback_query'],
-    });
+    // The long-poll holds the connection open server-side for up to timeoutSec,
+    // so the client abort must outlast it.
+    const raw = await this.post(
+      'getUpdates',
+      { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] },
+      timeoutSec * 1000 + LONG_POLL_SLACK_MS,
+    );
     const max = maxUpdateId(raw);
     return { updates: toUpdates(raw), ...(max !== null ? { ackOffset: max + 1 } : {}) };
   }
 
-  private async post(method: string, body: unknown): Promise<unknown> {
+  private async post(
+    method: string,
+    body: unknown,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ): Promise<unknown> {
     const res = await fetch(`${this.base}/${method}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`telegram ${method} ${res.status}`);
     return res.json();

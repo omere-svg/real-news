@@ -1,14 +1,14 @@
 import { z } from 'zod';
 import type { SourceAdapter } from './source-adapter.js';
-import type { JsonFetcher } from './http.js';
+import { CONTACT, type JsonFetcher } from './http.js';
 import type { RawItem } from '../domain/types.js';
 import type { Clock } from '../scheduler/clock.js';
 import { parseDateOrNull, isoDate } from './date.js';
 
 const BASE = 'https://efts.sec.gov/LATEST/search-index';
 const DEFAULT_QUERY = 'acquisition OR merger OR earnings OR offering';
-// SEC requires a descriptive User-Agent with contact info.
-const HEADERS = { 'user-agent': 'project-horizon (horizon@example.com)' };
+// SEC requires a descriptive User-Agent with a genuine contact (fair-access policy).
+const HEADERS = { 'user-agent': `project-horizon (${CONTACT})` };
 const DAY_MS = 86_400_000;
 // EDGAR full-text search defaults to RELEVANCE ranking over the whole corpus, so
 // an unbounded query returns filings from 2009-2025, not current news (ADR-0049).

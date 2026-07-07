@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import type { SignalSource } from './signal-source.js';
-import type { JsonFetcher } from './http.js';
+import { CONTACT, type JsonFetcher } from './http.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SignalObservation } from '../domain/types.js';
 
 // Keyless; `mailto` opts into the faster, more reliable polite pool.
 const BASE = 'https://api.openalex.org/works';
-const MAILTO = 'horizon@example.com';
+const MAILTO = CONTACT;
 
 /** How far back counts as "recent research" for the impact window. */
 const RECENT_DAYS = 90;
