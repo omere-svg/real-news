@@ -1,7 +1,7 @@
 import { representativeOf, storyIdOf } from '../domain/cluster.js';
 import { cosine } from '../embedding/cosine.js';
 import { dedupText } from './embed.js';
-import { extractEntities, sharedEntityCount } from './entities.js';
+import { extractEntities, sharedEntityStats } from './entities.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import type { Cluster, RawItem, RawItemRef, Topic } from '../domain/types.js';
 import type { StoredVector, StoryRepo } from '../db/story-repo.js';
@@ -60,15 +60,16 @@ export interface ResolveOptions {
    * [relaxedThreshold, candidateThreshold) is still escalated to the Reasoner
    * when it shares >= relaxedMinSharedEntities named entities/figures with the
    * stored Story. Precision holds: more shared evidence is demanded exactly
-   * where the cosine is trusted less, and the confirm remains the final guard.
-   * Set relaxedThreshold >= candidateThreshold to disable.
+   * where the cosine is trusted less (including >=1 shared NON-numeric anchor),
+   * and the confirm remains the final guard. OMIT to disable — the composition
+   * root wires it from `dedup.entityBlocking` so the config kill-switch governs
+   * both the within-tick and the cross-tick relaxation together.
    */
   readonly relaxedThreshold?: number;
   readonly relaxedMinSharedEntities?: number;
 }
 
-/** Defaults for the entity-relaxed band (mirror cluster's strong band: 0.60 @ >=2). */
-const DEFAULT_RELAXED_THRESHOLD = 0.6;
+/** Shared-entity floor for the relaxed band when only the threshold is set. */
 const DEFAULT_RELAXED_MIN_SHARED = 2;
 
 /**
@@ -128,13 +129,14 @@ export async function resolve(
     return p;
   };
 
-  // The entity-relaxed band's knobs (see ResolveOptions). The floor never sits
-  // above the strict bar, so a stricter-than-default candidateThreshold config
+  // The entity-relaxed band's knobs (see ResolveOptions): absent ⇒ the band is
+  // OFF and only the strict cosine bar escalates. The floor never sits above
+  // the strict bar, so a stricter-than-default candidateThreshold config
   // cannot accidentally widen the relaxed band.
-  const relaxedBar = Math.min(
-    opts.relaxedThreshold ?? DEFAULT_RELAXED_THRESHOLD,
-    opts.candidateThreshold,
-  );
+  const relaxedBar =
+    opts.relaxedThreshold !== undefined
+      ? Math.min(opts.relaxedThreshold, opts.candidateThreshold)
+      : opts.candidateThreshold;
   const relaxedMinShared = opts.relaxedMinSharedEntities ?? DEFAULT_RELAXED_MIN_SHARED;
 
   // Confirm-veto counters — cheap precision evidence for the matching bands.
@@ -156,14 +158,19 @@ export async function resolve(
       if (closest && closest.similarity >= relaxedBar) {
         const existing = await deps.storyRepo.get(closest.storyId);
         // Below the strict bar the cosine alone isn't trusted: demand shared
-        // named entities/figures with the stored Story before spending a confirm.
+        // entities with the stored Story — at least one of them a NON-numeric
+        // anchor (numbers alone can't tell two 7.1 quakes apart, ADR-0054) —
+        // before spending a confirm.
+        const shared =
+          closest.similarity >= opts.candidateThreshold
+            ? null
+            : sharedEntityStats(
+                extractEntities(dedupText(rep)),
+                extractEntities(`${existing?.title ?? ''} ${existing?.summary ?? ''}`),
+              );
         const escalate =
           existing !== null &&
-          (closest.similarity >= opts.candidateThreshold ||
-            sharedEntityCount(
-              extractEntities(dedupText(rep)),
-              extractEntities(`${existing.title} ${existing.summary ?? ''}`),
-            ) >= relaxedMinShared);
+          (shared === null || (shared.total >= relaxedMinShared && shared.nonNumeric >= 1));
         if (existing && escalate) {
           // Give the confirm the stored Story's summary as its body snippet —
           // title-only comparisons veto legitimate cross-outlet matches.

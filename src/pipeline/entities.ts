@@ -49,13 +49,15 @@ export function extractEntities(text: string): Set<string> {
 
   // Salient numbers — death tolls ("3,500"), magnitudes ("7.1"), quantities.
   // Two outlets phrasing one event differently still quote the same figures, so
-  // a shared number is a strong same-event signal. Bare years and small counts
-  // are too ubiquitous to discriminate, so they are skipped.
+  // a shared number is a strong same-event signal. Ubiquitous figures are
+  // skipped: year-like integers (1900–2199, so "2101" can't leak), sub-1
+  // decimals (rates like "0.25"), and small counts.
   const numbers = text.match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
   for (const m of numbers) {
     const norm = m.replace(/,/g, '').replace(/\.$/, '');
-    if (/^(19|20)\d{2}$/.test(norm)) continue; // a bare year
-    if (norm.includes('.') || Number(norm) >= 100) out.add(norm);
+    const value = Number(norm);
+    if (/^(19|20|21)\d{2}$/.test(norm)) continue; // year-like
+    if (norm.includes('.') ? value >= 1 : value >= 100) out.add(norm);
   }
 
   return out;
@@ -67,4 +69,26 @@ export function sharedEntityCount(a: ReadonlySet<string>, b: ReadonlySet<string>
   let n = 0;
   for (const e of small) if (large.has(e)) n += 1;
   return n;
+}
+
+/**
+ * Shared entities with the numeric/non-numeric split (ADR-0054 hardening).
+ * Numbers alone must never unlock a relaxed dedup band — "Magnitude 7.1 in
+ * Japan" and "Magnitude 7.1 in Chile" share {magnitude, 7.1} but are different
+ * events. A relaxation requires at least one shared non-numeric anchor (a
+ * place, a name, an organization); the numbers then add corroborating weight.
+ */
+export function sharedEntityStats(
+  a: ReadonlySet<string>,
+  b: ReadonlySet<string>,
+): { total: number; nonNumeric: number } {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let total = 0;
+  let nonNumeric = 0;
+  for (const e of small) {
+    if (!large.has(e)) continue;
+    total += 1;
+    if (!/^\d/.test(e)) nonNumeric += 1;
+  }
+  return { total, nonNumeric };
 }

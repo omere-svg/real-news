@@ -100,7 +100,10 @@ export class TickRunner {
     // Numeric Signal context for this tick (ADR-0025): observed fresh, used in-tick.
     // Each source owns its saturation scale; derive the map from the live sources
     // so a new signal source can never be added without declaring one (ADR-0031).
-    const signalSources = this.deps.signalSources ?? [];
+    // Signal sources honor the backoff skip set too (ADR-0054).
+    const allSignalSources = this.deps.signalSources ?? [];
+    const signalSources =
+      skip && skip.size ? allSignalSources.filter((s) => !skip.has(s.id)) : allSignalSources;
     const signals = await observeSignals(signalSources);
     const refBySource: SaturationRefs = Object.fromEntries(
       signalSources.map((s) => [s.id, s.saturationReference]),
@@ -137,11 +140,20 @@ export class TickRunner {
       ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
     });
     // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017/0038).
+    // The entity-relaxed band mirrors cluster's strong band and is governed by the
+    // SAME config switch (dedup.entityBlocking.enabled) — one kill-switch, both layers.
+    const eb = config.entityBlocking;
     const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock }, {
       candidateThreshold: config.candidateThreshold,
       recentWindowHours: config.recentWindowHours,
       ...(config.crossTopic ? { crossTopic: config.crossTopic } : {}),
       ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
+      ...(eb
+        ? {
+            relaxedThreshold: Math.max(0, eb.relaxedThreshold - 0.06),
+            relaxedMinSharedEntities: eb.minSharedEntities + 1,
+          }
+        : {}),
     });
 
     const scored = await score(identified.map((i) => i.cluster), llm, {

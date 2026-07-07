@@ -47,7 +47,8 @@ export interface TickLoopDeps {
   readonly clock: Clock;
   readonly reports: TickRecorder;
   readonly backoff: TickBackoff;
-  /** All Story source ids — the attempted set is derived by subtracting backoffs. */
+  /** All source ids (Story AND Signal, ADR-0054) — the attempted set is derived
+   * by subtracting backoffs, so a failing signal feed can rest too. */
   readonly sourceIds: readonly SourceId[];
   readonly policy: TickPolicyReader;
   /** Retention + reflection (ADR-0042). Runs after EVERY non-lock-skipped tick,
@@ -157,8 +158,14 @@ export class TickLoop {
       });
       // Feed the outcome back into the loop: sources attempted this tick that
       // failed or were health-skipped advance toward backoff; successes reset.
+      // Signal sources count too (ADR-0054) — a 429-ing signal feed can rest.
       const attempted = deps.sourceIds.filter((id) => !backedOff.has(id));
-      const bad = [...report.skipped, ...report.failed.map((f) => f.source)];
+      const bad = [
+        ...report.skipped,
+        ...report.failed.map((f) => f.source),
+        ...report.signalsSkipped,
+        ...report.signalsFailed.map((f) => f.source),
+      ];
       const newly = deps.backoff.record(this.index, attempted, bad);
       if (newly.length) deps.log.warn('backoff.engaged', { sources: newly });
       deps.log.info('tick.ok', {

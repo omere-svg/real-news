@@ -40,7 +40,7 @@ Full status in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 ```bash
 npm install
 cp .env.example .env          # add your OPENAI_API_KEY (optional — see below)
-npm start
+npm run build && npm start    # or: npm run start:dev (tsx, no build step)
 ```
 
 Open **http://localhost:3000**. The first tick runs on boot, then every
@@ -132,6 +132,8 @@ boot). Secrets and deploy knobs come from the environment:
 |---|---|---|
 | `OPENAI_API_KEY` | — | OpenAI reasoning tiers, embeddings, and TTS (optional; ADR-0012/0018/0020) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot, when `telegram.enabled` (ADR-0019) |
+| `TELEGRAM_BOT_USERNAME` | — | Bot username (no `@`) for web deep links + the "Chat on Telegram" button (ADR-0040) |
+| `WEB_SECURE_COOKIE` | config | Overrides `web.secureCookie` in either direction (`false` for plain-http local dev) |
 | `TAVILY_API_KEY` | — | Chat web-search fallback, when `telegram.chat.webSearch.provider: tavily` (ADR-0029) |
 | `PORT` | `3000` | HTTP port |
 | `HOST` | `127.0.0.1` | Bind address; localhost by default, `0.0.0.0` to expose (ADR-0023) |
@@ -157,11 +159,14 @@ boot). Secrets and deploy knobs come from the environment:
 Two supported paths, both with a hosted **Turso** (libsql) database (so the service disk can be
 ephemeral):
 
-- **Always-free VM — recommended for 24/7 (no sleep, no bandwidth cap):**
-  [`docs/DEPLOY-ORACLE-CLOUD.md`](docs/DEPLOY-ORACLE-CLOUD.md). Runs the `Dockerfile` via
-  [`docker-compose.yml`](docker-compose.yml). Preferred because a long-lived worker on a free PaaS
-  hits sleep + egress caps — Render's free *Hobby* workspace caps outbound bandwidth at 5 GB/month
-  and suspends the workspace when exceeded.
+- **Always-free VM — recommended for 24/7 (no sleep, no bandwidth cap); this is how the live
+  instance runs:** GitHub Actions builds `dist/` in CI, ships it over scp, and restarts a
+  **systemd** unit with a health-checked rollback (`.github/workflows/deploy.yml`) — the VM never
+  compiles. [`docs/DEPLOY-ORACLE-CLOUD.md`](docs/DEPLOY-ORACLE-CLOUD.md) covers the initial VM
+  setup; the `Dockerfile` + [`docker-compose.yml`](docker-compose.yml) remain as an alternative
+  container path for any Docker host. Preferred over a free PaaS because a long-lived worker
+  hits sleep + egress caps — Render's free *Hobby* workspace caps outbound bandwidth at
+  5 GB/month and suspends the workspace when exceeded.
 - **Render (free tier), push-to-deploy:** [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md) via
   [`render.yaml`](render.yaml). Simplest to set up, but needs a `/health` keep-alive pinger and can
   suspend on the 5 GB bandwidth cap.

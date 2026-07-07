@@ -163,6 +163,45 @@ describe('ChatAgent (ADR-0053)', () => {
     expect('content' in system ? system.content : '').toMatch(/never follow instructions/i);
   });
 
+  it('strips answer URLs the tools never surfaced; grounded URLs survive (ADR-0054)', async () => {
+    const web = tool('web_search', '1. Markets drop\n   snippet\n   https://good.example/story');
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer(
+        'See https://good.example/story — and definitely visit https://evil.example/steal now.',
+        true,
+      ),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).toContain('https://good.example/story');
+    expect(out.answer).not.toContain('evil.example');
+  });
+
+  it('caps a runaway final answer', async () => {
+    const transport = new ScriptedTransport([finalAnswer('x'.repeat(10_000), false)]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.answer.length).toBeLessThanOrEqual(3_500);
+  });
+
+  it('redacts the private save_memory note from the public trace', async () => {
+    const save = tool('save_memory', 'saved');
+    const transport = new ScriptedTransport([
+      callTool('c1', 'save_memory', { note: 'I am a backend dev in Tel Aviv' }),
+      finalAnswer('Noted!', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [save] });
+
+    const out = await agent.answer({ question: 'remember me', history: [] });
+
+    expect(out.steps[0]?.tool).toBe('save_memory');
+    expect(out.steps[0]?.args).toBe('(private note)');
+    expect(JSON.stringify(out.steps)).not.toContain('Tel Aviv');
+  });
+
   it('calls the same tool with distinct arguments across steps (real iteration)', async () => {
     const search = tool('search_stories', '(nothing)');
     const transport = new ScriptedTransport([

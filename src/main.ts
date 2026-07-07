@@ -208,7 +208,8 @@ function buildSignalSources(config: Config, fetchJson: JsonFetcher): SignalSourc
     .map((s) => buildSignalSource(s.id as SignalSourceId, s, fetchJson));
 }
 
-/** The structured log sink (src/log/logger.ts) — the only console writer. */
+/** The structured log sink (src/log/logger.ts). Orchestration logs flow through
+ * it; a few leaf resilient-wrappers still default to console.warn on degrade. */
 const log: Logger = new ConsoleLogger();
 
 async function main(): Promise<void> {
@@ -267,7 +268,9 @@ async function main(): Promise<void> {
     deepModel: config.reasoner.deepModel,
     onUsage: (u) => tokenLedger.record(u),
   });
-  const llm = new ResilientLLMClient(new Reasoner(openaiTransport));
+  const llm = new ResilientLLMClient(new Reasoner(openaiTransport), (op, err) =>
+    log.warn('reasoner.degraded', { op, err }),
+  );
 
   const queryEngine = new HorizonQuery({
     storyRepo,
@@ -287,10 +290,13 @@ async function main(): Promise<void> {
   // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
   const embedder = buildEmbedder(config);
   const storySources = buildSources(config, fetchJson);
+  const signalSources = buildSignalSources(config, fetchJson);
   const storySourceIds = storySources.map((s) => s.id);
+  // Story AND Signal ids (ADR-0054): the backoff/reflection loops govern both.
+  const allSourceIds: SourceId[] = [...storySourceIds, ...signalSources.map((s) => s.id)];
   const runner = new TickRunner({
     sources: storySources,
-    signalSources: buildSignalSources(config, fetchJson),
+    signalSources,
     rawItemRepo,
     storyRepo,
     signalObservationRepo,
@@ -330,7 +336,7 @@ async function main(): Promise<void> {
       const recent = await tickReportRepo.recent(retention.reflectWindow);
       const reflection = await llm.reflect({ ticks: recent.map(toTickDigest) });
       const accepted = screenReflectionActions(reflection.actions, {
-        validSources: storySourceIds,
+        validSources: allSourceIds,
         topN: { min: 3, max: 15 },
         maxBackoffTicks: 10,
       });
@@ -363,9 +369,14 @@ async function main(): Promise<void> {
             })),
             ...(accepted.deepAnalysisTopN
               ? [{
-                  type: 'set_deep_analysis_top_n',
+                  type:
+                    accepted.deepAnalysisTopN.value === null
+                      ? 'clear_deep_analysis_top_n'
+                      : 'set_deep_analysis_top_n',
                   reason: accepted.deepAnalysisTopN.reason,
-                  value: accepted.deepAnalysisTopN.value,
+                  ...(accepted.deepAnalysisTopN.value !== null
+                    ? { value: accepted.deepAnalysisTopN.value }
+                    : {}),
                 }]
               : []),
           ],
@@ -393,8 +404,11 @@ async function main(): Promise<void> {
   try {
     const history = (await tickReportRepo.recent(6)).reverse(); // oldest first
     tickIndex = backoff.seed(
-      history.map((t) => ({ skipped: t.skipped, failed: t.failed })),
-      storySourceIds,
+      history.map((t) => ({
+        skipped: [...t.skipped, ...t.signalsSkipped],
+        failed: [...t.failed, ...t.signalsFailed],
+      })),
+      allSourceIds,
     );
     const active = backoff.activeBackoffs(tickIndex);
     if (active.size) log.info('backoff.rehydrated', { coolingDown: [...active] });
@@ -426,7 +440,7 @@ async function main(): Promise<void> {
     clock: systemClock,
     reports: tickReportRepo,
     backoff,
-    sourceIds: storySourceIds,
+    sourceIds: allSourceIds,
     policy: agentPolicyRepo,
     maintain,
     // Steady-state healing (ADR-0038): deep-analyze a few cached Stories still
@@ -630,7 +644,9 @@ function startTelegramBot(
     let offset = 0;
     for (;;) {
       try {
-        offset = await pollOnce(transport, bot, offset, config.telegram.pollTimeoutSeconds);
+        offset = await pollOnce(transport, bot, offset, config.telegram.pollTimeoutSeconds, (err) =>
+          log.error('telegram.handler_failed', { err }),
+        );
       } catch (err) {
         log.error('telegram.poll_failed', { err, action: 'retrying' }); // never kill the loop
         await sleep(2000);

@@ -116,21 +116,29 @@ export class HorizonQuery implements QueryEngine {
       minStories: this.deps.params.minStories,
       maxStories: this.deps.params.maxStories,
       ...(weighted ? { rank } : {}),
-      ...(await this.similarityGuard(candidates)),
+      // Vector fetch is bounded to the top of the SAME ordering the budget
+      // admits by, so the guard covers every story that can actually be shown.
+      ...(await this.similarityGuard(
+        weighted ? [...candidates].sort((a, b) => rank(b) - rank(a)) : candidates,
+      )),
     });
   }
 
   /**
    * Build the same-event suppressor from the candidates' stored embeddings
-   * (ADR-0053). One query for the pool; a story with no vector never
-   * suppresses or is suppressed. Off when `dedupSimilarity` is unset.
+   * (ADR-0053). Bounded: only the top slice that could plausibly be admitted
+   * (a few × maxStories) has its vectors fetched, so a public, unauthenticated
+   * brief request never pulls the whole 200-vector pool from the DB. A story
+   * with no vector never suppresses or is suppressed. Off when
+   * `dedupSimilarity` is unset.
    */
   private async similarityGuard(
     candidates: readonly Story[],
   ): Promise<Pick<BudgetParams, 'suppressSimilar'>> {
     const cap = this.deps.params.dedupSimilarity;
     if (cap === undefined) return {};
-    const vectors = await this.deps.storyRepo.vectorsFor(candidates.map((s) => s.id));
+    const slice = candidates.slice(0, this.deps.params.maxStories * 3);
+    const vectors = await this.deps.storyRepo.vectorsFor(slice.map((s) => s.id));
     return {
       suppressSimilar: (a: Story, b: Story): boolean => {
         const va = vectors.get(a.id);

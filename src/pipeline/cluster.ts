@@ -2,7 +2,7 @@ import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Cluster } from '../domain/types.js';
 import { cosine } from '../embedding/cosine.js';
 import { dedupText } from './embed.js';
-import { extractEntities, sharedEntityCount } from './entities.js';
+import { extractEntities, sharedEntityStats } from './entities.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import type { EmbeddedItem } from './types.js';
 
@@ -29,6 +29,11 @@ export interface EntityBlocking {
 /** How far below `relaxedThreshold` the >=2-entity band sits by default. */
 const STRONG_BAND_DELTA = 0.06;
 
+/** Cosine of one candidate pair, for the confirm-cap ranking. */
+function simOf(items: readonly EmbeddedItem[], [i, j]: [number, number]): number {
+  return cosine((items[i] as EmbeddedItem).vector, (items[j] as EmbeddedItem).vector);
+}
+
 export interface ClusterOptions {
   /** Cosine similarity above which two items become a candidate pair (ADR-0007). */
   readonly candidateThreshold: number;
@@ -36,7 +41,17 @@ export interface ClusterOptions {
   readonly entityBlocking?: EntityBlocking;
   /** Max concurrent confirm calls; defaults to DEFAULT_CONFIRM_CONCURRENCY. */
   readonly confirmConcurrency?: number;
+  /** Hard cap on confirm calls per tick; defaults to MAX_CONFIRM_PAIRS. */
+  readonly maxConfirmPairs?: number;
 }
+
+/**
+ * Bounds a tick's LLM confirm spend (ADR-0054): a big-event tick with ~25
+ * same-event items would otherwise propose ~300 pairs. When over the cap the
+ * most-similar pairs are kept — the likeliest true merges — and the truncation
+ * is logged, never silent.
+ */
+const MAX_CONFIRM_PAIRS = 96;
 
 /**
  * The blocking step (ADR-0007): cheaply find candidate same-Story pairs by
@@ -63,7 +78,7 @@ export function candidatePairs(
       const b = items[j] as EmbeddedItem;
       let bar = threshold;
       if (entitySets && entityBlocking) {
-        const shared = sharedEntityCount(
+        const shared = sharedEntityStats(
           entitySets[i] as Set<string>,
           entitySets[j] as Set<string>,
         );
@@ -72,8 +87,12 @@ export function candidatePairs(
         const strongBar =
           entityBlocking.strongRelaxedThreshold ??
           Math.max(0, entityBlocking.relaxedThreshold - STRONG_BAND_DELTA);
-        if (shared >= strongMin) bar = strongBar;
-        else if (shared >= entityBlocking.minSharedEntities) bar = entityBlocking.relaxedThreshold;
+        // Numbers alone never unlock a band: two different quakes share "7.1";
+        // a shared non-numeric anchor (place/name) is required (ADR-0054).
+        if (shared.nonNumeric >= 1) {
+          if (shared.total >= strongMin) bar = strongBar;
+          else if (shared.total >= entityBlocking.minSharedEntities) bar = entityBlocking.relaxedThreshold;
+        }
       }
       if (cosine(a.vector, b.vector) >= bar) pairs.push([i, j]);
     }
@@ -112,7 +131,15 @@ export async function cluster(
   // Confirm the candidate pairs concurrently (each is an independent LLM call),
   // then apply the confirmed merges deterministically in pair order so the
   // union-find result is identical to the old serial loop (ADR — tick throughput).
-  const pairs = candidatePairs(items, opts.candidateThreshold, opts.entityBlocking);
+  let pairs = candidatePairs(items, opts.candidateThreshold, opts.entityBlocking);
+  const cap = opts.maxConfirmPairs ?? MAX_CONFIRM_PAIRS;
+  if (pairs.length > cap) {
+    // Keep the most-similar pairs (likeliest true merges); log what was dropped.
+    const bySim = [...pairs].sort((p, q) => simOf(items, q) - simOf(items, p)).slice(0, cap);
+    console.log(`[dedup] cluster pair cap: confirming ${cap} of ${pairs.length} candidate pairs`);
+    // Restore deterministic scan order so union-find behavior stays stable.
+    pairs = bySim.sort(([ai, aj], [bi, bj]) => ai - bi || aj - bj);
+  }
   const confirmed = await mapWithConcurrency(
     pairs,
     opts.confirmConcurrency ?? DEFAULT_CONFIRM_CONCURRENCY,

@@ -21,7 +21,9 @@ export interface RssSourceDeps {
  * the paper link. Matches "--", em- and en-dash separators; requires whitespace
  * after "by" so titles like "Growth by Design" are untouched.
  */
-const NBER_AUTHORS_SUFFIX = /\s+(?:--|—|–)\s*by\s+.+$/i;
+// The author list always starts with a capitalized name — "— by 2050" or
+// "— by design" in a legitimate title must survive.
+const NBER_AUTHORS_SUFFIX = /\s+(?:--|—|–)\s*by\s+[A-ZÀ-Þ].+$/;
 
 /**
  * A live-blog URL (path contains a "/live/" segment, e.g. Guardian's

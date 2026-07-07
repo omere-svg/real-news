@@ -2,7 +2,7 @@
 
 **One-liner:** An autonomous executive editor that reads 20+ official public APIs every ~20 minutes, merges same-event coverage across outlets and days, and hands you the few stories that matter — each scored 0–10 by auditable math you can open — on a web app and a Telegram agent you can question, tune, and subscribe to.
 
-**Built by:** Omer Erez · **Repo (public):** https://github.com/omere-svg/real-news · **Demo (live):** https://horizon-news.duckdns.org (viewer) · https://horizon-news.duckdns.org/dashboard (ops) · **Try the bot:** https://t.me/OmerNewsBot · **Run it:** `npm install && npm start` (works with or without an OpenAI key)
+**Built by:** Omer Erez · **Repo (public):** https://github.com/omere-svg/real-news · **Demo (live):** https://horizon-news.duckdns.org (viewer) · https://horizon-news.duckdns.org/dashboard (ops) · **Try the bot:** https://t.me/OmerNewsBot · **Run it:** `npm install && npm run build && npm start` (works with or without an OpenAI key)
 
 ---
 
@@ -23,10 +23,10 @@ Horizon runs two genuine decision loops, both bounded and both inspectable live:
 - **What it is not:** there is no runtime multi-agent system — one focused agent per surface, by design.
 
 ## 4. Architecture  *(Engineering excellence)*
-- **Components & data flow:** clean seams — `SourceAdapter`/`SignalSource` (20+ story feeds vs 6 numeric signals), role-split `PipelineReasoner`/`ChatReasoner`/`Narrator`/`Reflector` over a thin `ChatTransport`, a `QueryEngine` presentation seam feeding both surfaces. Two-tier cache: immutable `raw_items` → scored `stories` + `membership`, plus vectors, signal history, tick reports, reflections, chat traces — 16 tables, real migrations applied identically in tests, boot, and deploy.
+- **Components & data flow:** clean seams — `SourceAdapter`/`SignalSource` (18 story feeds + 6 numeric signals), role-split `PipelineReasoner`/`ChatReasoner`/`Narrator`/`Reflector` over a thin `ChatTransport`, a `QueryEngine` presentation seam feeding both surfaces. Two-tier cache: immutable `raw_items` → scored `stories` + `membership`, plus vectors, signal history, tick reports, reflections, chat traces — 15 tables, real migrations applied identically in tests, boot, and deploy.
 - **Robustness:** every model call degrades instead of crashing (declared per-op fallbacks); retry lives in exactly one layer (`maxRetries: 0` at the SDK + classified `withRetry` with jitter — a 429 can't amplify 9×); sources are health-checked, isolated, rate-limited per host, and backed off on repeated failure; story upserts are atomic batches so a transient DB error can't orphan a paid summary.
 - **Tests & CI:** the suite runs **in ~3 seconds against real migrations on in-memory libsql** — every pipeline stage, repo, transport, quota, and failure path (stored-XSS regression, quota 429, NaN params, adversarial injection payloads, scripted agent trajectories). CI gates every push with typecheck + tests before the health-checked deploy. Run it: `npm test`.
-- **Observability:** persisted tick reports (success, failure, and lock-skip alike), `/dashboard` (health triage, throughput, failing sources, reflections + applied actions, accumulation stats), per-tier **token accounting** surfaced on `/api/stats`, structured logs.
+- **Observability:** persisted tick reports (success, failure, and lock-skip alike), `/dashboard` (health triage, throughput, failing sources, reflections + applied actions, accumulation stats), per-tier **token accounting** surfaced on `/api/stats`, event-keyed structured logging at the orchestration layer.
 
 ## 5. Safety & control  *(Safety & control)*
 Horizon takes **no high-harm unattended actions**: it never contacts third parties, spends nothing beyond bounded OpenAI calls, and every write is to its own reversible DB. Scheduled briefs message only users who explicitly subscribed, and are deterministic cache reads (zero model spend).

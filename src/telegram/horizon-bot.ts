@@ -464,10 +464,19 @@ export class HorizonBot {
         `“${command.time}” isn't a time I understand — use 24h HH:MM (UTC), e.g. /subscribe 06:30.`,
       );
     }
-    await prefs.set(chatId, { briefAt: time, briefLastSentDay: undefined });
+    // Subscribing at a moment already past the chosen time starts TOMORROW —
+    // otherwise the minute-cadence check would deliver within ~60s of signup.
+    const now = new Date(this.deps.clock.now());
+    const nowHHMM = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+    const alreadyPast = time <= nowHHMM;
+    await prefs.set(chatId, {
+      briefAt: time,
+      briefLastSentDay: alreadyPast ? now.toISOString().slice(0, 10) : undefined,
+    });
     return transport.sendMessage(
       chatId,
-      `Done — your personalized brief arrives daily at ${time} UTC. /subscribe off to stop.`,
+      `Done — your personalized brief arrives daily at ${time} UTC` +
+        `${alreadyPast ? ' (starting tomorrow)' : ''}. /subscribe off to stop.`,
     );
   }
 
@@ -483,7 +492,9 @@ export class HorizonBot {
     const utcDay = now.toISOString().slice(0, 10);
     const due = await this.deps.prefs.dueBriefs(hhmm, utcDay);
     let sent = 0;
-    for (const chatId of due) {
+    // The same default-deny gate as inbound messages (ADR-0022): a chat that
+    // lost access must stop receiving pushes too.
+    for (const chatId of due.filter((id) => this.allowed(id))) {
       try {
         await this.deps.prefs.markBriefSent(chatId, utcDay);
         const req = await this.request(chatId, undefined);

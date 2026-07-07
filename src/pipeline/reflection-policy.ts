@@ -24,10 +24,11 @@ export interface AcceptedBackoff {
   readonly reason: string;
 }
 
-/** What survived the screen — the only thing the loop is allowed to apply. */
+/** What survived the screen — the only thing the loop is allowed to apply.
+ * `deepAnalysisTopN.value === null` means "clear the override" (back to config). */
 export interface AcceptedActions {
   readonly backoffs: readonly AcceptedBackoff[];
-  readonly deepAnalysisTopN: { readonly value: number; readonly reason: string } | null;
+  readonly deepAnalysisTopN: { readonly value: number | null; readonly reason: string } | null;
   readonly rejected: readonly { readonly action: ReflectionAction; readonly why: string }[];
 }
 
@@ -40,7 +41,7 @@ export function screenReflectionActions(
 ): AcceptedActions {
   const backoffs: AcceptedBackoff[] = [];
   const rejected: { action: ReflectionAction; why: string }[] = [];
-  let deepAnalysisTopN: { value: number; reason: string } | null = null;
+  let deepAnalysisTopN: { value: number | null; reason: string } | null = null;
 
   for (const action of actions) {
     if (action.type === 'backoff_source') {
@@ -53,6 +54,9 @@ export function screenReflectionActions(
         ticks: clamp(action.ticks, 1, ctx.maxBackoffTicks),
         reason: action.reason,
       });
+    } else if (action.type === 'clear_deep_analysis_top_n') {
+      // Back to the configured default — the override must be revocable.
+      deepAnalysisTopN = { value: null, reason: action.reason };
     } else {
       // set_deep_analysis_top_n — last proposal wins, clamped into bounds.
       deepAnalysisTopN = {

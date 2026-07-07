@@ -58,6 +58,8 @@ const DEFAULT_MAX_STEPS = 5;
 const OPTS: CompletionOptions = { tier: 'deep', maxTokens: 700 };
 const PREVIEW_CHARS = 200;
 const ARGS_CHARS = 200;
+const MAX_ANSWER_CHARS = 3_500;
+const URL_RE = /https?:\/\/[^\s)\]}>"'<‹]+/gi;
 
 // Lenient final-reply parse: a malformed reply degrades to raw text.
 const finalSchema = z.object({
@@ -97,6 +99,10 @@ export class ChatAgent {
       { role: 'user', content: userBlock(input) },
     ];
     const steps: TraceStep[] = [];
+    // Output guard (ADR-0053/0054): only URLs the tools actually surfaced may
+    // appear in the answer — a poisoned web snippet can't make the agent relay
+    // an attacker link that never grounded anything.
+    const groundedUrls = new Set<string>();
 
     for (let turn = 0; turn <= this.maxSteps; turn += 1) {
       // On the last permitted turn the tools are withdrawn: answer NOW.
@@ -108,7 +114,8 @@ export class ChatAgent {
       );
 
       if (res.toolCalls.length === 0) {
-        return { ...parseFinal(res.text), steps };
+        const final = parseFinal(res.text);
+        return { ...final, answer: groundAnswer(final.answer, groundedUrls), steps };
       }
 
       messages.push({ role: 'assistant', content: res.text, toolCalls: res.toolCalls });
@@ -119,10 +126,12 @@ export class ChatAgent {
         const result = tool
           ? await tool.run(call.args).catch((err: unknown) => toolError(err))
           : toolError(new Error(`unknown tool "${call.name}"`));
+        for (const url of result.match(URL_RE) ?? []) groundedUrls.add(url);
         steps.push({
           step: steps.length + 1,
           tool: call.name,
-          args: JSON.stringify(call.args).slice(0, ARGS_CHARS),
+          // The reader's personal note is private — never into the public trace.
+          args: call.name === 'save_memory' ? '(private note)' : JSON.stringify(call.args).slice(0, ARGS_CHARS),
           resultPreview: result.slice(0, PREVIEW_CHARS),
         });
         messages.push({
@@ -160,6 +169,14 @@ function userBlock(input: ChatAgentInput): string {
 
 function toolError(err: unknown): string {
   return `tool_error: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/** Strip URLs the tools never surfaced; cap a runaway answer (ADR-0053/0054). */
+function groundAnswer(answer: string, grounded: ReadonlySet<string>): string {
+  const cleaned = answer.replace(URL_RE, (url) =>
+    [...grounded].some((g) => url.startsWith(g) || g.startsWith(url)) ? url : '',
+  );
+  return cleaned.slice(0, MAX_ANSWER_CHARS);
 }
 
 function parseFinal(text: string | null): DiscussResult {

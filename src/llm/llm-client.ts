@@ -94,6 +94,11 @@ export type ReflectionAction =
       readonly type: 'set_deep_analysis_top_n';
       readonly value: number;
       readonly reason: string;
+    }
+  | {
+      /** Drop the budget override so the configured default governs again. */
+      readonly type: 'clear_deep_analysis_top_n';
+      readonly reason: string;
     };
 
 /** What a reflection returns: the human-readable advisory + proposed actions. */

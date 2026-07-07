@@ -46,7 +46,14 @@ describe('resolve', () => {
     return { storyRepo, rawItemRepo, clock };
   }
 
-  const opts = { candidateThreshold: 0.8, recentWindowHours: 72 };
+  // The entity-relaxed band is opt-in (the composition root wires it from
+  // dedup.entityBlocking.enabled); these tests exercise it explicitly.
+  const opts = {
+    candidateThreshold: 0.8,
+    recentWindowHours: 72,
+    relaxedThreshold: 0.6,
+    relaxedMinSharedEntities: 2,
+  };
 
   it('assigns a fresh deterministic id when nothing matches', async () => {
     const { storyRepo, rawItemRepo, clock } = await fixtures();

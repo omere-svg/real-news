@@ -64,6 +64,14 @@ describe('screenReflectionActions', () => {
     expect(out.deepAnalysisTopN).toEqual({ value: 8, reason: 'second' });
   });
 
+  it('clear_deep_analysis_top_n revokes the override (value null → config governs)', () => {
+    const out = screenReflectionActions(
+      [{ type: 'clear_deep_analysis_top_n', reason: 'pipeline healthy again' }],
+      CTX,
+    );
+    expect(out.deepAnalysisTopN).toEqual({ value: null, reason: 'pipeline healthy again' });
+  });
+
   it('an empty proposal set yields an empty, all-null policy', () => {
     const out = screenReflectionActions([] as ReflectionAction[], CTX);
     expect(out).toEqual({ backoffs: [], deepAnalysisTopN: null, rejected: [] });

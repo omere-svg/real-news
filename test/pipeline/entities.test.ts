@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractEntities, sharedEntityCount } from '../../src/pipeline/entities.js';
+import { extractEntities, sharedEntityCount, sharedEntityStats } from '../../src/pipeline/entities.js';
 
 describe('extractEntities (ADR-0036)', () => {
   it('pulls capitalized proper nouns, normalized to lowercase', () => {
@@ -72,5 +72,25 @@ describe('extractEntities (ADR-0036)', () => {
     expect(sharedEntityCount(wikipedia, guardian)).toBeGreaterThanOrEqual(2); // venezuela + 3500
     expect(sharedEntityCount(gdacs, guardian)).toBeGreaterThanOrEqual(1); // venezuela
     expect(sharedEntityCount(wikipedia, gdacs)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sharedEntityStats: numbers alone never anchor a match (ADR-0054 precision)', () => {
+    // Two DIFFERENT earthquakes share "magnitude" + "7.1" — the numeric overlap
+    // must not count as an anchor; only non-numeric entities may.
+    const japan = extractEntities('Magnitude 7.1 earthquake strikes northern Japan');
+    const chile = extractEntities('Magnitude 7.1 earthquake hits central Chile');
+    const stats = sharedEntityStats(japan, chile);
+    // "magnitude" is capitalized sentence-initially → extracted; "7.1" shared.
+    expect(stats.total).toBeGreaterThanOrEqual(2);
+    // The relaxation logic demands nonNumeric >= 1 AND the confirm guard —
+    // here the only safe anchors are generic words; what matters is the split:
+    expect(stats.nonNumeric).toBeLessThan(stats.total); // "7.1" counted as numeric
+  });
+
+  it('year-like integers through 21xx and sub-1 decimals are not entities', () => {
+    const e = extractEntities('By 2101 the 0.25 rate and a 1.5 degree rise');
+    expect(e.has('2101')).toBe(false); // year-like beyond 20xx
+    expect(e.has('0.25')).toBe(false); // sub-1 decimal (rates)
+    expect(e.has('1.5')).toBe(true); // >= 1 decimal still counts
   });
 });
