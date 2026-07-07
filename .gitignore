@@ -36,3 +36,4 @@ reports/*
 !reports/DEMO-SCRIPT.md
 !reports/CODE-REVIEW.md
 !reports/CYCLE-CHANGES.md
+!scripts/_backup-db.ts
