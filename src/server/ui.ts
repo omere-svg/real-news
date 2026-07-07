@@ -172,6 +172,10 @@ export function renderUI(defaults: UiDefaults): string {
     background-size:220% 100%; animation:sh 1.3s ease-in-out infinite; margin:12px 0; }
   @keyframes sh { from{background-position:180% 0} to{background-position:-40% 0} }
   pre.doc { white-space:pre-wrap; word-wrap:break-word; font:15.5px/1.7 ui-sans-serif,system-ui,sans-serif; margin:0; color:var(--fg-dim); }
+  .script-hd { font-weight:700; font-size:13px; color:var(--accent); margin-bottom:8px; }
+  .script-p { margin:0 0 13px; color:var(--fg-dim); font-size:16px; line-height:1.7; }
+  .script-p:last-child { margin-bottom:0; }
+  .why b { color:var(--fg); font-weight:700; }
 
   /* Profile popover + modal */
   .pop { position:fixed; inset:0; z-index:50; display:none; align-items:flex-start; justify-content:center; }
@@ -472,6 +476,47 @@ function breakdownHtml(b, open){
 
 function skeletons(n){ let h=''; for(let i=0;i<n;i++) h+='<div class="skel"></div>'; return h; }
 
+// ---- Brief / outline / podcast as cards, not a monospace blob ----
+// The server render is deterministic (📰 title / summary / 💡 why / 🏷 topic·sig·tags
+// / 🔗 url per story, blank-line separated), so we parse it back into the same story
+// card as the Stories tab. Podcast is prose → readable paragraphs.
+function renderDoc(format, text){
+  if (format === 'podcast') return renderScript(text);
+  const parts = text.split('\\n\\n');
+  const header = (parts.shift() || '').trim();
+  const cards = parts.map(block => {
+    let title='', summary='', why='', descriptor='', url='';
+    for (const ln of block.split('\\n')) {
+      if (ln.startsWith('📰')) title = ln.slice(2).trim();
+      else if (ln.startsWith('💡')) why = ln.slice(2).trim();
+      else if (ln.startsWith('🏷')) descriptor = ln.slice(2).trim();
+      else if (ln.startsWith('🔗')) url = ln.slice(2).trim();
+      else if (ln.trim()) summary += (summary ? ' ' : '') + ln.trim();
+    }
+    if (!title) return '';
+    const su = safeUrl(url);
+    const titleHtml = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(title)+'</a>' : esc(title);
+    const bits = descriptor.split('·').map(s => s.trim()).filter(Boolean);
+    const topic = bits[0] || '';
+    const sigBit = bits.find(b => /significance/i.test(b));
+    const sig = sigBit ? sigBit.replace(/significance/i,'').trim() : '';
+    const color = TOPIC_COLORS[topic] || '#8b93a7';
+    const tags = bits.filter(b => b !== topic && b !== sigBit).map(t => '<span class="stag">'+esc(t)+'</span>').join('');
+    const pill = sig ? '<span class="scorepill">'+esc(sig)+'<span class="max">/10</span></span>' : '';
+    return '<div class="card story"><div class="row"><p class="title">'+titleHtml+'</p>'+pill+'</div>'+
+      '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(topic)+'</span>'+tags+'</div>'+
+      (summary ? '<p class="why">'+esc(summary)+'</p>' : '')+
+      (why ? '<p class="why"><b>Why it matters — </b>'+esc(why)+'</p>' : '')+'</div>';
+  }).join('');
+  if (!cards.trim()) return '<div class="empty"><div class="big">'+esc(header || text)+'</div></div>';
+  return '<div class="count">'+esc(header)+'</div>'+cards;
+}
+function renderScript(text){
+  const paras = text.split(/\\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const body = (paras.length ? paras : [text]).map(p => '<p class="script-p">'+esc(p)+'</p>').join('');
+  return '<div class="card"><div class="script-hd">🎧 Podcast script</div><div class="script">'+body+'</div></div>';
+}
+
 async function load() {
   const topics = selectedTopics();
   budgetCtl.style.display = format === 'stories' ? 'none' : 'inline-flex';
@@ -496,7 +541,7 @@ async function load() {
     const body = await res.json();
     const text = body[DOC_FIELD[format]] || '';
     if (!text.trim()) { list.innerHTML = '<div class="empty"><div class="big">Nothing to show yet</div>The worker fills the cache on each tick — check back shortly.</div>'; return; }
-    list.innerHTML = '<div class="card"><pre class="doc">' + esc(text) + '</pre></div>';
+    list.innerHTML = renderDoc(format, text);
   } catch (e) {
     list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load that</div>Check your connection and try again.</div>';
   }
