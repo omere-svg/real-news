@@ -17,6 +17,21 @@ export function isGroundedUrl(url: string, grounded: Iterable<string>): boolean 
     if (!groundedUrl) continue;
     if (candidate.protocol !== groundedUrl.protocol) continue;
     if (candidate.host.toLowerCase() !== groundedUrl.host.toLowerCase()) continue;
+    if (candidate.search !== '' || candidate.hash !== '') {
+      // A query string or fragment can smuggle an attacker-controlled URL
+      // past a path-prefix match (`?redirect=https://evil.tld`, `#https://evil.tld`).
+      // Fail closed: only an exact match (path, search, and hash all identical
+      // to a grounded URL) counts — no path-prefix leniency once there's a
+      // query or fragment to hide something in.
+      if (
+        candidate.pathname === groundedUrl.pathname &&
+        candidate.search === groundedUrl.search &&
+        candidate.hash === groundedUrl.hash
+      ) {
+        return true;
+      }
+      continue;
+    }
     if (isPathPrefix(groundedUrl.pathname, candidate.pathname)) return true;
   }
   return false;
@@ -27,6 +42,12 @@ export function isGroundedUrl(url: string, grounded: Iterable<string>): boolean 
  * punctuation ("...at https://example.com/x." — the period is not part of
  * the link). Split it off before grounding so a real, grounded URL followed
  * by a period isn't rejected for a path that doesn't actually exist.
+ *
+ * This only trims trailing punctuation off the candidate string being
+ * checked; it has no effect on what counts as "grounded". It cannot be used
+ * to widen grounding — the `trailing` piece is reattached unchanged by
+ * callers after `isGroundedUrl` accepts `url`, so an attacker can't smuggle
+ * anything through by choosing what looks like punctuation.
  */
 export function splitTrailingPunctuation(raw: string): { url: string; trailing: string } {
   const m = /[.,;:!?]+$/.exec(raw);
@@ -42,9 +63,17 @@ function tryParse(url: string): URL | null {
   }
 }
 
-/** True when `prefix` matches `path` exactly, or on a `/`-segment boundary. */
+/**
+ * True when `prefix` matches `path` exactly, or on a `/`-segment boundary.
+ *
+ * A grounded root path (`/`) is a special case: it must NOT grant grounding
+ * to every path on the host (`/` is technically a prefix of everything on a
+ * naive segment-boundary check, since `/` + anything already starts with
+ * `/`). Fail closed — a grounded `/` only grounds `/` itself.
+ */
 function isPathPrefix(prefix: string, path: string): boolean {
   if (path === prefix) return true;
+  if (prefix === '/') return false;
   const base = prefix.endsWith('/') ? prefix : `${prefix}/`;
   return path.startsWith(base);
 }

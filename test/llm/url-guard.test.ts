@@ -52,4 +52,44 @@ describe('isGroundedUrl', () => {
   it('rejects a different scheme on the same host/path', () => {
     expect(isGroundedUrl('http://example.com/story', ['https://example.com/story'])).toBe(false);
   });
+
+  it('rejects an arbitrary path when only the root URL is grounded (root-path bypass)', () => {
+    expect(isGroundedUrl('https://good.example/anything', ['https://good.example/'])).toBe(false);
+  });
+
+  it('accepts the root path itself when the root URL is grounded', () => {
+    expect(isGroundedUrl('https://good.example/', ['https://good.example/'])).toBe(true);
+  });
+
+  it('rejects a query-string smuggled onto a grounded path (query smuggling)', () => {
+    expect(
+      isGroundedUrl('https://good.example/story?redirect=https://evil.tld', [
+        'https://good.example/story',
+      ]),
+    ).toBe(false);
+  });
+
+  it('rejects a fragment smuggled onto a grounded path (fragment smuggling)', () => {
+    expect(
+      isGroundedUrl('https://good.example/story#https://evil.tld', ['https://good.example/story']),
+    ).toBe(false);
+  });
+
+  it('accepts a grounded URL with a query when it matches exactly, query and all', () => {
+    expect(
+      isGroundedUrl('https://good.example/story?id=42', ['https://good.example/story?id=42']),
+    ).toBe(true);
+  });
+
+  it('accepts a grounded URL with a fragment when it matches exactly, fragment and all', () => {
+    expect(
+      isGroundedUrl('https://good.example/story#section', ['https://good.example/story#section']),
+    ).toBe(true);
+  });
+
+  it('rejects a candidate query that differs from the grounded URL query', () => {
+    expect(
+      isGroundedUrl('https://good.example/story?id=42', ['https://good.example/story?id=1']),
+    ).toBe(false);
+  });
 });
