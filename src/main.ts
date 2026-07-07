@@ -542,6 +542,7 @@ async function main(): Promise<void> {
       ...(botUsername ? { botUsername } : {}),
     },
     tickReflectionRepo,
+    signalObservationRepo,
   );
   serve({ fetch: app.fetch, port: PORT, hostname: HOST });
   console.log(`[horizon] viewer on http://${HOST}:${PORT} (tick every ${config.tickIntervalMinutes}m)`);

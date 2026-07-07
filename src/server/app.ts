@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { StoryQuery, StoryRepo } from '../db/story-repo.js';
+import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { TickReportRepo } from '../db/tick-report-repo.js';
 import type { TickReflectionRepo } from '../db/tick-reflection-repo.js';
 import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
@@ -69,6 +70,9 @@ export interface WebAuthOptions {
   readonly now?: () => number;
 }
 
+/** ~One tick — the "developed across ticks" threshold `/api/stats` counts against. */
+const CROSS_TICK_MS = 25 * 60_000;
+
 const SESSION_COOKIE = 'horizon_session';
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 3600_000;
 const DEFAULT_CODE_TTL_MS = 10 * 60_000;
@@ -97,6 +101,8 @@ export function createApp(
   auth?: WebAuthOptions,
   /** Reflection advisories (ADR-0042); when omitted the dashboard shows none. */
   tickReflections?: TickReflectionRepo,
+  /** Signal history (ADR-0044); when omitted `/api/stats` reports zero observations. */
+  signalObservations?: SignalObservationRepo,
 ): Hono {
   const app = new Hono();
 
@@ -114,6 +120,26 @@ export function createApp(
   app.get('/api/reflection', async (c) => {
     const limit = normalizeLimit(c.req.query('limit'), 10);
     return c.json({ reflections: tickReflections ? await tickReflections.recent(limit) : [] });
+  });
+
+  // Accumulation evidence: cheap COUNT-only queries proving the Story cache
+  // grows and develops across ticks (stories merge, gain sources, get re-scored)
+  // and that Signal history keeps building — nothing is rebuilt from scratch.
+  app.get('/api/stats', async (c) => {
+    const [storyStats, signalStats, ticks] = await Promise.all([
+      storyRepo.stats(CROSS_TICK_MS),
+      signalObservations?.stats() ?? { observations: 0, oldestObservedAt: null },
+      tickReports?.recent(200) ?? [],
+    ]);
+    return c.json({
+      stories: storyStats.stories,
+      multiSourceStories: storyStats.multiSourceStories,
+      storiesUpdatedAcrossTicks: storyStats.storiesUpdatedAcrossTicks,
+      signalObservations: signalStats.observations,
+      oldestSignalAt: signalStats.oldestObservedAt,
+      ticksRecorded: ticks.length,
+      generatedAt: Date.now(),
+    });
   });
 
   app.get('/dashboard', async (c) =>

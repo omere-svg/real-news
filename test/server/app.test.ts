@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/server/app.js';
+import { renderDashboard } from '../../src/server/ui.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
-import { DrizzleTickReportRepo } from '../../src/db/tick-report-repo.js';
+import { DrizzleSignalObservationRepo } from '../../src/db/signal-observation-repo.js';
+import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report-repo.js';
 import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 import { DrizzleWebAuthRepo } from '../../src/db/web-auth-repo.js';
 import { DrizzleUsageRepo } from '../../src/db/usage-repo.js';
@@ -259,6 +261,145 @@ describe('HTTP API', () => {
     const body = (await res.json()) as { ticks: unknown[] };
     expect(body.ticks).toEqual([]);
   });
+
+  it('GET /api/stats reports the accumulation counters (stories, sources, signals, ticks)', async () => {
+    const db = await createTestDb();
+    const clock = new FakeClock(1000);
+    const repo = new DrizzleStoryRepo(db, clock);
+
+    // One corroborated story (2 refs) and one single-source story.
+    await repo.upsert({
+      id: 'multi', title: 'Corroborated quake', url: null, topic: 'Climate',
+      significance: 9, whyItMatters: null,
+      memberRefs: [{ source: 'usgs-quakes', externalId: '1' }, { source: 'gdelt', externalId: '2' }],
+    });
+    await repo.upsert({
+      id: 'single', title: 'AI story', url: null, topic: 'AI',
+      significance: 5, whyItMatters: null,
+      memberRefs: [{ source: 'hackernews', externalId: '3' }],
+    });
+    // A later tick re-touches "multi" — updated across ticks (> ~25min after first seen).
+    clock.advance(30 * 60_000);
+    await repo.upsert({
+      id: 'multi', title: 'Corroborated quake', url: null, topic: 'Climate',
+      significance: 9.5, whyItMatters: null,
+      memberRefs: [{ source: 'usgs-quakes', externalId: '1' }, { source: 'gdelt', externalId: '2' }],
+    });
+
+    const signals = new DrizzleSignalObservationRepo(db);
+    await signals.record([
+      { source: 'coingecko', key: 'a', topic: 'Business', value: 1, observedAt: 500 },
+      { source: 'coingecko', key: 'b', topic: 'Business', value: 2, observedAt: 2000 },
+    ]);
+
+    const ticks = new DrizzleTickReportRepo(db);
+    await ticks.record({
+      ranAt: 100, durationMs: 100, ok: true, error: null, extracted: 5,
+      storiesUpserted: 2, signalsObserved: 2,
+      skipped: [], failed: [], signalsSkipped: [], signalsFailed: [],
+    });
+
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(
+      repo, queryEngine, { minutes: 10 },
+      { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false },
+      ticks, undefined, undefined, signals,
+    );
+
+    const res = await app.request('/api/stats');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, number>;
+    expect(body).toMatchObject({
+      stories: 2,
+      multiSourceStories: 1,
+      storiesUpdatedAcrossTicks: 1,
+      signalObservations: 2,
+      oldestSignalAt: 500,
+      ticksRecorded: 1,
+    });
+    expect(body.generatedAt).toBeGreaterThan(0);
+  });
+
+  it('GET /api/stats degrades to zeros when no signal/tick repos are wired', async () => {
+    const app = await appWithStories();
+    const body = (await (await app.request('/api/stats')).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      stories: 2, signalObservations: 0, oldestSignalAt: null, ticksRecorded: 0,
+    });
+  });
+
+  it('a first-time visitor (no saved prefs) defaults to ALL topics, so the global lead is visible', async () => {
+    const app = await appWithStories();
+    const html = await (await app.request('/')).text();
+    // Saved prefs restore as before; with none saved the client clears the
+    // server-seeded preferred-topics default back to "All" (no filter).
+    expect(html).toContain('if (Array.isArray(cached.topics)) setTopics(cached.topics);');
+    expect(html).toContain('else setTopics([]);');
+  });
+
+  it('the outline tab auto-picks the most significant checked topic instead of erroring', async () => {
+    const app = await appWithStories();
+    const html = await (await app.request('/')).text();
+    expect(html).toContain('function autoOutlineTopic');
+    expect(html).not.toContain('Pick exactly one topic');
+  });
+
+  it('the podcast hint says web = script preview, full audio on the Telegram bot', async () => {
+    const app = await appWithStories();
+    const html = await (await app.request('/')).text();
+    expect(html).toContain('Script preview on the web — the full narrated audio plays on the Telegram bot.');
+  });
+});
+
+describe('dashboard rehab (health triage, humanized durations, accumulation strip)', () => {
+  const rec = (over: Partial<TickRecord> = {}): TickRecord => ({
+    ranAt: 0, durationMs: 248_061, ok: true, error: null, extracted: 5,
+    storiesUpserted: 2, signalsObserved: 1,
+    skipped: [], failed: [], signalsSkipped: [], signalsFailed: [],
+    ...over,
+  });
+
+  it('humanizes durations ("4m 08s", not "248061ms")', () => {
+    const html = renderDashboard([rec({ ranAt: 1000 })], [], 61_000);
+    expect(html).toContain('4m 08s');
+    expect(html).not.toContain('248061ms');
+  });
+
+  it('a successful tick with failed sources is amber "OK — N sources degraded", not red', () => {
+    const html = renderDashboard(
+      [rec({ failed: [{ source: 'gdelt', error: 'boom' }] })], [], 60_000,
+    );
+    expect(html).toContain('banner warn');
+    expect(html).toContain('OK — 1 source degraded');
+    expect(html).not.toContain('banner bad');
+    expect(html).not.toContain('Degraded ·');
+  });
+
+  it('a clean recent tick is green Healthy', () => {
+    const html = renderDashboard([rec()], [], 60_000);
+    expect(html).toContain('banner ok');
+    expect(html).toContain('Healthy');
+  });
+
+  it('an overdue last tick (~2× the cadence) is red even if it succeeded', () => {
+    const html = renderDashboard([rec({ ranAt: 0 })], [], 2 * 3600_000); // 2h later
+    expect(html).toContain('banner bad');
+    expect(html).toContain('OVERDUE');
+  });
+
+  it('a failed last tick is red', () => {
+    const html = renderDashboard([rec({ ok: false, error: 'exploded' })], [], 60_000);
+    expect(html).toContain('banner bad');
+    expect(html).toContain('Last tick FAILED');
+  });
+
+  it('ships the accumulation stats strip fed by /api/stats', () => {
+    const html = renderDashboard([rec()], [], 60_000);
+    expect(html).toContain('stories accumulated');
+    expect(html).toContain('days of signal history');
+    expect(html).toContain("fetch('/api/stats')");
+    expect(html).toContain('Accumulated since');
+  });
 });
 
 /** Build an app with the Log in with Telegram flow wired (ADR-0040). */
@@ -368,6 +509,20 @@ describe('Log in with Telegram + shared preferences (ADR-0040)', () => {
     const html = await (await app.request('/')).text();
     expect(html).toContain('Connect Telegram');
     expect(html).not.toContain('Sign in'); // the old fake localStorage login is gone
+  });
+
+  it('the viewer shows a "Chat with Horizon on Telegram" CTA when a bot username is configured', async () => {
+    const { app } = await appWithAuth();
+    const html = await (await app.request('/')).text();
+    // A direct t.me link — separate from (and in addition to) the login flow.
+    expect(html).toContain('href="https://t.me/HorizonBot"');
+    expect(html).toContain('Chat with Horizon on Telegram');
+  });
+
+  it('the bot CTA is absent when no bot username is configured', async () => {
+    const app = await appWithStories(); // no auth ⇒ no botUsername
+    const html = await (await app.request('/')).text();
+    expect(html).not.toContain('t.me/');
   });
 
   it('auth endpoints 404 when auth is not wired (guest-only viewer)', async () => {

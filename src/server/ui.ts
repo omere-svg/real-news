@@ -86,6 +86,12 @@ export function renderUI(defaults: UiDefaults): string {
   .icon-btn:hover, .ghost-btn:hover { border-color:var(--line2); background:var(--card2); }
   .icon-btn:active, .ghost-btn:active { transform:translateY(1px); }
   .ghost-btn .who { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* "Try the bot" CTA — an outbound t.me link, deliberately distinct from the
+     Connect-Telegram login button next to it. */
+  a.ghost-btn { text-decoration:none; }
+  .bot-cta { border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .bot-cta:hover { border-color:var(--accent); }
+  @media (max-width:680px){ .bot-cta .bot-label { display:none; } }
 
   /* Hero */
   .hero { padding:40px 0 8px; }
@@ -227,6 +233,7 @@ export function renderUI(defaults: UiDefaults): string {
   <div class="wrap topbar-in">
     <div class="brand"><span class="logo">🌅</span> Project Horizon <span class="tag">executive editor</span></div>
     <div class="top-actions">
+      ${defaults.botUsername ? `<a class="ghost-btn bot-cta" href="https://t.me/${defaults.botUsername}" target="_blank" rel="noopener" title="Chat with Horizon on Telegram">💬 <span class="bot-label">Chat with Horizon on Telegram</span></a>` : ''}
       <button class="icon-btn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
       ${defaults.authEnabled ? '<button class="ghost-btn" id="profileBtn">✈️ <span class="who" id="whoLabel">Connect Telegram</span></button>' : ''}
     </div>
@@ -321,8 +328,8 @@ document.querySelectorAll('.chip').forEach(c => c.style.setProperty('--td', TOPI
 const HINTS = {
   stories: 'Ranked cards — the most significant first. Filter by topic below.',
   brief: 'A tight, bulleted summary sized to the minutes you pick.',
-  outline: 'A deeper dive on a single topic — select exactly one topic.',
-  podcast: 'A narrated script you can read or hand to text-to-speech.'
+  outline: 'A deeper dive on one topic — with several checked, Horizon picks the most significant.',
+  podcast: 'Script preview on the web — the full narrated audio plays on the Telegram bot.'
 };
 const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 let format = 'stories';
@@ -473,7 +480,9 @@ function breakdownHtml(b, open){
   const s = b.signals||{};
   const recency = b.recencyFactor!=null ? pct(b.recencyFactor) : '100%';
   const nudge = Math.abs(b.signalNudge) > 0.05 ? ' · attention/macro nudge '+(b.signalNudge>=0?'+':'')+Number(b.signalNudge).toFixed(1) : '';
-  const facts = (s.corroboration||1)+' source(s) · recency '+recency+nudge;
+  // Corroboration only when it says something ("0 sources" is noise, not a fact).
+  const cor = Number(s.corroboration) || 0;
+  const facts = (cor >= 1 ? cor+' source'+(cor===1?'':'s')+' · ' : '')+'recency '+recency+nudge;
   return '<details class="why-score"'+(open?' open':'')+'><summary>Why this score?</summary>'+
     '<div class="bars">'+bars+'</div>'+
     '<div class="meta">'+esc(facts)+'</div></details>';
@@ -522,8 +531,20 @@ function renderScript(text){
   return '<div class="card"><div class="script-hd">🎧 Podcast script</div><div class="script">'+body+'</div></div>';
 }
 
+// The outline needs exactly one topic; with zero or many chips checked, pick the
+// topic of the top-scored story within the selection (the API orders by
+// significance, so limit=1 is exactly "the most significant checked topic").
+async function autoOutlineTopic(topics){
+  try {
+    const params = new URLSearchParams({ limit: '1' });
+    for (const t of topics) params.append('topic', t);
+    const top = (await (await fetch('/api/stories?' + params)).json()).stories?.[0];
+    return top ? top.topic : null;
+  } catch (e) { return null; }
+}
+
 async function load() {
-  const topics = selectedTopics();
+  let topics = selectedTopics();
   budgetCtl.style.display = format === 'stories' ? 'none' : 'inline-flex';
   hint.textContent = HINTS[format] || '';
   minutesLabel.textContent = minutesInput.value + ' min';
@@ -531,8 +552,15 @@ async function load() {
   if (format === 'stories') return loadStories(topics);
 
   if (format === 'outline' && topics.length !== 1) {
-    list.innerHTML = '<div class="empty"><div class="big">Pick exactly one topic</div>The outline is a deep dive into a single topic — select one chip above.</div>';
-    return;
+    list.innerHTML = skeletons(1);
+    const auto = await autoOutlineTopic(topics);
+    if (!auto) {
+      list.innerHTML = '<div class="empty"><div class="big">Nothing to outline yet</div>The worker fills the cache on each tick — check back shortly.</div>';
+      return;
+    }
+    hint.textContent = 'Deep dive: ' + auto + ' — the most significant ' +
+      (topics.length ? 'of your checked topics' : 'topic right now') + '. Check exactly one chip to pick another.';
+    topics = [auto];
   }
   list.innerHTML = skeletons(1);
   try {
@@ -639,7 +667,11 @@ function editorsNote(stories){
   const cached = readLS();
   if (cached.theme) document.documentElement.dataset.theme = cached.theme;
   syncThemeIcon();
+  // Saved prefs (guest or synced) win; a FIRST-TIME visitor gets no topic filter
+  // ("All" — no chips checked), so the globally top-scored story is never hidden
+  // behind the server's preferred-topics default.
   if (Array.isArray(cached.topics)) setTopics(cached.topics);
+  else setTopics([]);
   if (cached.minutes) { minutesInput.value = cached.minutes; }
   setFormat(cached.format || 'stories');
   minutesLabel.textContent = minutesInput.value + ' min';
@@ -675,6 +707,22 @@ function ago(thenMs: number, nowMs: number): string {
 }
 
 /**
+ * Expected worker cadence (~one tick). A last tick older than ~2× this means the
+ * worker is presumably stuck or dead — the only tick-timing state that is truly
+ * red. Kept slightly above the configured interval so a long tick isn't a false
+ * alarm.
+ */
+const EXPECTED_TICK_MS = 25 * 60_000;
+
+/** Humanize a millisecond duration: "480ms" / "12.4s" / "4m 08s". */
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
+}
+
+/**
  * The server-rendered observability dashboard (ADR-0033): a health banner plus a
  * table of recent tick outcomes. Data is passed in (no client fetch); the page
  * self-refreshes. `nowMs` is injected for testable "age" rendering.
@@ -687,11 +735,24 @@ export function renderDashboard(
   const last = ticks[0];
   const issues = (t: TickRecord): number =>
     t.failed.length + t.signalsFailed.length + t.skipped.length + t.signalsSkipped.length;
-  const degraded = !last || !last.ok || issues(last) > 0;
+  // Health triage: red only when the last tick itself FAILED or the worker looks
+  // stuck (no tick for ~2× the expected cadence). A successful tick with some
+  // failed/skipped sources is amber — degraded inputs, not a down system.
+  const overdue = last !== undefined && nowMs - last.ranAt > 2 * EXPECTED_TICK_MS;
+  const nIssues = last ? issues(last) : 0;
+  const level = !last ? 'warn' : !last.ok || overdue ? 'bad' : nIssues > 0 ? 'warn' : 'ok';
+  const headline = !last
+    ? ''
+    : !last.ok
+      ? 'Last tick FAILED'
+      : overdue
+        ? 'OVERDUE — worker may be stuck'
+        : nIssues > 0
+          ? `OK — ${nIssues} source${nIssues === 1 ? '' : 's'} degraded`
+          : 'Healthy';
   const banner = !last
     ? 'No ticks recorded yet — the worker writes one on each cycle.'
-    : `${last.ok ? (degraded ? 'Degraded' : 'Healthy') : 'Last tick FAILED'} · ` +
-      `last tick ${ago(last.ranAt, nowMs)} · ${last.storiesUpserted} stories · ${last.extracted} items`;
+    : `${headline} · last tick ${ago(last.ranAt, nowMs)} · ${last.storiesUpserted} stories · ${last.extracted} items`;
 
   const reflectionHtml = reflections.length
     ? `<section class="reflect">
@@ -717,7 +778,7 @@ export function renderDashboard(
         '<tr>' +
         `<td>${ago(t.ranAt, nowMs)}</td>` +
         `<td class="c">${status}</td>` +
-        `<td class="num">${t.durationMs}ms</td>` +
+        `<td class="num">${fmtDuration(t.durationMs)}</td>` +
         `<td class="num">${t.extracted}</td>` +
         `<td class="num">${t.storiesUpserted}</td>` +
         `<td class="num">${t.signalsObserved}</td>` +
@@ -744,7 +805,13 @@ export function renderDashboard(
   .sub { color:var(--muted); font-size:13px; margin-top:4px; }
   .banner { max-width:1000px; margin:12px auto; padding:12px 16px; border-radius:10px; font-weight:600;
             background:var(--card); border:1px solid #2a2f3a; }
-  .banner.ok { color:var(--ok); } .banner.bad { color:var(--bad); }
+  .banner.ok { color:var(--ok); } .banner.warn { color:var(--accent); } .banner.bad { color:var(--bad); }
+  .stats { max-width:1000px; margin:0 auto 4px; padding:0 20px; display:grid;
+           grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }
+  .stat { background:var(--card); border:1px solid #2a2f3a; border-radius:10px; padding:10px 14px; }
+  .stat b { display:block; font-size:20px; font-variant-numeric:tabular-nums; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .stats-note { grid-column:1/-1; color:var(--muted); font-size:12px; padding:0 2px; }
   main { max-width:1000px; margin:0 auto; padding:8px 20px 60px; }
   table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
   th, td { text-align:left; padding:7px 10px; border-bottom:1px solid #232833; }
@@ -765,7 +832,14 @@ export function renderDashboard(
   <h1>🌅 Horizon — Operations</h1>
   <div class="sub">Tick observability (ADR-0033) · auto-refreshes every 60s · <a href="/">viewer</a> · <a href="/api/ticks">JSON</a></div>
 </header>
-<div class="banner ${degraded ? 'bad' : 'ok'}">${escHtml(banner)}</div>
+<div class="banner ${level}">${escHtml(banner)}</div>
+<section class="stats" id="stats" hidden>
+  <div class="stat"><b id="stStories">–</b><span>stories accumulated</span></div>
+  <div class="stat"><b id="stMulti">–</b><span>multi-source stories</span></div>
+  <div class="stat"><b id="stSignals">–</b><span>signal observations</span></div>
+  <div class="stat"><b id="stDays">–</b><span>days of signal history</span></div>
+  <div class="stats-note" id="statsNote"></div>
+</section>
 <main>
   ${reflectionHtml}
   ${
@@ -777,6 +851,23 @@ export function renderDashboard(
   </table>`
   }
 </main>
+<script>
+// Accumulation strip (/api/stats): evidence the Story cache and Signal history
+// grow across ticks. Decorative — a fetch failure never breaks the ops page.
+(async () => {
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    const set = (id, v) => { document.getElementById(id).textContent = String(v); };
+    set('stStories', s.stories);
+    set('stMulti', s.multiSourceStories);
+    set('stSignals', s.signalObservations);
+    set('stDays', s.oldestSignalAt ? Math.max(1, Math.ceil((Date.now() - s.oldestSignalAt) / 86400000)) : 0);
+    const tail = s.storiesUpdatedAcrossTicks + ' stories updated across ticks · ' + s.ticksRecorded + ' recent ticks recorded';
+    set('statsNote', (s.oldestSignalAt ? 'Accumulated since ' + new Date(s.oldestSignalAt).toLocaleDateString() + ' · ' : '') + tail);
+    document.getElementById('stats').hidden = false;
+  } catch (e) { /* stats strip is optional */ }
+})();
+</script>
 </body>
 </html>`;
 }
