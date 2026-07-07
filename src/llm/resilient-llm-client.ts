@@ -57,8 +57,12 @@ export class ResilientLLMClient implements LLMClient {
   }
 
   analyze(input: AnalyzeInput): Promise<StoryAnalysis> {
-    // Null (not '') so the upsert preserves any existing summary/why (ADR-0047).
-    return this.guard('analyze', (d) => d.analyze(input), { summary: null, whyItMatters: null });
+    // Null (not '') so the upsert preserves any existing summary/why/displayTitle (ADR-0047/Task 20).
+    return this.guard('analyze', (d) => d.analyze(input), {
+      summary: null,
+      whyItMatters: null,
+      displayTitle: null,
+    });
   }
 
   narrate(input: NarrateInput): Promise<string> {

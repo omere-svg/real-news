@@ -80,12 +80,13 @@ export class FakeLLM implements LLMClient {
     const a = this.options.analyze;
     const resolved = typeof a === 'function' ? a(input) : a;
     if (typeof resolved === 'string') {
-      return { summary: resolved, whyItMatters: resolved };
+      return { summary: resolved, whyItMatters: resolved, displayTitle: null };
     }
     return (
       resolved ?? {
         summary: `What happened with "${input.title}".`,
         whyItMatters: `Why "${input.title}" matters.`,
+        displayTitle: null,
       }
     );
   }

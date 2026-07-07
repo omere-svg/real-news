@@ -204,4 +204,83 @@ describe('renderUI — client script wiring (regression coverage)', () => {
       expect(list.innerHTML).toContain("Couldn't load stories");
     });
   });
+
+  describe('behavioral: loadStories prefers displayTitle over the raw title (Task 20)', () => {
+    // Same vm-sandbox technique as above, but this time execute the full
+    // shipped card-rendering path (TOPIC_COLORS, safeUrl, breakdownHtml,
+    // SCORE_LABELS too) so the assertion exercises the real shipped
+    // `s.displayTitle || s.title` logic, not a re-implementation of it.
+    const escHtmlSrc = extractDecl(html, 'const escHtml =', '\nfunction esc(s)');
+    const escFnSrc = extractDecl(html, 'function esc(s)', '\n// emptyStateHtml');
+    const emptyStateHtmlSrc = extractDecl(html, 'const emptyStateHtml =', '\n// Only allow http(s) links');
+    const safeUrlSrc = extractDecl(html, 'function safeUrl(u)', '\nfunction selectedTopics');
+    const topicColorsSrc = extractDecl(html, 'const TOPIC_COLORS = {', '\ndocument.querySelectorAll');
+    const scoreLabelsSrc = extractDecl(html, 'const SCORE_LABELS =', '\nconst breakdownHtml =');
+    const breakdownHtmlSrc = extractDecl(html, 'const breakdownHtml =', '\n\nfunction skeletons');
+    const skeletonsSrc = extractDecl(html, 'function skeletons(n)', '\n\n// ---- Brief');
+    const loadStoriesSrc = extractDecl(html, 'async function loadStories(topics) {', '\n\nseg.addEventListener');
+
+    function makeSandbox(stories: unknown[]) {
+      const list = { innerHTML: '<div class="skel"></div>' };
+      const context = vm.createContext({
+        list,
+        fetch: async () => ({ json: async () => ({ stories }) }),
+        getLastTickAt: async () => null,
+        editorsNote: () => '',
+        location: { origin: 'https://horizon.example' },
+        URL,
+        URLSearchParams,
+      });
+      vm.runInContext(
+        [
+          escHtmlSrc,
+          escFnSrc,
+          emptyStateHtmlSrc,
+          safeUrlSrc,
+          topicColorsSrc,
+          scoreLabelsSrc,
+          breakdownHtmlSrc,
+          skeletonsSrc,
+          loadStoriesSrc,
+        ].join('\n'),
+        context,
+      );
+      return { context, list };
+    }
+
+    const baseStory = {
+      title: 'Boğaziçi Köprüsü açıldı',
+      url: null,
+      topic: 'AI',
+      significance: 5,
+      whyItMatters: null,
+      scoreBreakdown: null,
+      scoreTags: [],
+      memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    };
+
+    it('renders displayTitle when the deep tier set one, not the raw source title', async () => {
+      const { context, list } = makeSandbox([
+        { ...baseStory, displayTitle: 'The Bosphorus Bridge opened' },
+      ]);
+      await context.loadStories([]);
+      expect(list.innerHTML).toContain('The Bosphorus Bridge opened');
+      expect(list.innerHTML).not.toContain('Boğaziçi Köprüsü açıldı');
+    });
+
+    it('falls back to the cleaned original title when displayTitle is null (below top-N)', async () => {
+      const { context, list } = makeSandbox([{ ...baseStory, displayTitle: null }]);
+      await context.loadStories([]);
+      expect(list.innerHTML).toContain('Boğaziçi Köprüsü açıldı');
+    });
+
+    it('HTML-escapes a displayTitle the same as any other rendered field', async () => {
+      const { context, list } = makeSandbox([
+        { ...baseStory, displayTitle: '<script>alert(1)</script>' },
+      ]);
+      await context.loadStories([]);
+      expect(list.innerHTML).not.toContain('<script>alert(1)</script>');
+      expect(list.innerHTML).toContain('&lt;script&gt;');
+    });
+  });
 });

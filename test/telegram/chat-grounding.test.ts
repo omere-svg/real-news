@@ -8,7 +8,7 @@ import { FakeEmbedder } from '../helpers/fake-embedder.js';
 function story(id: string, over: Partial<Story> = {}): Story {
   return {
     id, title: id, url: null, topic: 'AI', significance: 5,
-    summary: null, whyItMatters: null, scoreBreakdown: null, memberRefs: [],
+    summary: null, whyItMatters: null, displayTitle: null, scoreBreakdown: null, memberRefs: [],
     firstSeenAt: 0, updatedAt: 0, ...over,
   };
 }

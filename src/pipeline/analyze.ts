@@ -24,17 +24,17 @@ export async function analyze(
   return Promise.all(
     clusters.map(async (scored, i) => {
       if (!topIndices.has(i)) {
-        return { ...scored, summary: null, whyItMatters: null };
+        return { ...scored, summary: null, whyItMatters: null, displayTitle: null };
       }
 
       const lead = representativeOf(scored.cluster);
-      const { summary, whyItMatters } = await llm.analyze({
+      const { summary, whyItMatters, displayTitle } = await llm.analyze({
         title: lead.title,
         text: lead.text,
         topic: scored.cluster.topic,
         significance: scored.significance,
       });
-      return { ...scored, summary, whyItMatters };
+      return { ...scored, summary, whyItMatters, displayTitle };
     }),
   );
 }

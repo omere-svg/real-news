@@ -406,7 +406,7 @@ describe('TickRunner', () => {
       rawItemRepo,
       storyRepo,
       llm: new FakeLLM({
-        analyze: { summary: 'The deep summary.', whyItMatters: 'The deep why.' },
+        analyze: { summary: 'The deep summary.', whyItMatters: 'The deep why.', displayTitle: null },
       }),
       embedder,
       clock,

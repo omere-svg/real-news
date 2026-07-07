@@ -223,6 +223,12 @@ export interface Story {
   readonly summary: string | null;
   /** The editorial justification. Null until the deep tier analyzes it. */
   readonly whyItMatters: string | null;
+  /**
+   * An English display headline from the deep tier (Task 20); null until this
+   * Story is deep-analyzed (or below top-N). Presentation prefers this over
+   * `title` when set.
+   */
+  readonly displayTitle: string | null;
   /** The inspectable "why this score" (ADR-0032). Null for Stories scored before it. */
   readonly scoreBreakdown: ScoreBreakdown | null;
   /** externalIds of the Raw Items merged into this Story (provenance). */

@@ -70,6 +70,7 @@ function makeStory(over: Partial<Story> = {}): Story {
     significance: 5,
     summary: null,
     whyItMatters: null,
+    displayTitle: null,
     scoreBreakdown: null,
     memberRefs: [],
     firstSeenAt: 0,

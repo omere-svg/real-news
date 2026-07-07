@@ -589,7 +589,11 @@ async function loadStories(topics) {
   list.innerHTML = editorsNote(stories) + '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map((s, i) => {
     const color = TOPIC_COLORS[s.topic] || '#8b93a7';
     const su = s.url ? safeUrl(s.url) : null;
-    const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
+    // Prefer the deep tier's English display title when set — raw non-English
+    // or mangled source headlines otherwise reach the front page verbatim
+    // (Task 20). s.title (the cleaned original) is the fallback below top-N.
+    const headline = s.displayTitle || s.title;
+    const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(headline)+'</a>' : esc(headline);
     const sources = [...new Set(s.memberRefs.map(r => r.source))].join(', ');
     // Always-visible score rationale chips — the transparent-scoring differentiator
     // shouldn't need a click (ADR-0050). The full breakdown stays one tap away, and

@@ -49,6 +49,11 @@ export const stories = sqliteTable('stories', {
   significance: real('significance').notNull(),
   summary: text('summary'),
   whyItMatters: text('why_it_matters'),
+  // English display headline from the deep-tier analyze call (Task 20); null
+  // until a Story is deep-analyzed, or below top-N. The presentation layer
+  // prefers this over `title` when set — the raw source headline (often
+  // non-English) stays in `title` for provenance.
+  displayTitle: text('display_title'),
   // Inspectable "why this score" snapshot (ADR-0032); null for pre-0032 stories.
   scoreBreakdown: text('score_breakdown', { mode: 'json' }).$type<ScoreBreakdown>(),
   firstSeenAt: integer('first_seen_at').notNull(),

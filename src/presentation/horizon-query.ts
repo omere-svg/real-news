@@ -163,7 +163,9 @@ export class HorizonQuery implements QueryEngine {
  * description. The link is the Story's canonical `url`.
  */
 function renderStory({ story, depth }: BudgetedStory): string {
-  const lines = [`📰 ${story.title}`];
+  // Prefer the deep tier's English display title when set (Task 20) — the bot
+  // brief otherwise relays a raw non-English/mangled source headline verbatim.
+  const lines = [`📰 ${story.displayTitle || story.title}`];
   if (depth !== 'headline') {
     const summary = story.summary?.trim();
     if (summary) {
