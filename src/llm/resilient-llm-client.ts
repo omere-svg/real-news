@@ -30,8 +30,9 @@ import type {
 export class ResilientLLMClient implements LLMClient {
   constructor(
     private readonly delegate: LLMClient,
-    private readonly onError: (op: string, err: unknown) => void = (op, err) =>
-      console.warn(`[reasoner] ${op} failed, degrading:`, err),
+    // Composition root wires the real Logger-backed callback (main.ts); this
+    // default only covers callers (tests) that don't care about the degrade log.
+    private readonly onError: (op: string, err: unknown) => void = () => undefined,
   ) {}
 
   /** Run a delegate call; on failure log and return the neutral fallback. */

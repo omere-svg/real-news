@@ -8,6 +8,7 @@ import type { StoredVector, StoryRepo } from '../db/story-repo.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Clock } from '../scheduler/clock.js';
+import { nullLogger, type Logger } from '../log/logger.js';
 import type { EmbeddedItem } from './types.js';
 
 const HOUR_MS = 3_600_000;
@@ -33,6 +34,8 @@ export interface ResolveDeps {
   readonly rawItemRepo: RawItemRepo;
   readonly llm: PipelineReasoner;
   readonly clock: Clock;
+  /** Structured-log sink (src/log/logger.ts); absent ⇒ nullLogger (tests). */
+  readonly log?: Logger;
 }
 
 export interface ResolveOptions {
@@ -110,6 +113,7 @@ export async function resolve(
   deps: ResolveDeps,
   opts: ResolveOptions,
 ): Promise<IdentifiedCluster[]> {
+  const log = deps.log ?? nullLogger;
   const vectorByItem = new Map(embedded.map((e) => [refKey(e.item), e.vector]));
   const sinceMs = deps.clock.now() - opts.recentWindowHours * HOUR_MS;
 
@@ -198,7 +202,7 @@ export async function resolve(
   );
 
   if (confirms.accepted + confirms.vetoed > 0) {
-    console.log(`[dedup] resolve confirmed=${confirms.accepted} vetoed=${confirms.vetoed}`);
+    log.info('resolve.confirm.veto', { confirmed: confirms.accepted, vetoed: confirms.vetoed });
   }
 
   // Two distinct Clusters can resolve to the SAME Story id (both matched one

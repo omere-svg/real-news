@@ -120,28 +120,25 @@ describe('cluster stage', () => {
   });
 
   it('logs confirm accept/veto counts when candidate pairs were escalated', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      await cluster(
-        [
-          embedded('1', [1, 0, 0]),
-          embedded('2', [0.99, 0.02, 0]), // pair with 1 → confirmed
-          embedded('3', [0, 1, 0]),
-        ],
-        new FakeLLM({ confirm: true }),
-        opts,
-      );
-      expect(log).toHaveBeenCalledWith('[dedup] cluster confirmed=1 vetoed=0');
+    const info = vi.fn();
+    const log = { info, warn: vi.fn(), error: vi.fn() };
+    await cluster(
+      [
+        embedded('1', [1, 0, 0]),
+        embedded('2', [0.99, 0.02, 0]), // pair with 1 → confirmed
+        embedded('3', [0, 1, 0]),
+      ],
+      new FakeLLM({ confirm: true }),
+      { ...opts, log },
+    );
+    expect(info).toHaveBeenCalledWith('cluster.confirm.veto', { confirmed: 1, vetoed: 0 });
 
-      log.mockClear();
-      await cluster(
-        [embedded('1', [1, 0, 0]), embedded('2', [0, 1, 0])], // no candidates
-        new FakeLLM({ confirm: true }),
-        opts,
-      );
-      expect(log).not.toHaveBeenCalled(); // silent when nothing was escalated
-    } finally {
-      log.mockRestore();
-    }
+    info.mockClear();
+    await cluster(
+      [embedded('1', [1, 0, 0]), embedded('2', [0, 1, 0])], // no candidates
+      new FakeLLM({ confirm: true }),
+      { ...opts, log },
+    );
+    expect(info).not.toHaveBeenCalled(); // silent when nothing was escalated
   });
 });

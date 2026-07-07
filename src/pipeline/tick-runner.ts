@@ -18,6 +18,7 @@ import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SourceId } from '../domain/types.js';
+import { nullLogger, type Logger } from '../log/logger.js';
 import type { AnalyzedCluster } from './types.js';
 
 const HOUR_MS = 3_600_000;
@@ -56,6 +57,8 @@ export interface TickRunnerDeps {
   readonly embedder: Embedder;
   readonly clock: Clock;
   readonly config: TickConfig;
+  /** Structured-log sink (src/log/logger.ts); absent ⇒ nullLogger (tests). */
+  readonly log?: Logger;
 }
 
 /** Structured outcome of one tick (ADR-0010) — for logging/observability. */
@@ -89,6 +92,7 @@ export class TickRunner {
     } = {},
   ): Promise<TickReport> {
     const { rawItemRepo, storyRepo, llm, embedder, clock, config } = this.deps;
+    const log = this.deps.log ?? nullLogger;
 
     // Adaptive backoff (ADR-0052): the loop may ask us to skip Sources that have
     // failed repeatedly, so we don't spend a rate-limited fetch on a known-bad one.
@@ -138,12 +142,13 @@ export class TickRunner {
       candidateThreshold: config.candidateThreshold,
       ...(config.entityBlocking ? { entityBlocking: config.entityBlocking } : {}),
       ...(config.confirmConcurrency ? { confirmConcurrency: config.confirmConcurrency } : {}),
+      log,
     });
     // Cross-tick identity: merge each Cluster into a matching prior Story (ADR-0017/0038).
     // The entity-relaxed band mirrors cluster's strong band and is governed by the
     // SAME config switch (dedup.entityBlocking.enabled) — one kill-switch, both layers.
     const eb = config.entityBlocking;
-    const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock }, {
+    const identified = await resolve(clusters, embedded, { storyRepo, rawItemRepo, llm, clock, log }, {
       candidateThreshold: config.candidateThreshold,
       recentWindowHours: config.recentWindowHours,
       ...(config.crossTopic ? { crossTopic: config.crossTopic } : {}),

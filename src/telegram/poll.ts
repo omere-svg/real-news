@@ -17,8 +17,9 @@ export async function pollOnce(
   bot: UpdateHandler,
   offset: number,
   timeoutSec: number,
-  onError: (err: unknown) => void = (err) =>
-    console.error('[telegram] handler failed:', err),
+  // Composition root wires the real Logger-backed callback (main.ts); this
+  // default only covers callers (tests) that don't care about the failure log.
+  onError: (err: unknown) => void = () => undefined,
 ): Promise<number> {
   const { updates, ackOffset } = await transport.getUpdates(offset, timeoutSec);
   // Advance past every RAW update in the batch (ackOffset), not just the ones we

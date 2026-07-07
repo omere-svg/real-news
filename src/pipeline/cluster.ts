@@ -4,6 +4,7 @@ import { cosine } from '../embedding/cosine.js';
 import { dedupText } from './embed.js';
 import { extractEntities, sharedEntityStats } from './entities.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
+import { nullLogger, type Logger } from '../log/logger.js';
 import type { EmbeddedItem } from './types.js';
 
 /** Entity-aware blocking (ADR-0036). Optional layer; absent ⇒ pure cosine. */
@@ -43,6 +44,8 @@ export interface ClusterOptions {
   readonly confirmConcurrency?: number;
   /** Hard cap on confirm calls per tick; defaults to MAX_CONFIRM_PAIRS. */
   readonly maxConfirmPairs?: number;
+  /** Structured-log sink (src/log/logger.ts); absent ⇒ nullLogger (tests). */
+  readonly log?: Logger;
 }
 
 /**
@@ -111,6 +114,7 @@ export async function cluster(
   llm: PipelineReasoner,
   opts: ClusterOptions,
 ): Promise<Cluster[]> {
+  const log = opts.log ?? nullLogger;
   const parent = items.map((_, i) => i);
   const find = (x: number): number => {
     let root = x;
@@ -136,7 +140,7 @@ export async function cluster(
   if (pairs.length > cap) {
     // Keep the most-similar pairs (likeliest true merges); log what was dropped.
     const bySim = [...pairs].sort((p, q) => simOf(items, q) - simOf(items, p)).slice(0, cap);
-    console.log(`[dedup] cluster pair cap: confirming ${cap} of ${pairs.length} candidate pairs`);
+    log.info('cluster.pair_cap', { confirming: cap, candidates: pairs.length });
     // Restore deterministic scan order so union-find behavior stays stable.
     pairs = bySim.sort(([ai, aj], [bi, bj]) => ai - bi || aj - bj);
   }
@@ -160,7 +164,7 @@ export async function cluster(
   // (how often the Reasoner rejects what the cosine/entity layer proposed).
   if (pairs.length > 0) {
     const accepted = confirmed.filter(Boolean).length;
-    console.log(`[dedup] cluster confirmed=${accepted} vetoed=${pairs.length - accepted}`);
+    log.info('cluster.confirm.veto', { confirmed: accepted, vetoed: pairs.length - accepted });
   }
 
   // Group by root, preserving first-occurrence order.

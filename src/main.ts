@@ -169,6 +169,7 @@ function buildEmbedder(
   return new ResilientEmbedder(
     new OpenAIEmbedder({ model, dimensions, ...(onUsage ? { onUsage } : {}) }),
     hashing,
+    (op, err) => log.warn('embedder.degraded', { op, err }),
   );
 }
 
@@ -213,8 +214,10 @@ function buildSignalSources(config: Config, fetchJson: JsonFetcher): SignalSourc
     .map((s) => buildSignalSource(s.id as SignalSourceId, s, fetchJson));
 }
 
-/** The structured log sink (src/log/logger.ts). Orchestration logs flow through
- * it; a few leaf resilient-wrappers still default to console.warn on degrade. */
+/** The structured log sink (src/log/logger.ts). Every orchestration log — including
+ * the leaf resilient-wrappers' degrade paths — flows through it; a raw `console.*`
+ * call anywhere else in src/ (outside this file and src/server/ui.ts's client
+ * script) is a bug (Task 18). */
 const log: Logger = new ConsoleLogger();
 
 async function main(): Promise<void> {
@@ -311,6 +314,7 @@ async function main(): Promise<void> {
     embedder,
     clock: systemClock,
     config: toTickConfig(config),
+    log,
   });
 
   const retention = config.retention;
@@ -551,6 +555,7 @@ function buildWebSearch(config: Config): WebSearch | null {
   }
   return new ResilientWebSearch(
     new TavilyWebSearch({ apiKey, maxResults: ws.maxResults }),
+    (err) => log.warn('web_search.degraded', { err }),
   );
 }
 
@@ -599,6 +604,7 @@ function startTelegramBot(
           onUsage: (u) =>
             tokenLedger?.record({ tier: 'tts', promptTokens: u.characters, completionTokens: 0 }),
         }),
+        (op, err) => log.warn('tts.degraded', { op, err }),
       )
     : null;
 
