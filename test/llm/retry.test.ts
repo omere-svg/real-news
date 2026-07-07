@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from 'openai';
 import { withRetry, isRetryable, markTransient } from '../../src/llm/retry.js';
 
 const noSleep = async (): Promise<void> => undefined;
@@ -35,6 +36,32 @@ describe('isRetryable (ADR-0049)', () => {
 
   it('retries a SyntaxError explicitly tagged transient by a caller (markTransient)', () => {
     expect(isRetryable(markTransient(new SyntaxError('Unexpected end of JSON input')))).toBe(true);
+  });
+
+  it('retries the real openai@4 APIConnectionError — status/code are undefined, the ' +
+    'cause carries the real network error, and "Connection error." is the only message', () => {
+    const dropped = new APIConnectionError({
+      message: 'Connection error.',
+      cause: Object.assign(new Error('socket disconnected'), { code: 'ECONNRESET' }),
+    });
+    expect(dropped.status).toBeUndefined();
+    expect((dropped as { code?: string }).code).toBeUndefined();
+    expect(isRetryable(dropped)).toBe(true);
+  });
+
+  it('retries a status-less error whose own message says "connection error"/"connection timeout" '
+    + 'even with no recognizable cause (belt-and-suspenders for SDK variants without a cause)', () => {
+    expect(isRetryable(new APIConnectionError({ message: 'Connection error.' }))).toBe(true);
+    expect(isRetryable(new Error('Connection timeout'))).toBe(true);
+  });
+
+  it('recurses into err.cause (bounded depth) to find a recognizable network code/name', () => {
+    const wrapped = Object.assign(new Error('outer wrapper, no signal here'), {
+      cause: Object.assign(new Error('middle wrapper'), {
+        cause: Object.assign(new Error('inner'), { code: 'ETIMEDOUT' }),
+      }),
+    });
+    expect(isRetryable(wrapped)).toBe(true);
   });
 });
 

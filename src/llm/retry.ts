@@ -28,15 +28,19 @@ const TRANSIENT_NETWORK_CODES = new Set([
   'EAI_AGAIN',
 ]);
 
+/** How many `.cause` links to follow before giving up (avoids a cyclic-cause hang). */
+const MAX_CAUSE_DEPTH = 5;
+
 /**
- * Whether a status-less error looks like a network blip worth retrying, as
- * opposed to a programmer bug (TypeError, RangeError, ...) that will fail
- * identically on every attempt. Judged by `code`/`name`/message since fetch
- * and the OpenAI SDK don't agree on a single shape for these.
+ * Whether a single error object's own code/name/message look like a network
+ * blip — no recursion into `.cause` here; that's `isTransientNetworkError`'s job.
  */
-function isTransientNetworkError(err: unknown): boolean {
-  if (!(err instanceof Error) && typeof err !== 'object') return false;
-  const e = err as { code?: string; name?: string; message?: string; transient?: boolean };
+function looksTransientAtThisLevel(e: {
+  code?: string;
+  name?: string;
+  message?: string;
+  transient?: boolean;
+}): boolean {
   // Explicitly tagged by a caller that knows the error is a transport fault
   // (see `markTransient`) — not inferred from the error's type/name, since a
   // SyntaxError (say) is just as often a programmer bug as a wire fault.
@@ -44,7 +48,39 @@ function isTransientNetworkError(err: unknown): boolean {
   if (e.code && TRANSIENT_NETWORK_CODES.has(e.code)) return true;
   if (e.name === 'AbortError') return true;
   const message = e.message ?? '';
-  return /fetch failed|network|ENOTFOUND|socket hang up/i.test(message);
+  return /fetch failed|network|ENOTFOUND|socket hang up|connection error|connection timeout/i.test(
+    message,
+  );
+}
+
+/**
+ * Whether a status-less error looks like a network blip worth retrying, as
+ * opposed to a programmer bug (TypeError, RangeError, ...) that will fail
+ * identically on every attempt. Judged by `code`/`name`/message since fetch
+ * and the OpenAI SDK don't agree on a single shape for these.
+ *
+ * The openai@4 SDK wraps a dropped connection as `APIConnectionError`, whose
+ * own shape is `{status: undefined, code: undefined, message: 'Connection
+ * error.'}` — none of that is recognizable on its own. The real cause (an
+ * ECONNRESET, a fetch TypeError, ...) lives in `err.cause`, so this recurses
+ * into `.cause` (bounded depth, since causes can chain arbitrarily deep) to
+ * find it, in addition to matching the SDK's own generic wording.
+ */
+function isTransientNetworkError(err: unknown, depth = 0): boolean {
+  if (!(err instanceof Error) && typeof err !== 'object') return false;
+  if (err === null) return false;
+  const e = err as {
+    code?: string;
+    name?: string;
+    message?: string;
+    transient?: boolean;
+    cause?: unknown;
+  };
+  if (looksTransientAtThisLevel(e)) return true;
+  if (depth < MAX_CAUSE_DEPTH && e.cause !== undefined && e.cause !== err) {
+    return isTransientNetworkError(e.cause, depth + 1);
+  }
+  return false;
 }
 
 /**
