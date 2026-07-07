@@ -149,10 +149,11 @@ export interface HorizonBotDeps {
 const FOLLOWABLE_TOPICS = TOPICS.filter((t) => t !== 'Other').join(' · ');
 
 const HELP = [
-  '🌅 Horizon — your world, already read.',
+  '🌅 Horizon — everything that matters, one place, no agenda.',
   '',
-  'I read thousands of items from official news APIs every few minutes and keep only ' +
-    'what matters — scored, de-duplicated, and explained. Ask in plain English, or use a command:',
+  'I pull from 20+ official sources every few minutes and rank what matters by real-world ' +
+    'importance — reading across all of them so you don’t miss what one source buried or an ' +
+    'agenda left out. Ask in plain English, or use a command:',
   '',
   '📰  A brief, sized to your time',
   '      “give me a 5-minute brief on AI”  ·  /brief 5',

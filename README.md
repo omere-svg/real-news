@@ -1,8 +1,16 @@
 # 🌅 Project Horizon
 
-An autonomous, server-side **executive editor**. A background worker pulls from official
-public APIs every *X* minutes, scores and de-duplicates stories into a local database, and
-serves a zero-latency, read-only viewer of the pre-digested intelligence.
+An autonomous, server-side **executive editor**. It exists to solve one problem: today the
+AI, geopolitics, sports, Israeli politics — and everything else you follow — live in a
+dozen different apps and outlets, and any single one can bury, miss, or slant what matters.
+Horizon centralizes all of it in **one objective place**, ranks each story by **real-world
+importance** (not by any outlet's agenda), and reads **across many sources at once** so
+nothing important slips through. Everything is presented in **English** (foreign headlines
+are translated during processing — ADR-0057).
+
+Under the hood: a background worker pulls from 20+ official public APIs every *X* minutes,
+scores and corroborates stories into a local database, and serves a zero-latency, read-only
+viewer of the pre-digested intelligence.
 
 Built grill → architecture → TDD. Design decisions live in [`docs/adr/`](docs/adr); the
 domain language lives in [`CONTEXT.md`](CONTEXT.md).

@@ -28,7 +28,7 @@ export function renderUI(defaults: UiDefaults): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Project Horizon — your world, already read</title>
+<title>Project Horizon — everything that matters, one place, no agenda</title>
 <style>
   :root {
     --bg:#0b0d12; --bg2:#0f1218; --card:#14171f; --card2:#181c25;
@@ -231,13 +231,13 @@ export function renderUI(defaults: UiDefaults): string {
 
 <div class="wrap">
   <section class="hero">
-    <h1 id="heroTitle">Your world, <span class="grad">already read.</span></h1>
-    <p id="heroSub">Horizon reads thousands of items from official APIs every few minutes, then keeps only what matters — scored, de-duplicated, and explained in plain language. No feed to scroll. No noise. Just the signal, sized to the time you have.</p>
+    <h1 id="heroTitle">Everything that matters. <span class="grad">One place, no agenda.</span></h1>
+    <p id="heroSub">The AI, geopolitics, sports, Israeli politics — and everything else you follow — in one place, so you're not hopping between apps and outlets. Horizon pulls from 20+ official sources every few minutes and ranks each story by real-world importance, not by any single outlet's agenda. Reading across all of them together means you don't miss what one source buried or never covered. No feed to scroll. No noise. Just what matters, sized to the time you have.</p>
   </section>
 
   <section class="how" id="how">
     <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source authority. Open <em>Why this score?</em> for the exact math.</p></div>
-    <div class="step"><h3><span class="n">2</span> De-duplicated</h3><p>The same event from many sources is merged into one story — so you read it once, with all its corroboration.</p></div>
+    <div class="step"><h3><span class="n">2</span> Cross-checked</h3><p>The same event from many sources becomes one story, corroborated across all of them — so no single outlet decides what you see, and nothing important slips through.</p></div>
     <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> in one line, sized to the minutes you have.</p></div>
     <div class="under" id="under">From <b>20+ official news &amp; data APIs</b> · <b>zero scraping</b> · re-read every few minutes<span id="freshness"></span></div>
   </section>
@@ -380,7 +380,7 @@ const pop = document.getElementById('pop');
 const profileBtn = document.getElementById('profileBtn');
 function setWho(text){ const w = document.getElementById('whoLabel'); if (w) w.textContent = text; }
 function compactHero(name){ heroEl.classList.add('compact'); howEl.classList.add('hidden'); if (name) heroTitle.innerHTML = 'Welcome back, <span class="grad">' + esc(name) + '.</span>'; }
-function expandHero(){ heroEl.classList.remove('compact'); howEl.classList.remove('hidden'); heroTitle.innerHTML = 'Your world, <span class="grad">already read.</span>'; }
+function expandHero(){ heroEl.classList.remove('compact'); howEl.classList.remove('hidden'); heroTitle.innerHTML = 'Everything that matters. <span class="grad">One place, no agenda.</span>'; }
 
 function showState(which){
   for (const id of ['stateStart','statePending','stateLinked']) document.getElementById(id).classList.toggle('hidden', id !== which);
