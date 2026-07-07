@@ -221,8 +221,10 @@ presentation:
   maxMinutes: 60            # hard cap on requested minutes (cost guard, ADR-0023)
   maxPodcastMinutes: 20     # tighter cap for podcasts (TTS cost guard) — clamps the audio path
   webPodcastEnabled: true   # expose the LLM-backed /api/podcast on the web (ADR-0023/0050).
-                            # Bounded per call by maxPodcastMinutes; script-only (no web TTS);
-                            # draws from the same global daily podcast budget as the bot
+                            # Bounded per call by maxPodcastMinutes; narrates to real audio
+                            # when tts.enabled (ADR-0020), degrading to script-only on TTS
+                            # failure; only produced on an explicit Generate press. Draws from
+                            # the same global daily podcast budget as the bot
                             # (telegram.limits.globalPodcastPerDay, ADR-0052) — every cost
                             # vector shares one hard ceiling.
   # Readability floor (ADR-0024): prefer few, fully-explained stories over many headlines.

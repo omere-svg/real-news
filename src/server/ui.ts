@@ -200,6 +200,20 @@ export function renderUI(defaults: UiDefaults): string {
   a.btn-primary { text-decoration:none; text-align:center; display:block; }
   .btn-primary[disabled] { opacity:.6; cursor:progress; }
   .hidden { display:none !important; }
+  /* Close (✕) button on the login/connected sheet */
+  .sheet-close { position:absolute; top:12px; right:12px; width:30px; height:30px; display:grid;
+    place-items:center; border:0; border-radius:9px; background:transparent; color:var(--muted);
+    font-size:16px; line-height:1; cursor:pointer; transition:background .15s, color .15s; }
+  .sheet-close:hover { background:var(--card2); color:var(--fg); }
+  /* Generate button — explicit, so choosing a format/topic never auto-spends the model */
+  .gen-btn { display:none; align-items:center; gap:7px; cursor:pointer; border:0;
+    background:linear-gradient(92deg,var(--accent2),var(--accent)); color:#1a1205; font-weight:800;
+    font-size:13.5px; border-radius:999px; padding:8px 16px; transition:transform .05s, opacity .15s; }
+  html[data-theme="light"] .gen-btn { color:#fff; }
+  .gen-btn:active { transform:translateY(1px); }
+  .gen-btn[disabled] { opacity:.6; cursor:progress; }
+  /* Web podcast audio player */
+  .pod-audio { width:100%; margin:6px 0 14px; }
   /* Connect-Telegram states */
   .ok-badge { font-size:40px; text-align:center; line-height:1; margin-bottom:6px; }
   .code { font:800 24px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:5px;
@@ -253,6 +267,7 @@ export function renderUI(defaults: UiDefaults): string {
     <div class="subctl">
       <div class="topics" id="topics">${topicChips(defaults.topics ?? [])}</div>
       <label class="budget" id="budgetCtl">⏱ Time <input id="minutes" type="range" min="1" max="30" value="${defaults.minutes}" /> <b id="minutesLabel">${defaults.minutes} min</b></label>
+      <button class="gen-btn" id="genBtn" type="button">✨ Generate</button>
     </div>
   </section>
 
@@ -263,6 +278,7 @@ export function renderUI(defaults: UiDefaults): string {
 <div class="pop" id="pop">
   <div class="scrim" data-close></div>
   <div class="sheet">
+    <button class="sheet-close" id="popClose" type="button" aria-label="Close">✕</button>
     <div id="stateStart">
       <h2>Log in with Telegram</h2>
       <p>Connect your Telegram account so your topics and reading time follow you across the web app and the bot. It's free — no password, no phone number, nothing to install.</p>
@@ -301,6 +317,7 @@ const topicsBox = document.getElementById('topics');
 const minutesInput = document.getElementById('minutes');
 const minutesLabel = document.getElementById('minutesLabel');
 const budgetCtl = document.getElementById('budgetCtl');
+const genBtn = document.getElementById('genBtn');
 const hint = document.getElementById('hint');
 const heroEl = document.querySelector('.hero');
 const heroTitle = document.getElementById('heroTitle');
@@ -316,12 +333,26 @@ document.querySelectorAll('.chip').forEach(c => c.style.setProperty('--td', TOPI
 
 const HINTS = {
   stories: 'Ranked cards — the most significant first. Filter by topic below.',
-  brief: 'A tight, bulleted summary sized to the minutes you pick.',
-  outline: 'A deeper dive on one topic — with several checked, Horizon picks the most significant.',
-  podcast: 'Script preview on the web — the full narrated audio plays on the Telegram bot.'
+  brief: 'A tight, bulleted summary sized to the minutes you pick — press ✨ Generate to build it.',
+  outline: 'A deeper dive on one topic — press ✨ Generate to build it.',
+  podcast: 'A short narrated audio episode of your top stories — press ✨ Generate to produce it.'
 };
 const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 let format = 'stories';
+// Only the Stories tab reads the cache for free; brief/outline/podcast each cost a
+// model call (podcast also TTS), so they never run on a tab/topic/time change —
+// only when the reader presses Generate. Keeps the model idle until asked.
+function isDoc(){ return format !== 'stories'; }
+function showControls(){
+  budgetCtl.style.display = isDoc() ? 'inline-flex' : 'none';
+  genBtn.style.display = isDoc() ? 'inline-flex' : 'none';
+}
+function promptGenerate(){
+  hint.textContent = HINTS[format] || '';
+  list.innerHTML = emptyStateHtml('Ready when you are', 'Choose your topics and time, then press ✨ Generate.');
+}
+// Stories render live; docs wait for an explicit Generate so the model stays idle.
+function render(){ if (isDoc()) promptGenerate(); else load(); }
 
 // Single source of truth with the server (ui-view.ts, unit-tested there) —
 // injected verbatim so the browser runs the exact same escaping code.
@@ -366,7 +397,7 @@ function pushServerSoon(){
     }).catch(() => {});
   }, 400);
 }
-function onPrefChanged(){ cacheLocal(); pushServerSoon(); load(); }
+function onPrefChanged(){ cacheLocal(); pushServerSoon(); render(); }
 
 // ---- Theme (always a local preference) ----
 function syncThemeIcon(){ document.getElementById('themeBtn').textContent = document.documentElement.dataset.theme === 'light' ? '☀️' : '🌙'; }
@@ -430,7 +461,8 @@ async function onLinked(name){
   document.getElementById('linkedTitle').textContent = name ? ('Connected, ' + name) : 'Connected';
   showState('stateLinked');
   await loadServerPrefs();
-  load();
+  showControls();
+  render();
 }
 
 async function loadServerPrefs(){
@@ -460,6 +492,7 @@ async function signOut(){
 if (CFG.authEnabled) {
   if (profileBtn) profileBtn.onclick = openPop;
   pop.querySelector('[data-close]').onclick = closePop;
+  document.getElementById('popClose').onclick = closePop;
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
   document.getElementById('startPair').onclick = startPair;
   document.getElementById('cancelPair').onclick = () => { stopPolling(); showState('stateStart'); };
@@ -515,6 +548,18 @@ function renderScript(text){
   const body = (paras.length ? paras : [text]).map(p => '<p class="script-p">'+esc(p)+'</p>').join('');
   return '<div class="card"><div class="script-hd">🎧 Podcast script</div><div class="script">'+body+'</div></div>';
 }
+// The web podcast is now real narrated audio (ADR-0020): an <audio> player, with
+// the script kept one tap away as a transcript. If TTS was unavailable the server
+// returns no audio and we fall back to showing the script to read.
+function renderPodcast(script, audioB64){
+  const player = audioB64
+    ? '<audio class="pod-audio" controls autoplay src="data:audio/mpeg;base64,'+audioB64+'"></audio>'
+    : '<p class="why">Audio couldn’t be generated just now — here’s the script to read.</p>';
+  const paras = (script || '').split(/\\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const body = (paras.length ? paras : [script]).map(p => '<p class="script-p">'+esc(p)+'</p>').join('');
+  return '<div class="card"><div class="script-hd">🎧 Podcast</div>'+player+
+    '<details class="why-score"><summary>Show transcript</summary><div class="script">'+body+'</div></details></div>';
+}
 
 // The outline needs exactly one topic; with zero or many chips checked, pick the
 // topic of the top-scored story within the selection (the API orders by
@@ -557,6 +602,12 @@ async function load() {
       return;
     }
     const body = await res.json();
+    if (format === 'podcast') {
+      const script = body.script || '';
+      if (!script.trim() && !body.audio) { list.innerHTML = emptyStateHtml('Nothing to narrate yet', 'The worker fills the cache on each tick — check back shortly.'); return; }
+      list.innerHTML = renderPodcast(script, body.audio);
+      return;
+    }
     const text = body[DOC_FIELD[format]] || '';
     if (!text.trim()) { list.innerHTML = emptyStateHtml('Nothing to show yet', 'The worker fills the cache on each tick — check back shortly.'); return; }
     list.innerHTML = renderDoc(format, text);
@@ -612,8 +663,14 @@ seg.addEventListener('click', e => {
   const btn = e.target.closest('button[data-fmt]'); if (!btn) return;
   setFormat(btn.dataset.fmt);
   cacheLocal(); // format is a local UI preference, not a synced one
-  load();
+  showControls();
+  render();
 });
+// The only place a doc format actually generates — an explicit, deliberate spend.
+genBtn.onclick = async () => {
+  genBtn.disabled = true;
+  try { await load(); } finally { genBtn.disabled = false; }
+};
 topicsBox.addEventListener('change', onPrefChanged);
 minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + ' min'; };
 minutesInput.onchange = onPrefChanged;
@@ -670,7 +727,8 @@ function editorsNote(stories){
   minutesLabel.textContent = minutesInput.value + ' min';
   if (CFG.authEnabled) await refreshAuth(); // may override topics/minutes from the linked account
   loadFreshness();
-  load();
+  showControls();
+  render();
 })();
 </script>
 </body>

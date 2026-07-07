@@ -128,9 +128,11 @@ writes the podcast to `/tmp/horizon-podcast.mp3`.
   briefs/outlines and the whole web viewer are deterministic cache reads that spend **zero** tokens.
 - **`minutes` is clamped** to `presentation.maxMinutes`, with a **tighter
   `presentation.maxPodcastMinutes`** cap on the expensive audio path. The LLM-backed web
-  `/api/podcast` is **on** (`presentation.webPodcastEnabled: true`, ADR-0050) but returns the
-  script only (no web TTS) and is bounded by `maxPodcastMinutes`; flip it off to make the web
-  a pure zero-token surface. The server binds to localhost unless you set `HOST`.
+  `/api/podcast` is **on** (`presentation.webPodcastEnabled: true`, ADR-0050); it narrates real
+  **audio** when TTS is enabled (ADR-0020/0058), degrading to script-only on failure, is bounded
+  by `maxPodcastMinutes`, and is produced only on an explicit **Generate** press so a format/topic
+  choice never auto-spends the model. Flip it off to make the web a pure zero-token surface. The
+  server binds to localhost unless you set `HOST`.
 
 ## Configuration
 
@@ -155,7 +157,7 @@ boot). Secrets and deploy knobs come from the environment:
 - `GET /api/stories?topic=AI&minSignificance=5&limit=20` → `{ stories: [...] }`
 - `GET /api/brief?minutes=3&topic=AI` → `{ brief }` (deterministic, time-budgeted)
 - `GET /api/outline?topic=AI&minutes=5` → `{ outline }`
-- `GET /api/podcast?minutes=3` → `{ script }` — on (`presentation.webPodcastEnabled`, ADR-0050); script-only, `maxPodcastMinutes`-capped, shares the global podcast budget (ADR-0052)
+- `GET /api/podcast?minutes=3` → `{ script, audio }` — on (`presentation.webPodcastEnabled`, ADR-0050); narrates mp3 `audio` (base64) when TTS is enabled, else `audio:null` + `script` (ADR-0020/0058); `maxPodcastMinutes`-capped, shares the global podcast budget (ADR-0052)
 - `GET /api/ticks?limit=50` → `{ ticks: [...] }` — recent tick outcomes (ADR-0033)
 - `GET /api/reflection` → `{ reflections: [...] }` — LLM advisories + the actions they imposed (ADR-0042/0054)
 - `GET /api/chat-traces` → `{ traces: [...] }` — the chat agent's tool-loop trajectories (ADR-0054)

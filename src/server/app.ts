@@ -11,6 +11,7 @@ import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
 import { utcDay, type UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import { FixedWindowLimiter, type RateLimiter } from '../telegram/rate-limiter.js';
+import type { Synthesizer } from '../telegram/synthesizer.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import { canonical } from '../domain/vocab.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
@@ -50,6 +51,13 @@ export interface WebOptions {
   readonly podcastIpLimit?: number;
   /** Window for `podcastIpLimit`; default 60s. */
   readonly podcastIpWindowMs?: number;
+  /**
+   * TTS synthesizer (ADR-0020). When present, `/api/podcast` narrates the script
+   * to mp3 audio (base64) so the web plays a real episode, not just text; when
+   * absent it stays script-only. Bounded by the same podcast budget + per-IP
+   * limiter, so enabling web audio adds no new uncapped cost vector.
+   */
+  readonly synthesizer?: Synthesizer;
 }
 
 /**
@@ -287,7 +295,16 @@ export function createApp(
     if (web.usage && web.globalPodcastPerDay !== undefined) {
       await web.usage.incrementAndGet('global:podcast', utcDay(Date.now()));
     }
-    return c.json({ script });
+    // Narrate to audio when a synthesizer is wired (ADR-0020) — the web now plays a
+    // real episode, not just the script. TTS failure degrades to script-only
+    // (ResilientSynthesizer returns null), never a failed response. The script is
+    // always returned too, so the viewer can show it as a transcript.
+    let audio: string | null = null;
+    if (web.synthesizer) {
+      const buf = await web.synthesizer.synthesize(script);
+      if (buf) audio = buf.toString('base64');
+    }
+    return c.json({ script, audio });
   });
 
   app.get('/api/outline', async (c) => {

@@ -506,6 +506,9 @@ async function main(): Promise<void> {
   // Bot username (no `@`) powers the one-tap `t.me/<bot>?start=…` deep link on
   // the web login. Optional: without it the web shows the pairing code to type.
   const botUsername = process.env.TELEGRAM_BOT_USERNAME;
+  // One synthesizer, shared by the web podcast and the Telegram bot (ADR-0020) —
+  // both narrate audio; both bill into the same token ledger + podcast budget.
+  const synthesizer = buildSynthesizer(config, tokenLedger);
   const app = createApp(
     storyRepo,
     queryEngine,
@@ -516,6 +519,7 @@ async function main(): Promise<void> {
       podcastEnabled: config.presentation.webPodcastEnabled,
       usage,
       globalPodcastPerDay: config.telegram.limits.globalPodcastPerDay,
+      ...(synthesizer ? { synthesizer } : {}),
     },
     tickReportRepo,
     {
@@ -539,9 +543,29 @@ async function main(): Promise<void> {
   if (config.telegram.enabled) {
     startTelegramBot(
       config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage,
-      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo, tokenLedger,
+      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
+      synthesizer,
     );
   }
+}
+
+/**
+ * Build the TTS synthesizer (ADR-0020), or null when disabled. Shared by the
+ * Telegram bot AND the web podcast so both narrate with the same model/voice and
+ * bill into the same token ledger — the web podcast is no longer script-only.
+ */
+function buildSynthesizer(config: Config, tokenLedger?: TokenLedger): Synthesizer | null {
+  const tts = config.telegram.tts;
+  if (!tts.enabled) return null;
+  return new ResilientSynthesizer(
+    new OpenAITTS({
+      model: tts.model,
+      voice: tts.voice,
+      onUsage: (u) =>
+        tokenLedger?.record({ tier: 'tts', promptTokens: u.characters, completionTokens: 0 }),
+    }),
+    (op, err) => log.warn('tts.degraded', { op, err }),
+  );
 }
 
 /** Build the web-search fallback for chat (ADR-0029), or null when off / unkeyed. */
@@ -581,8 +605,8 @@ function startTelegramBot(
   traces?: ChatTraceRepo,
   /** Durable chat sessions — conversations survive deploys (ADR-0053). */
   sessionRepo?: ChatSessionRepo,
-  /** Token accounting sink for TTS spend (Task 15); omitted ⇒ no accounting. */
-  tokenLedger?: TokenLedger,
+  /** Shared TTS synthesizer (ADR-0020); null ⇒ podcast is sent as text. */
+  synthesizer: Synthesizer | null = null,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -596,19 +620,6 @@ function startTelegramBot(
       hint: 'no allowedChatIds and openAccess=false — the bot will ignore ALL chats; add your chat id to telegram.allowedChatIds (ADR-0022)',
     });
   }
-
-  const tts = tg.tts;
-  const synthesizer: Synthesizer | null = tts.enabled
-    ? new ResilientSynthesizer(
-        new OpenAITTS({
-          model: tts.model,
-          voice: tts.voice,
-          onUsage: (u) =>
-            tokenLedger?.record({ tier: 'tts', promptTokens: u.characters, completionTokens: 0 }),
-        }),
-        (op, err) => log.warn('tts.degraded', { op, err }),
-      )
-    : null;
 
   // Chat about the news (ADR-0029): wired only when enabled; web search stays
   // off unless explicitly configured and keyed (Principle 4).

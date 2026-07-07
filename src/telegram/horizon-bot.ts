@@ -343,7 +343,19 @@ export class HorizonBot {
         await this.dispatch(chatId, command);
       }
     }
-    if (update.callbackQueryId) await transport.answerCallback(update.callbackQueryId);
+    // Answering the callback is pure UX (it clears the button's spinner) and is
+    // best-effort: after a restart the poll offset resets and Telegram re-delivers
+    // recent taps whose query ids have since expired, so answerCallbackQuery 400s.
+    // That's expected and unrecoverable — swallow it rather than let a stale tap
+    // mark the whole update as a failed handler (which spammed telegram.handler_failed
+    // on every deploy).
+    if (update.callbackQueryId) {
+      try {
+        await transport.answerCallback(update.callbackQueryId);
+      } catch (err) {
+        this.deps.log?.warn('telegram.answer_callback_skipped', { err });
+      }
+    }
   }
 
   /** Default-deny: an explicit allowlist gates; an empty one defers to openAccess. */

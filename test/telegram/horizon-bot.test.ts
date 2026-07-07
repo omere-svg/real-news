@@ -966,6 +966,18 @@ describe('HorizonBot', () => {
       await bot.handle(callback(5, 'menu')); // navigation is free — still answered
       expect(transport.messages.filter((m) => /Horizon/.test(m.text)).length).toBe(2);
     });
+
+    it('a stale/expired callback (answerCallbackQuery 400 after a restart) never fails the update', async () => {
+      // On restart the poll offset resets and Telegram re-delivers recent taps
+      // whose query ids have since expired; answering them 400s. That must not
+      // throw out of handle() (which spammed telegram.handler_failed per deploy).
+      const { bot, transport, query } = await build({ router });
+      transport.answerCallback = async () => {
+        throw new Error('telegram answerCallbackQuery 400');
+      };
+      await expect(bot.handle(callback(5, 'brief'))).resolves.toBeUndefined();
+      expect(query.lastRequest).toBeDefined(); // the action still ran
+    });
   });
 
   describe('web pairing (ADR-0040)', () => {

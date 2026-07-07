@@ -166,8 +166,46 @@ describe('HTTP API', () => {
   it('GET /api/podcast returns a narrated script', async () => {
     const app = await appWithStories();
     const res = await app.request('/api/podcast?minutes=10');
-    const body = (await res.json()) as { script: string };
+    const body = (await res.json()) as { script: string; audio: string | null };
     expect(body.script).toContain('Narrated'); // FakeLLM.narrate default
+    expect(body.audio).toBeNull(); // no synthesizer wired ⇒ script-only
+  });
+
+  it('GET /api/podcast narrates to base64 audio when a synthesizer is wired (ADR-0020)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      synthesizer: { synthesize: async () => Buffer.from('fake-mp3-bytes') },
+    });
+    const res = await app.request('/api/podcast?minutes=10');
+    const body = (await res.json()) as { script: string; audio: string | null };
+    expect(body.script).toContain('Narrated');
+    expect(body.audio).toBe(Buffer.from('fake-mp3-bytes').toString('base64'));
+  });
+
+  it('GET /api/podcast degrades to script-only when TTS returns null', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      synthesizer: { synthesize: async () => null },
+    });
+    const body = (await (await app.request('/api/podcast?minutes=10')).json()) as {
+      script: string; audio: string | null;
+    };
+    expect(body.script).toContain('Narrated');
+    expect(body.audio).toBeNull();
   });
 
   it('GET /api/podcast is 404 when web podcast is disabled (default)', async () => {
@@ -527,10 +565,13 @@ describe('HTTP API', () => {
     expect(html).not.toContain('Pick exactly one topic');
   });
 
-  it('the podcast hint says web = script preview, full audio on the Telegram bot', async () => {
+  it('the podcast hint tells the reader to press Generate to produce the audio episode', async () => {
     const app = await appWithStories();
     const html = await (await app.request('/')).text();
-    expect(html).toContain('Script preview on the web — the full narrated audio plays on the Telegram bot.');
+    expect(html).toContain('A short narrated audio episode of your top stories');
+    expect(html).toContain('✨ Generate');
+    // The web podcast is now real audio, not a script preview (ADR-0020).
+    expect(html).toContain('function renderPodcast');
   });
 });
 
