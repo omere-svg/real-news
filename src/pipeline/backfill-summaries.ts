@@ -4,6 +4,7 @@ import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { RawItemRef, Story } from '../domain/types.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import { representativeRefOf } from '../domain/cluster.js';
+import { looksNonEnglish } from '../text/language.js';
 
 /**
  * Backfill a Story's factual `summary` + concise `whyItMatters` via the deep tier
@@ -53,13 +54,31 @@ export function needsSummary(story: Story): boolean {
 }
 
 /**
- * True when a Story still needs deep-tier enrichment: either no factual summary,
- * or no "why it matters". Stories that got only a deterministic fallback summary
- * (source lead) never entered the top-N, so they have a summary but a null
- * whyItMatters — `needsSummary` alone would skip them forever (ADR-0038).
+ * True when a Story has a non-English source title but no English `displayTitle`
+ * to render in its place (ADR-0057). A Story analyzed before the display-title
+ * era — or one whose displayTitle a pre-fix backfill wiped — would otherwise show
+ * its raw foreign headline forever, since the live tick only deep-analyzes the
+ * top-N. English-titled Stories are excluded so the heal never re-analyzes the
+ * whole store for nothing.
+ */
+export function needsDisplayTitle(story: Story): boolean {
+  return looksNonEnglish(story.title) && (!story.displayTitle || story.displayTitle.trim().length === 0);
+}
+
+/**
+ * True when a Story still needs deep-tier enrichment: no factual summary, no
+ * "why it matters", or a foreign headline lacking an English displayTitle.
+ * Stories that got only a deterministic fallback summary (source lead) never
+ * entered the top-N, so they have a summary but a null whyItMatters —
+ * `needsSummary` alone would skip them forever (ADR-0038).
  */
 export function needsAnalysis(story: Story): boolean {
-  return needsSummary(story) || !story.whyItMatters || story.whyItMatters.trim().length === 0;
+  return (
+    needsSummary(story) ||
+    !story.whyItMatters ||
+    story.whyItMatters.trim().length === 0 ||
+    needsDisplayTitle(story)
+  );
 }
 
 export async function backfillSummaries(
@@ -94,7 +113,16 @@ export async function backfillSummaries(
       // (so a persistent LLM outage can't churn the store with no-op upserts).
       const summary = analysis.summary ?? story.summary;
       const whyItMatters = analysis.whyItMatters ?? story.whyItMatters;
-      if (summary === story.summary && whyItMatters === story.whyItMatters) {
+      // Carry the English display headline through too (ADR-0057): the deep tier
+      // returns one for every non-English title, and NOT persisting it here would
+      // wipe a good displayTitle back to null on every heal — the exact bug that
+      // left foreign headlines on the front page.
+      const displayTitle = analysis.displayTitle ?? story.displayTitle;
+      if (
+        summary === story.summary &&
+        whyItMatters === story.whyItMatters &&
+        displayTitle === story.displayTitle
+      ) {
         done += 1;
         opts.onProgress?.(done, targets.length, story);
         return;
@@ -108,9 +136,11 @@ export async function backfillSummaries(
         significance: story.significance,
         summary,
         whyItMatters,
-        // Backfill only rewrites summary/whyItMatters; it does NOT re-score, so it
-        // must carry the existing score breakdown through — otherwise upsert nulls
-        // the ADR-0032 "why this score" snapshot for every healed Story (ADR-0039).
+        displayTitle,
+        // Backfill only rewrites summary/whyItMatters/displayTitle; it does NOT
+        // re-score, so it must carry the existing score breakdown through —
+        // otherwise upsert nulls the ADR-0032 "why this score" snapshot for every
+        // healed Story (ADR-0039).
         scoreBreakdown: story.scoreBreakdown,
         memberRefs: story.memberRefs,
       });

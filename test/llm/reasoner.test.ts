@@ -155,6 +155,37 @@ describe('Reasoner', () => {
     expect(out.displayTitle).toBeNull();
   });
 
+  it('translateToEnglish: parses displayTitle + summary on the cheap tier (ADR-0057)', async () => {
+    const t = new FakeTransport({
+      displayTitle: 'Lithuania bans false pre-election programs',
+      summary: 'Lithuania passed a law barring false, security-threatening campaign programs.',
+    });
+    const out = await new Reasoner(t).translateToEnglish({
+      title: 'В Литве запретили предвыборные программы',
+      text: null,
+    });
+    expect(out).toEqual({
+      displayTitle: 'Lithuania bans false pre-election programs',
+      summary: 'Lithuania passed a law barring false, security-threatening campaign programs.',
+    });
+    expect(t.calls[0]?.opts.tier).toBe('cheap'); // cheap tier: this runs below the deep top-N
+    expect(t.calls[0]?.prompt).toContain('В Литве'); // the source title is fenced as data
+  });
+
+  it('translateToEnglish: nulls a blank field and truncates an oversized headline (ADR-0047/0057)', async () => {
+    const long = 'x'.repeat(200);
+    const t = new FakeTransport({ displayTitle: long, summary: '' });
+    const out = await new Reasoner(t).translateToEnglish({ title: 't', text: null });
+    expect(out.displayTitle).toHaveLength(90);
+    expect(out.summary).toBeNull(); // blank → null so the upsert preserves any existing value
+  });
+
+  it('translateToEnglish: rejects a displayTitle carrying an injected link (ADR-0053/0057)', async () => {
+    const t = new FakeTransport({ displayTitle: 'Click here https://evil.example/steal', summary: 's' });
+    const out = await new Reasoner(t).translateToEnglish({ title: 't', text: null });
+    expect(out.displayTitle).toBeNull();
+  });
+
   it('narrate: free-form completion on the deep tier, built from the brief', async () => {
     const t = new FakeTransport({}, 'Welcome to the show.');
     const out = await new Reasoner(t).narrate({ minutes: 5, brief: 'BRIEF BODY' });

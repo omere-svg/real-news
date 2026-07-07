@@ -135,6 +135,45 @@ describe('backfillSummaries', () => {
     }
   });
 
+  it('heals a foreign-titled story missing an English displayTitle (ADR-0057)', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    await rawItemRepo.upsert([rawItem('1', { title: 'В Литве запретили', text: 'A law.' })]);
+    // Fully summarised already, but a pre-fix backfill wiped its displayTitle to null.
+    await storyRepo.upsert({
+      id: 'foreign', title: 'В Литве запретили', url: null, topic: 'Politics',
+      significance: 6, summary: 'A law was passed.', whyItMatters: 'It protects elections.',
+      memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+
+    const llm = new FakeLLM({
+      analyze: { summary: 'A law was passed.', whyItMatters: 'It protects elections.', displayTitle: 'Lithuania bans false programs' },
+    });
+    const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
+
+    expect(res).toEqual({ processed: 1, total: 1 }); // needsDisplayTitle picked it up
+    const healed = await storyRepo.get('foreign');
+    expect(healed?.displayTitle).toBe('Lithuania bans false programs'); // English headline now stored
+  });
+
+  it('carries an existing displayTitle through a summary-only heal (does not wipe it)', async () => {
+    const { storyRepo, rawItemRepo } = await setup();
+    await rawItemRepo.upsert([rawItem('1', { title: 'Fallback lead', text: 'Something happened.' })]);
+    await storyRepo.upsert({
+      id: 'partial', title: 'Fallback lead', url: null, topic: 'Climate',
+      significance: 7, summary: 'Something happened.', whyItMatters: null,
+      displayTitle: 'A clean English headline',
+      memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+
+    // Deep analyze returns no displayTitle (null) — the heal must preserve the existing one.
+    const llm = new FakeLLM({ analyze: { summary: 'Full summary.', whyItMatters: 'The stake.', displayTitle: null } });
+    await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
+
+    const healed = await storyRepo.get('partial');
+    expect(healed?.whyItMatters).toBe('The stake.');
+    expect(healed?.displayTitle).toBe('A clean English headline'); // NOT wiped to null
+  });
+
   it('caps the number processed and takes the most significant first', async () => {
     const { storyRepo, rawItemRepo } = await setup();
     for (const [id, sig] of [['low', 2], ['high', 9], ['mid', 5]] as const) {

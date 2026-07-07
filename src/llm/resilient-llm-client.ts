@@ -17,6 +17,8 @@ import type {
   RouterIntent,
   StoryAnalysis,
   StoryStub,
+  TranslateInput,
+  Translation,
 } from './llm-client.js';
 
 /**
@@ -63,6 +65,15 @@ export class ResilientLLMClient implements LLMClient {
       summary: null,
       whyItMatters: null,
       displayTitle: null,
+    });
+  }
+
+  translateToEnglish(input: TranslateInput): Promise<Translation> {
+    // Null (not '') so the upsert preserves any existing displayTitle/summary
+    // and the raw title stays the fallback on a transport failure (ADR-0047/0057).
+    return this.guard('translateToEnglish', (d) => d.translateToEnglish(input), {
+      displayTitle: null,
+      summary: null,
     });
   }
 

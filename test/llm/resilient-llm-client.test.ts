@@ -17,6 +17,9 @@ const brokenLLM: LLMClient = {
   analyze: async () => {
     throw new Error('api down');
   },
+  translateToEnglish: async () => {
+    throw new Error('api down');
+  },
   narrate: async () => {
     throw new Error('api down');
   },
@@ -65,6 +68,7 @@ describe('ResilientLLMClient', () => {
         significance: 5,
       }),
     ).toEqual({ summary: null, whyItMatters: null, displayTitle: null }); // null preserves any existing analysis (ADR-0047)
+    expect(await llm.translateToEnglish(stub)).toEqual({ displayTitle: null, summary: null }); // null keeps the raw title as fallback (ADR-0057)
     expect(await llm.narrate({ minutes: 5, brief: 'b' })).toBe(''); // caller falls back to the brief
     expect(await llm.interpretFeedback({ text: 'more ai' })).toEqual({
       topics: [],

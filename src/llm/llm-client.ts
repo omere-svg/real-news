@@ -18,6 +18,13 @@ export interface PipelineReasoner {
   assessImpact(input: ImpactInput): Promise<number>;
   /** Deep tier: write the factual summary + "why it matters" for the top-N Clusters. */
   analyze(input: AnalyzeInput): Promise<StoryAnalysis>;
+  /**
+   * Cheap tier: translate a non-English source item into an English display
+   * headline + short factual summary, so a Story below the deep-analysis top-N
+   * still stores English text (ADR-0057). The analyze stage calls this only for
+   * headlines that fail the `looksNonEnglish` gate — English titles never pay.
+   */
+  translateToEnglish(input: TranslateInput): Promise<Translation>;
 }
 
 /** The model capabilities the BOT's conversational surface uses (ADR-0026/0029/0030). */
@@ -152,6 +159,25 @@ export interface StoryAnalysis {
    * cleaned original title is the fallback everywhere this is rendered.
    */
   readonly displayTitle: string | null;
+}
+
+/** A source item to translate into English (title + optional body). */
+export interface TranslateInput {
+  readonly title: string;
+  readonly text: string | null;
+}
+
+/**
+ * The cheap-tier English rendering of a non-English item (ADR-0057). Each field
+ * is `null` when the tier produced nothing usable, so — exactly like
+ * `StoryAnalysis` — a null MUST NOT overwrite an existing value on upsert
+ * (ADR-0047).
+ */
+export interface Translation {
+  /** English display headline (≤90 chars); null when none usable. */
+  readonly displayTitle: string | null;
+  /** A short English factual summary (≈1–2 sentences); null when none. */
+  readonly summary: string | null;
 }
 
 export interface NarrateInput {

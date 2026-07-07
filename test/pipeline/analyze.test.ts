@@ -5,11 +5,11 @@ import { fakeBreakdown } from '../helpers/score-breakdown.js';
 import type { ScoredCluster } from '../../src/pipeline/types.js';
 import type { RawItem } from '../../src/domain/types.js';
 
-function scored(externalId: string, significance: number): ScoredCluster {
+function scored(externalId: string, significance: number, title?: string): ScoredCluster {
   const item: RawItem = {
     source: 'hackernews',
     externalId,
-    title: `story ${externalId}`,
+    title: title ?? `story ${externalId}`,
     url: null,
     text: null,
     publishedAt: null,
@@ -56,6 +56,36 @@ describe('analyze stage', () => {
 
     const byId = Object.fromEntries(analyzed.map((c) => [idOf(c), c]));
     expect(byId['high']?.displayTitle).toBe('Clear English headline');
-    expect(byId['low']?.displayTitle).toBeNull(); // below top-N: no deep call, no displayTitle
+    expect(byId['low']?.displayTitle).toBeNull(); // below top-N & English: no deep call, no displayTitle
+  });
+
+  it('translates a below-top-N NON-English headline to English (ADR-0057)', async () => {
+    const llm = new FakeLLM({
+      analyze: 'It matters.',
+      translate: { displayTitle: 'Lithuania bans false pre-election programs', summary: 'A law was passed.' },
+    });
+    const clusters = [
+      scored('foreign', 3, 'В Литве запретили предвыборные программы'),
+      scored('english', 9, 'A clearly English headline'),
+    ];
+
+    const analyzed = await analyze(clusters, llm, 1); // only 'english' is top-N
+
+    const byId = Object.fromEntries(analyzed.map((c) => [idOf(c), c]));
+    expect(byId['foreign']?.displayTitle).toBe('Lithuania bans false pre-election programs');
+    expect(byId['foreign']?.summary).toBe('A law was passed.');
+    expect(llm.analyzeCalls).toBe(1); // deep call only for the top-N
+    expect(llm.translateCalls).toBe(1); // cheap call only for the foreign, below-top-N title
+  });
+
+  it('does not spend a translate call on a below-top-N English headline', async () => {
+    const llm = new FakeLLM({ analyze: 'It matters.' });
+    const clusters = [scored('low', 2, 'Plain English headline'), scored('high', 9)];
+
+    const analyzed = await analyze(clusters, llm, 1);
+
+    const byId = Object.fromEntries(analyzed.map((c) => [idOf(c), c]));
+    expect(byId['low']?.displayTitle).toBeNull();
+    expect(llm.translateCalls).toBe(0);
   });
 });

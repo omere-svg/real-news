@@ -17,6 +17,8 @@ import type {
   RouterIntent,
   StoryAnalysis,
   StoryStub,
+  TranslateInput,
+  Translation,
 } from '../../src/llm/llm-client.js';
 
 export interface FakeLLMOptions {
@@ -26,6 +28,8 @@ export interface FakeLLMOptions {
   impact?: number | ((input: ImpactInput) => number);
   /** A StoryAnalysis, or a string shorthand used as both summary and whyItMatters. */
   analyze?: StoryAnalysis | string | ((input: AnalyzeInput) => StoryAnalysis | string);
+  /** A Translation, or a string shorthand used as the English displayTitle (summary null). */
+  translate?: Translation | string | ((input: TranslateInput) => Translation | string);
   narrate?: string | ((input: NarrateInput) => string);
   feedback?: FeedbackIntent | ((input: FeedbackInput) => FeedbackIntent);
   discuss?: DiscussResult | ((input: DiscussInput) => DiscussResult);
@@ -41,6 +45,7 @@ export class FakeLLM implements LLMClient {
   confirmCalls = 0;
   impactCalls = 0;
   analyzeCalls = 0;
+  translateCalls = 0;
   narrateCalls = 0;
   feedbackCalls = 0;
   discussCalls = 0;
@@ -89,6 +94,14 @@ export class FakeLLM implements LLMClient {
         displayTitle: null,
       }
     );
+  }
+
+  async translateToEnglish(input: TranslateInput): Promise<Translation> {
+    this.translateCalls += 1;
+    const t = this.options.translate;
+    const resolved = typeof t === 'function' ? t(input) : t;
+    if (typeof resolved === 'string') return { displayTitle: resolved, summary: null };
+    return resolved ?? { displayTitle: `EN: ${input.title}`, summary: null };
   }
 
   async narrate(input: NarrateInput): Promise<string> {
