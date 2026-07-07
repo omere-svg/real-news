@@ -42,7 +42,9 @@ function nextWeight(current: number, direction: WeightDirection): number | undef
     case 'more':
       return clamp(current + STEP, MIN_ACTIVE, MAX_WEIGHT);
     case 'less':
-      return clamp(current - STEP, MIN_ACTIVE, MAX_WEIGHT);
+      // "less" on an already-muted (0) topic keeps it muted — reinforcing a mute
+      // must not resurrect the topic at MIN_ACTIVE (ADR-0049).
+      return current === 0 ? 0 : clamp(current - STEP, MIN_ACTIVE, MAX_WEIGHT);
     case 'mute':
       return 0;
     case 'reset':

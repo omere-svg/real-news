@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, lt } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { linkCodes, webSessions } from './schema.js';
 
@@ -92,10 +92,18 @@ export class DrizzleWebAuthRepo implements WebAuthRepo {
     // hijack the pending web session by overwriting its chatId (ADR-0047).
     // Idempotent for the original claimant.
     if (row.chatId !== null && row.chatId !== chatId) return 'unknown';
+    // The guard lives in the WHERE too (not just the SELECT above): the update
+    // only binds a still-unclaimed code or the original claimant, so two
+    // concurrent claims can't both pass the check-then-act and clobber (ADR-0049).
     await this.db
       .update(linkCodes)
       .set({ chatId, name })
-      .where(eq(linkCodes.code, code));
+      .where(
+        and(
+          eq(linkCodes.code, code),
+          or(isNull(linkCodes.chatId), eq(linkCodes.chatId, chatId)),
+        ),
+      );
     return 'linked';
   }
 

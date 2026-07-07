@@ -182,6 +182,20 @@ export class HorizonBot {
 
     const session = this.session(chatId);
     const awaitingFeedback = session.mode === 'feedback';
+
+    // Routing plain text is itself a cheap-tier LLM call. If the chat (or the
+    // whole process) is already over the daily command budget, refuse BEFORE
+    // spending the model — otherwise the global cap that makes open access safe
+    // is bypassed one route call at a time (ADR-0049). Slash/known commands and
+    // free navigation don't need this pre-gate; withinQuota still does the real
+    // (single) accounting below.
+    if (parseCommand(update.text).kind === 'unknown' && !awaitingFeedback && this.deps.router) {
+      if (await this.overCommandQuota(chatId, now)) {
+        await this.deps.transport.sendMessage(chatId, LIMIT_MSG.commands);
+        return;
+      }
+    }
+
     const command = await this.interpret(session, update.text);
     if (!(await this.withinQuota(chatId, command, now))) return;
 
@@ -189,6 +203,17 @@ export class HorizonBot {
 
     // A button-initiated feedback message returns the chat to conversation mode.
     if (awaitingFeedback && session.mode === 'feedback') session.mode = 'chat';
+  }
+
+  /** Read-only: is the chat or the process already at/over the daily command cap?
+   * A pre-gate for the router LLM call; the real increment stays in withinQuota. */
+  private async overCommandQuota(chatId: number, now: number): Promise<boolean> {
+    const day = utcDay(now);
+    const { usage, limits } = this.deps;
+    const mine = await usage.peek(`chat:${chatId}:cmd`, day);
+    if (mine >= limits.commandsPerDay) return true;
+    const total = await usage.peek('global:cmd', day);
+    return total >= limits.globalCommandsPerDay;
   }
 
   /** The session for a chat, created idle on first contact. */
@@ -878,6 +903,7 @@ const FREE_COMMANDS: ReadonlySet<Command['kind']> = new Set([
   'prefsSet',
   'prefsClear',
   'feedbackUndo',
+  'remember',
   'forget',
 ]);
 

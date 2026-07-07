@@ -28,6 +28,12 @@ describe('applyFeedback', () => {
     expect(reset.topicWeights.Sports).toBeUndefined(); // neutral ≡ absent
   });
 
+  it('"less" on an already-muted topic keeps it muted, not resurrected (ADR-0049)', () => {
+    const muted = applyFeedback(EMPTY, intent({ topics: [{ topic: 'Sports', direction: 'mute' }] }), OPTS);
+    const stillMuted = applyFeedback(muted, intent({ topics: [{ topic: 'Sports', direction: 'less' }] }), OPTS);
+    expect(stillMuted.topicWeights.Sports).toBe(0); // reinforcing a mute must not un-mute
+  });
+
   it('accumulates across calls and clamps to the allowed range', () => {
     let p = EMPTY;
     for (let i = 0; i < 10; i += 1) {

@@ -415,6 +415,12 @@ describe('HorizonBot', () => {
       expect(transport.messages.at(-1)?.text).toMatch(/usage/i);
     });
 
+    it('/remember is a free command — works even past the daily command quota (ADR-0049)', async () => {
+      const { bot, prefs } = await build({ limits: { commandsPerDay: 0 } });
+      await bot.handle(update(5, '/remember I trade commodities'));
+      expect((await prefs.get(5))?.memory).toBe('I trade commodities'); // not blocked
+    });
+
     it('passes the saved memory into the podcast request (ADR-0028)', async () => {
       const { bot, query, prefs } = await build({ synthesizer: nullSynth });
       await prefs.set(5, { memory: 'I care about shipping.' });
@@ -660,6 +666,18 @@ describe('HorizonBot', () => {
       await bot.handle(update(5, '/brief 4'));
       expect(query.lastRequest?.minutes).toBe(4);
       expect(fake.routeCalls).toBe(0); // a slash command never hits the router
+    });
+
+    it('does NOT spend the router LLM once the daily command quota is exhausted (ADR-0049)', async () => {
+      const router = intentRouter({ action: 'brief', minutes: null, topic: null });
+      const fake = router as FakeLLM;
+      const { bot, transport } = await build({ router, limits: { commandsPerDay: 1 } });
+
+      await bot.handle(update(5, 'give me the news')); // 1st: allowed, routes
+      const callsAfterFirst = fake.routeCalls;
+      await bot.handle(update(5, 'and again please')); // 2nd: over quota
+      expect(fake.routeCalls).toBe(callsAfterFirst); // router NOT called again
+      expect(transport.messages.at(-1)?.text).toMatch(/limit/i);
     });
 
     it('attaches the menu button under generated content when routing is on', async () => {

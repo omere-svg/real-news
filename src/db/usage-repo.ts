@@ -11,6 +11,10 @@ import { usage } from './schema.js';
 export interface UsageRepo {
   /** Atomically add 1 to `(key, day)` and return the resulting count. */
   incrementAndGet(key: string, day: string): Promise<number>;
+  /** Read the current count for `(key, day)` without incrementing (0 if absent).
+   * Used to gate an expensive step (an LLM route call) before charging it, so a
+   * chat already over quota never spends the model (ADR-0049). */
+  peek(key: string, day: string): Promise<number>;
 }
 
 export class DrizzleUsageRepo implements UsageRepo {
@@ -25,6 +29,14 @@ export class DrizzleUsageRepo implements UsageRepo {
         set: { count: sql`${usage.count} + 1` },
       });
 
+    const rows = await this.db
+      .select({ count: usage.count })
+      .from(usage)
+      .where(and(eq(usage.key, key), eq(usage.day, day)));
+    return rows[0]?.count ?? 0;
+  }
+
+  async peek(key: string, day: string): Promise<number> {
     const rows = await this.db
       .select({ count: usage.count })
       .from(usage)
