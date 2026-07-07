@@ -163,7 +163,7 @@ scoring:
 retention:
   tickReports: 5          # keep only the most recent N tick reports (0 = keep all)
   reflections: 20         # keep only the most recent N reflection advisories
-  signalHistoryDays: 14   # prune persisted signal observations older than N days
+  signalHistoryDays: 365  # prune persisted signal observations older than N days (moat asset: retain the full time series, ADR-0044/§8)
   pruneExpiredAuth: true  # sweep expired web sessions / link codes each tick (ADR-0040)
   pruneUnreferencedRawItems: true  # drop raw_items no story kept, so the raw table can't grow unbounded (ADR-0047)
   reflectEveryTicks: 5    # generate an LLM reflection every N ticks (0 = disable)
