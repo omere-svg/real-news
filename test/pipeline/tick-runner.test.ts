@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TickRunner } from '../../src/pipeline/tick-runner.js';
 import { DrizzleRawItemRepo } from '../../src/db/raw-item-repo.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
+import { DrizzleSignalObservationRepo } from '../../src/db/signal-observation-repo.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
 import { FakeLLM } from '../helpers/fake-llm.js';
@@ -336,6 +337,49 @@ describe('TickRunner', () => {
     expect(report.signalsSkipped).toEqual(['wikipedia-pageviews']);
     expect(report.signalsFailed.map((f) => f.source)).toEqual(['worldbank']);
     expect(report.storiesUpserted).toBe(1); // tick still completes
+    expect(await storyRepo.all()).toHaveLength(1);
+  });
+
+  it('drops a non-finite Signal value instead of letting it crash the whole tick', async () => {
+    // A Signal source's own arithmetic (division, subtraction) can yield NaN/
+    // Infinity — e.g. a corrupt upstream numeric literal overflowing on JSON
+    // parse. `signal_observations.value` is a raw numeric DB bind, not JSON:
+    // recording a non-finite value throws (libsql rejects it, matching the
+    // publishedAt guard in raw-item-repo, ADR-0051/0025). Unlike a throwing
+    // Source, nothing isolated that per-observation before this fix — it
+    // propagated out of run() and crashed the WHOLE tick (ok:false,
+    // extracted:0), even though extraction itself fully succeeded.
+    const db = await createTestDb();
+    const rawItemRepo = new DrizzleRawItemRepo(db);
+    const storyRepo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const signalObservationRepo = new DrizzleSignalObservationRepo(db);
+    const runner = new TickRunner({
+      sources: [
+        new FakeSource('hackernews', {
+          items: [item('hackernews', '1', 'Live story', { topic: 'AI' })],
+        }),
+      ],
+      signalSources: [
+        new FakeSignalSource('worldbank', {
+          observations: [
+            { source: 'worldbank', topic: 'Business', key: 'corrupt:1', value: NaN, observedAt: 0 },
+            { source: 'worldbank', topic: 'Business', key: 'fine:1', value: 3, observedAt: 0 },
+          ],
+        }),
+      ],
+      rawItemRepo,
+      storyRepo,
+      signalObservationRepo,
+      llm: new FakeLLM({ analyze: 'Why it matters.' }),
+      embedder: new FakeEmbedder({ 'Live story': [1, 0, 0] }),
+      clock: new FakeClock(100 * 3_600_000),
+      config: { ...config, maxSignalAdjustment: 1.0 },
+    });
+
+    const report = await runner.run(); // must not throw
+
+    expect(report.signalsObserved).toBe(1); // the NaN reading was dropped, not counted
+    expect(report.storiesUpserted).toBe(1); // the tick still completes end to end
     expect(await storyRepo.all()).toHaveLength(1);
   });
 

@@ -109,6 +109,16 @@ export class TickRunner {
     const signalSources =
       skip && skip.size ? allSignalSources.filter((s) => !skip.has(s.id)) : allSignalSources;
     const signals = await observeSignals(signalSources);
+    // Defense-in-depth (mirrors raw-item-repo's publishedAt guard, ADR-0051): a
+    // Signal source's arithmetic (division, subtraction) can produce NaN/Infinity
+    // — e.g. a JSON numeric literal beyond ±1.8e308 silently overflows to Infinity
+    // on parse, and `z.number()` accepts it. `value` is a raw numeric DB bind
+    // (signal_observations), not JSON; a non-finite bind is rejected by the store
+    // with an unrecoverable error. Unlike a throwing Source, nothing isolates
+    // that per-observation — it would crash the WHOLE tick (ok:false,
+    // extracted:0 in the report) even though extraction fully succeeded. Drop
+    // the bad reading instead of letting it anywhere near persistence.
+    const observations = signals.observations.filter((o) => Number.isFinite(o.value));
     const refBySource: SaturationRefs = Object.fromEntries(
       signalSources.map((s) => [s.id, s.saturationReference]),
     );
@@ -118,10 +128,10 @@ export class TickRunner {
     const signalRepo = this.deps.signalObservationRepo;
     const priorByKey =
       signalRepo && (config.signalTrendBoost ?? 0) > 0
-        ? await signalRepo.priorValues(signals.observations.map((o) => o.key))
+        ? await signalRepo.priorValues(observations.map((o) => o.key))
         : undefined;
 
-    const signalContext = assembleSignalContext(signals.observations, refBySource, {
+    const signalContext = assembleSignalContext(observations, refBySource, {
       ...(priorByKey ? { priorByKey } : {}),
       ...(config.signalTrendBoost ? { trendBoost: config.signalTrendBoost } : {}),
       ...(config.entitySignalWeight ? { entityWeight: config.entitySignalWeight } : {}),
@@ -129,7 +139,7 @@ export class TickRunner {
 
     // Persist this tick's observations, then prune the history window (ADR-0042/0044).
     if (signalRepo) {
-      await signalRepo.record(signals.observations);
+      await signalRepo.record(observations);
       const days = config.signalHistoryDays ?? 0;
       if (days > 0) {
         await signalRepo.pruneOlderThan(clock.now() - days * 24 * HOUR_MS);
@@ -200,7 +210,7 @@ export class TickRunner {
       skipped: extraction.skipped,
       failed: extraction.failed,
       storiesUpserted: analyzed.length,
-      signalsObserved: signals.observations.length,
+      signalsObserved: observations.length,
       signalsSkipped: signals.skipped,
       signalsFailed: signals.failed,
     };
