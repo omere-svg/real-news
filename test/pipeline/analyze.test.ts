@@ -45,4 +45,17 @@ describe('analyze stage', () => {
     expect(analyzed[0]?.whyItMatters).toBe('It matters.');
     expect(llm.analyzeCalls).toBe(1);
   });
+
+  it('persists an English displayTitle from the deep call for top-N clusters only (Task 20)', async () => {
+    const llm = new FakeLLM({
+      analyze: { summary: 'S', whyItMatters: 'W', displayTitle: 'Clear English headline' },
+    });
+    const clusters = [scored('low', 2), scored('high', 9)];
+
+    const analyzed = await analyze(clusters, llm, 1);
+
+    const byId = Object.fromEntries(analyzed.map((c) => [idOf(c), c]));
+    expect(byId['high']?.displayTitle).toBe('Clear English headline');
+    expect(byId['low']?.displayTitle).toBeNull(); // below top-N: no deep call, no displayTitle
+  });
 });

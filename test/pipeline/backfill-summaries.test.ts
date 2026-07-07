@@ -62,7 +62,7 @@ describe('backfillSummaries', () => {
       memberRefs: [{ source: 'hackernews', externalId: '1' }],
     });
 
-    const llm = new FakeLLM({ analyze: { summary: 'Full summary.', whyItMatters: 'This is the stake.' } });
+    const llm = new FakeLLM({ analyze: { summary: 'Full summary.', whyItMatters: 'This is the stake.', displayTitle: null } });
     const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
 
     expect(res).toEqual({ processed: 1, total: 1 }); // needsAnalysis picked it up
@@ -81,7 +81,7 @@ describe('backfillSummaries', () => {
       memberRefs: [{ source: 'hackernews', externalId: '1' }],
     });
 
-    const llm = new FakeLLM({ analyze: { summary: 'Healed.', whyItMatters: 'Stake.' } });
+    const llm = new FakeLLM({ analyze: { summary: 'Healed.', whyItMatters: 'Stake.', displayTitle: null } });
     await backfillSummaries({ storyRepo, rawItemRepo, llm }, {});
 
     const healed = await storyRepo.get('s');
@@ -108,7 +108,7 @@ describe('backfillSummaries', () => {
       memberRefs: [],
     });
 
-    const llm = new FakeLLM({ analyze: { summary: 'NEW', whyItMatters: 'NEW WHY' } });
+    const llm = new FakeLLM({ analyze: { summary: 'NEW', whyItMatters: 'NEW WHY', displayTitle: null } });
     const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, { all: true });
 
     expect(res.processed).toBe(1);
@@ -126,7 +126,7 @@ describe('backfillSummaries', () => {
       });
     }
 
-    const llm = new FakeLLM({ analyze: { summary: 'S', whyItMatters: 'W' } });
+    const llm = new FakeLLM({ analyze: { summary: 'S', whyItMatters: 'W', displayTitle: null } });
     const res = await backfillSummaries({ storyRepo, rawItemRepo, llm }, { concurrency: 3 });
 
     expect(res).toEqual({ processed: 5, total: 5 });

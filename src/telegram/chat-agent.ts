@@ -12,6 +12,7 @@ import type { Embedder } from '../embedding/embedder.js';
 import type { StoryRepo } from '../db/story-repo.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { WebSearch } from '../web/web-search.js';
+import { isGroundedUrl, splitTrailingPunctuation } from '../llm/url-guard.js';
 
 /**
  * The chat agent loop (ADR-0053): the model DRIVES — it chooses which tools to
@@ -22,11 +23,23 @@ import type { WebSearch } from '../web/web-search.js';
  * trajectory is recorded as an inspectable trace (`chat_traces`).
  */
 
+/**
+ * A tool's output: the plain-text result shown to the model, plus any URLs
+ * from STRUCTURED result fields (`story.url`, `WebResult.url`) that may
+ * ground the answer. Never grounded by scanning `text` — a poisoned web
+ * snippet's body can say anything, including an attacker's own URL
+ * (ADR-0053/0054).
+ */
+export interface ToolResult {
+  readonly text: string;
+  readonly urls?: readonly string[];
+}
+
 /** One tool the agent may use: its model-facing spec + the implementation. */
 export interface ChatTool {
   readonly spec: ToolSpec;
-  /** Execute with the model's arguments; returns a plain-text result. */
-  run(args: Record<string, unknown>): Promise<string>;
+  /** Execute with the model's arguments. */
+  run(args: Record<string, unknown>): Promise<ToolResult>;
 }
 
 /** One recorded step of the trajectory (persisted, publicly surfaced). */
@@ -45,6 +58,12 @@ export interface ChatAgentInput {
 
 export interface ChatAgentAnswer extends DiscussResult {
   readonly steps: readonly TraceStep[];
+  /**
+   * A one-line plan the model stated on its first turn (ADR-0053/rubric
+   * plan→act→observe). Best-effort: '' when the model omitted it — a missing
+   * plan never fails the answer.
+   */
+  readonly plan: string;
 }
 
 export interface ChatAgentDeps {
@@ -58,8 +77,16 @@ const DEFAULT_MAX_STEPS = 5;
 const OPTS: CompletionOptions = { tier: 'deep', maxTokens: 700 };
 const PREVIEW_CHARS = 200;
 const ARGS_CHARS = 200;
+const PLAN_CHARS = 200;
 const MAX_ANSWER_CHARS = 3_500;
 const URL_RE = /https?:\/\/[^\s)\]}>"'<‹]+/gi;
+// Hard spend ceiling (§5): a model emitting a burst of tool calls can't turn
+// one quota-charged command into an unbounded fan-out, and can't grow the
+// prompt without limit by having tools echo huge results back forever.
+const MAX_TOOL_CALLS_PER_TURN = 3;
+const MAX_TOOL_CALLS_PER_TRAJECTORY = 8;
+const MAX_TOOL_RESULT_CHARS = 4_000;
+const BUDGET_EXHAUSTED = 'tool_error: tool budget exhausted — this call was skipped, answer with what you already have';
 
 // Lenient final-reply parse: a malformed reply degrades to raw text.
 const finalSchema = z.object({
@@ -82,7 +109,13 @@ const SYSTEM_PROMPT =
   `object: {"answer": <conversational reply>, "answeredFromNews": <true only ` +
   `if the tool results actually contained the answer>}. Ground the answer in ` +
   `what the tools returned; if they didn't contain it, say so plainly instead ` +
-  `of inventing facts.`;
+  `of inventing facts.\n\n` +
+  `On your VERY FIRST turn only, state your plan in one short line before ` +
+  `anything else: if you are calling tools this turn, put that one-line plan ` +
+  `as your ordinary message text alongside the tool calls (e.g. "Plan: search ` +
+  `the cache, then answer."); if you can already answer, add a "plan" field ` +
+  `to the JSON object next to "answer". Keep it to one short sentence; it's ` +
+  `fine to omit it if you have nothing useful to say.`;
 
 export class ChatAgent {
   private readonly maxSteps: number;
@@ -103,6 +136,8 @@ export class ChatAgent {
     // appear in the answer — a poisoned web snippet can't make the agent relay
     // an attacker link that never grounded anything.
     const groundedUrls = new Set<string>();
+    let trajectoryToolCalls = 0;
+    let plan = '';
 
     for (let turn = 0; turn <= this.maxSteps; turn += 1) {
       // On the last permitted turn the tools are withdrawn: answer NOW.
@@ -113,32 +148,51 @@ export class ChatAgent {
         OPTS,
       );
 
+      // Rubric plan→act→observe: capture the model's stated plan from its
+      // very first turn, whichever shape it arrives in (never fails on a
+      // missing/malformed plan — see extractPlan).
+      if (turn === 0) plan = extractPlan(res.text, res.toolCalls.length > 0);
+
       if (res.toolCalls.length === 0) {
         const final = parseFinal(res.text);
-        return { ...final, answer: groundAnswer(final.answer, groundedUrls), steps };
+        return { ...final, answer: groundAnswer(final.answer, groundedUrls), steps, plan };
       }
 
       messages.push({ role: 'assistant', content: res.text, toolCalls: res.toolCalls });
+      let turnToolCalls = 0;
       for (const call of res.toolCalls) {
-        const tool = byName.get(call.name);
-        // A tool failure (or an unknown tool) is an observation for the model,
-        // never an exception for the user.
-        const result = tool
-          ? await tool.run(call.args).catch((err: unknown) => toolError(err))
-          : toolError(new Error(`unknown tool "${call.name}"`));
-        for (const url of result.match(URL_RE) ?? []) groundedUrls.add(url);
+        const withinBudget =
+          turnToolCalls < MAX_TOOL_CALLS_PER_TURN && trajectoryToolCalls < MAX_TOOL_CALLS_PER_TRAJECTORY;
+        let result: ToolResult;
+        if (!withinBudget) {
+          result = { text: BUDGET_EXHAUSTED };
+        } else {
+          turnToolCalls += 1;
+          trajectoryToolCalls += 1;
+          const tool = byName.get(call.name);
+          // A tool failure (or an unknown tool) is an observation for the model,
+          // never an exception for the user.
+          result = tool
+            ? await tool.run(call.args).catch((err: unknown) => toolError(err))
+            : toolError(new Error(`unknown tool "${call.name}"`));
+        }
+        for (const url of result.urls ?? []) groundedUrls.add(url);
         steps.push({
           step: steps.length + 1,
           tool: call.name,
           // The reader's personal note is private — never into the public trace.
           args: call.name === 'save_memory' ? '(private note)' : JSON.stringify(call.args).slice(0, ARGS_CHARS),
-          resultPreview: result.slice(0, PREVIEW_CHARS),
+          resultPreview: result.text.slice(0, PREVIEW_CHARS),
         });
         messages.push({
           role: 'tool',
           toolCallId: call.id,
-          // Tool results carry third-party content (feeds, web) — fence them.
-          content: asData(result.startsWith('tool_error:') ? 'tool_error' : 'tool_result', result),
+          // Tool results carry third-party content (feeds, web) — fence them,
+          // and cap what's fed back so prompt tokens can't grow unbounded.
+          content: asData(
+            result.text.startsWith('tool_error:') ? 'tool_error' : 'tool_result',
+            truncateForModel(result.text),
+          ),
         });
       }
     }
@@ -148,6 +202,7 @@ export class ChatAgent {
       answer: "I couldn't finish looking into that — please try again in a moment.",
       answeredFromNews: false,
       steps,
+      plan,
     };
   }
 }
@@ -167,16 +222,49 @@ function userBlock(input: ChatAgentInput): string {
   return `${memory}${history}QUESTION:\n${asData('question', input.question)}`;
 }
 
-function toolError(err: unknown): string {
-  return `tool_error: ${err instanceof Error ? err.message : String(err)}`;
+function toolError(err: unknown): ToolResult {
+  return { text: `tool_error: ${err instanceof Error ? err.message : String(err)}` };
+}
+
+/** Cap a tool result fed back to the model — the stored trace preview is untouched. */
+function truncateForModel(text: string): string {
+  return text.length > MAX_TOOL_RESULT_CHARS ? `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n[truncated]` : text;
 }
 
 /** Strip URLs the tools never surfaced; cap a runaway answer (ADR-0053/0054). */
 function groundAnswer(answer: string, grounded: ReadonlySet<string>): string {
-  const cleaned = answer.replace(URL_RE, (url) =>
-    [...grounded].some((g) => url.startsWith(g) || g.startsWith(url)) ? url : '',
-  );
+  const cleaned = answer.replace(URL_RE, (raw) => {
+    const { url, trailing } = splitTrailingPunctuation(raw);
+    return isGroundedUrl(url, grounded) ? url + trailing : '';
+  });
   return cleaned.slice(0, MAX_ANSWER_CHARS);
+}
+
+/**
+ * Best-effort extraction of the model's stated one-line plan from its first
+ * turn (rubric plan→act→observe). Two shapes are tolerated: a `"plan"` field
+ * on a JSON final answer, or plain leading text sent alongside tool calls.
+ * Never throws; '' when the model didn't state one.
+ *
+ * The raw-text fallback (for malformed JSON) only fires when this turn
+ * actually made tool calls — otherwise the raw text is a (broken) final
+ * answer, and its first line must not be misfiled as the plan.
+ */
+function extractPlan(text: string | null, hasToolCalls: boolean): string {
+  const raw = (text ?? '').trim();
+  if (!raw) return '';
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof (parsed as { plan?: unknown }).plan === 'string') {
+      return (parsed as { plan: string }).plan.trim().slice(0, PLAN_CHARS);
+    }
+    // Valid JSON but no plan field — tolerate, don't guess from the answer body.
+    return '';
+  } catch {
+    // Not JSON. If tool calls came with it, it's plain leading text sent
+    // alongside them — a real plan. Otherwise it's a malformed final answer.
+    return hasToolCalls ? raw.split('\n')[0]!.trim().slice(0, PLAN_CHARS) : '';
+  }
 }
 
 function parseFinal(text: string | null): DiscussResult {
@@ -234,8 +322,8 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       run: async (args) => {
         const query = String(args.query ?? '').trim();
         const stories = await searchStories(deps, query, topicFilter);
-        if (stories.length === 0) return '(no matching stories in the cache)';
-        return stories.map(storyLine).join('\n');
+        if (stories.length === 0) return { text: '(no matching stories in the cache)' };
+        return { text: stories.map(storyLine).join('\n') };
       },
     },
     {
@@ -251,8 +339,8 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       run: async (args) => {
         const id = String(args.id ?? '').trim();
         const story = deps.reader.get ? await deps.reader.get(id) : null;
-        if (!story) return `(no story with id "${id}")`;
-        return [
+        if (!story) return { text: `(no story with id "${id}")` };
+        const text = [
           storyLine(story),
           story.whyItMatters ? `why it matters: ${story.whyItMatters}` : '',
           `sources: ${Math.max(1, story.memberRefs.length)}`,
@@ -260,6 +348,8 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
         ]
           .filter(Boolean)
           .join('\n');
+        // Ground on the structured field, never on a scan of `text` (ADR-0054).
+        return { text, urls: story.url ? [story.url] : [] };
       },
     },
   ];
@@ -276,14 +366,15 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       },
       run: async () => {
         const trends = await signals.latestTrends(12);
-        if (trends.length === 0) return '(no signal history yet)';
-        return trends
+        if (trends.length === 0) return { text: '(no signal history yet)' };
+        const text = trends
           .map((t) => {
             const dir =
               t.prior === null ? 'first reading' : t.value > t.prior ? 'rising' : t.value < t.prior ? 'falling' : 'flat';
             return `${t.key}: ${t.value}${t.prior !== null ? ` (prior ${t.prior}, ${dir})` : ` (${dir})`}`;
           })
           .join('\n');
+        return { text };
       },
     });
   }
@@ -303,10 +394,14 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       },
       run: async (args) => {
         const results = await web.search(String(args.query ?? '').trim());
-        if (results.length === 0) return '(no web results)';
-        return results
+        if (results.length === 0) return { text: '(no web results)' };
+        const text = results
           .map((r, i) => `${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}`)
           .join('\n');
+        // Ground on the structured WebResult.url, never on a scan of the
+        // snippet body — a poisoned snippet must not ground its own link
+        // just by mentioning it (ADR-0054).
+        return { text, urls: results.map((r) => r.url) };
       },
     });
   }
@@ -326,9 +421,9 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       },
       run: async (args) => {
         const note = String(args.note ?? '').trim();
-        if (!note) return '(nothing to save)';
+        if (!note) return { text: '(nothing to save)' };
         await save(note);
-        return 'saved';
+        return { text: 'saved' };
       },
     });
   }

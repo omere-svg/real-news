@@ -145,6 +145,13 @@ export interface StoryAnalysis {
   readonly summary: string | null;
   /** The editorial "why it matters" justification; null when none. */
   readonly whyItMatters: string | null;
+  /**
+   * An English, ≤90-char display headline for a non-English (or otherwise
+   * rough) source title — one extra field on the existing deep-tier call, no
+   * new spend (Task 20). Null when the tier produced nothing usable; the
+   * cleaned original title is the fallback everywhere this is rendered.
+   */
+  readonly displayTitle: string | null;
 }
 
 export interface NarrateInput {

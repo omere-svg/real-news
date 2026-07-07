@@ -1,7 +1,7 @@
-import { TOPICS } from '../domain/types.js';
 import type { TickRecord } from '../db/tick-report-repo.js';
 import type { TickReflection } from '../db/tick-reflection-repo.js';
 import { COMPONENT_LABELS } from '../presentation/score-explanation.js';
+import { ago, breakdownHtml, emptyStateHtml, escHtml, fmtDuration, topicChips } from './ui-view.js';
 
 /** Defaults the viewer seeds its controls from (ADR-0015). */
 export interface UiDefaults {
@@ -14,17 +14,6 @@ export interface UiDefaults {
   readonly authEnabled?: boolean;
   /** Bot username (no `@`) for a one-tap `t.me` deep link; absent ⇒ show the code only. */
   readonly botUsername?: string;
-}
-
-/** Render the topic filter as a group of pill toggles, pre-selecting defaults. */
-function topicChips(checked: readonly string[]): string {
-  const set = new Set(checked);
-  return TOPICS.map(
-    (t) =>
-      `<label class="chip" data-topic="${t}"><input type="checkbox" name="topic" value="${t}"${
-        set.has(t) ? ' checked' : ''
-      } /><span class="dot"></span>${t}</label>`,
-  ).join('');
 }
 
 /**
@@ -334,7 +323,17 @@ const HINTS = {
 const DOC_FIELD = { brief: 'brief', outline: 'outline', podcast: 'script' };
 let format = 'stories';
 
-function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// Single source of truth with the server (ui-view.ts, unit-tested there) —
+// injected verbatim so the browser runs the exact same escaping code.
+// NOTE splice order matters: breakdownHtml and emptyStateHtml below both call
+// escHtml as a free variable (they're spliced as standalone function source,
+// not closures), so escHtml MUST be defined first in the shipped script.
+const escHtml = ${escHtml.toString()};
+function esc(s){ return escHtml(s); }
+// emptyStateHtml is injected verbatim from ui-view.ts (unit-tested there) — one
+// implementation, shipped unchanged to the browser (same pattern as escHtml above).
+// Depends on escHtml already being defined above (see NOTE).
+const emptyStateHtml = ${emptyStateHtml.toString()};
 // Only allow http(s) links; a feed-controlled url must never reach an href raw
 // (a " breaks out of the attribute; a javascript: scheme runs on click). Returns
 // a safe absolute url or null (drop the link, keep the title).
@@ -468,25 +467,11 @@ if (CFG.authEnabled) {
 }
 
 // ---- "Why this score?" — persisted breakdown as labelled bars (ADR-0037). ----
+// breakdownHtml is injected verbatim from ui-view.ts (unit-tested there) — one
+// implementation, shipped unchanged to the browser (same pattern as escHtml above).
+// It calls escHtml as a free variable, so escHtml must already be spliced above.
 const SCORE_LABELS = ${JSON.stringify(COMPONENT_LABELS)};
-function pct(v){ return Math.round(Number(v)*100) + '%'; }
-function breakdownHtml(b, open){
-  if(!b) return '';
-  const bars = (b.components||[]).map(c =>
-    '<div class="lbl">'+esc(SCORE_LABELS[c.key]||c.key)+'</div>'+
-    '<div class="track"><div class="fill" style="width:'+pct(c.value)+'"></div></div>'+
-    '<div class="val">'+pct(c.value)+'</div>'
-  ).join('');
-  const s = b.signals||{};
-  const recency = b.recencyFactor!=null ? pct(b.recencyFactor) : '100%';
-  const nudge = Math.abs(b.signalNudge) > 0.05 ? ' · attention/macro nudge '+(b.signalNudge>=0?'+':'')+Number(b.signalNudge).toFixed(1) : '';
-  // Corroboration only when it says something ("0 sources" is noise, not a fact).
-  const cor = Number(s.corroboration) || 0;
-  const facts = (cor >= 1 ? cor+' source'+(cor===1?'':'s')+' · ' : '')+'recency '+recency+nudge;
-  return '<details class="why-score"'+(open?' open':'')+'><summary>Why this score?</summary>'+
-    '<div class="bars">'+bars+'</div>'+
-    '<div class="meta">'+esc(facts)+'</div></details>';
-}
+const breakdownHtml = ${breakdownHtml.toString()};
 
 function skeletons(n){ let h=''; for(let i=0;i<n;i++) h+='<div class="skel"></div>'; return h; }
 
@@ -522,7 +507,7 @@ function renderDoc(format, text){
       (summary ? '<p class="why">'+esc(summary)+'</p>' : '')+
       (why ? '<p class="why"><b>Why it matters — </b>'+esc(why)+'</p>' : '')+'</div>';
   }).join('');
-  if (!cards.trim()) return '<div class="empty"><div class="big">'+esc(header || text)+'</div></div>';
+  if (!cards.trim()) return emptyStateHtml(header || text, '');
   return '<div class="count">'+esc(header)+'</div>'+cards;
 }
 function renderScript(text){
@@ -555,7 +540,7 @@ async function load() {
     list.innerHTML = skeletons(1);
     const auto = await autoOutlineTopic(topics);
     if (!auto) {
-      list.innerHTML = '<div class="empty"><div class="big">Nothing to outline yet</div>The worker fills the cache on each tick — check back shortly.</div>';
+      list.innerHTML = emptyStateHtml('Nothing to outline yet', 'The worker fills the cache on each tick — check back shortly.');
       return;
     }
     hint.textContent = 'Deep dive: ' + auto + ' — the most significant ' +
@@ -568,15 +553,15 @@ async function load() {
     for (const t of topics) params.append('topic', t);
     const res = await fetch('/api/' + format + '?' + params);
     if (format === 'podcast' && res.status === 404) {
-      list.innerHTML = '<div class="empty"><div class="big">Podcast is not enabled here</div>The narrated podcast runs on the Telegram bot. Try Brief or Stories on the web.</div>';
+      list.innerHTML = emptyStateHtml('Podcast is not enabled here', 'The narrated podcast runs on the Telegram bot. Try Brief or Stories on the web.');
       return;
     }
     const body = await res.json();
     const text = body[DOC_FIELD[format]] || '';
-    if (!text.trim()) { list.innerHTML = '<div class="empty"><div class="big">Nothing to show yet</div>The worker fills the cache on each tick — check back shortly.</div>'; return; }
+    if (!text.trim()) { list.innerHTML = emptyStateHtml('Nothing to show yet', 'The worker fills the cache on each tick — check back shortly.'); return; }
     list.innerHTML = renderDoc(format, text);
   } catch (e) {
-    list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load that</div>Check your connection and try again.</div>';
+    list.innerHTML = emptyStateHtml("Couldn't load that", 'Check your connection and try again.');
   }
 }
 
@@ -587,20 +572,28 @@ async function loadStories(topics) {
     const params = new URLSearchParams({ limit: '50' });
     for (const t of topics) params.append('topic', t);
     const [res] = await Promise.all([fetch('/api/stories?' + params), getLastTickAt()]);
-    stories = (await res.json()).stories;
+    const body = await res.json();
+    // A bad/error payload (e.g. a non-2xx JSON error body with no \`.stories\`) must
+    // fall through to the empty state below, never leave the skeletons spinning
+    // forever — the shape check has to live inside this try, not after it.
+    stories = Array.isArray(body.stories) ? body.stories : [];
   } catch (e) {
-    list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load stories</div>Check your connection and try again.</div>';
+    list.innerHTML = emptyStateHtml("Couldn't load stories", 'Check your connection and try again.');
     return;
   }
   if (!stories.length) {
-    list.innerHTML = '<div class="empty"><div class="big">No stories match yet</div>' +
-      (topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.') + '</div>';
+    list.innerHTML = emptyStateHtml('No stories match yet',
+      topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.');
     return;
   }
   list.innerHTML = editorsNote(stories) + '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map((s, i) => {
     const color = TOPIC_COLORS[s.topic] || '#8b93a7';
     const su = s.url ? safeUrl(s.url) : null;
-    const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
+    // Prefer the deep tier's English display title when set — raw non-English
+    // or mangled source headlines otherwise reach the front page verbatim
+    // (Task 20). s.title (the cleaned original) is the fallback below top-N.
+    const headline = s.displayTitle || s.title;
+    const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(headline)+'</a>' : esc(headline);
     const sources = [...new Set(s.memberRefs.map(r => r.source))].join(', ');
     // Always-visible score rationale chips — the transparent-scoring differentiator
     // shouldn't need a click (ADR-0050). The full breakdown stays one tap away, and
@@ -610,7 +603,7 @@ async function loadStories(topics) {
       '<span class="scorepill">'+s.significance.toFixed(1)+'<span class="max">/10</span></span></div>'+
       '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic)+'</span>'+tags+'</div>'+
       (s.whyItMatters ? '<p class="why">'+esc(s.whyItMatters)+'</p>' : '')+
-      breakdownHtml(s.scoreBreakdown, i === 0)+
+      breakdownHtml(s.scoreBreakdown, i === 0, SCORE_LABELS)+
       '<div class="meta">'+s.memberRefs.length+' source'+(s.memberRefs.length===1?'':'s')+': '+esc(sources)+'</div></div>';
   }).join('');
 }
@@ -686,26 +679,6 @@ function editorsNote(stories){
 
 // --- Observability dashboard (ADR-0033) ---
 
-function escHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => {
-    switch (c) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      default: return '&quot;';
-    }
-  });
-}
-
-/** Short "Nm ago" / "Nh ago" age from a past epoch-ms to a reference now. */
-function ago(thenMs: number, nowMs: number): string {
-  const s = Math.max(0, Math.round((nowMs - thenMs) / 1000));
-  if (s < 90) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 90) return `${m}m ago`;
-  return `${Math.round(m / 60)}h ago`;
-}
-
 /**
  * Expected worker cadence (~one tick). A last tick older than ~2× this means the
  * worker is presumably stuck or dead — the only tick-timing state that is truly
@@ -713,14 +686,6 @@ function ago(thenMs: number, nowMs: number): string {
  * alarm.
  */
 const EXPECTED_TICK_MS = 25 * 60_000;
-
-/** Humanize a millisecond duration: "480ms" / "12.4s" / "4m 08s". */
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
-}
 
 /**
  * The server-rendered observability dashboard (ADR-0033): a health banner plus a

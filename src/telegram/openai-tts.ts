@@ -1,6 +1,13 @@
 import OpenAI from 'openai';
 import type { Synthesizer } from './synthesizer.js';
 
+/** One synthesize call's billed size, reported for accounting (TokenLedger, Task 15).
+ * TTS bills per character, not per token — the ledger stores it in the same
+ * per-tier counter shape, using this count as its "token" unit. */
+export interface TtsUsageReport {
+  readonly characters: number;
+}
+
 export interface OpenAITTSDeps {
   /** TTS model, e.g. `gpt-4o-mini-tts` (ADR-0020). */
   readonly model: string;
@@ -8,6 +15,12 @@ export interface OpenAITTSDeps {
   readonly voice: string;
   /** Injectable for testing; defaults to a real client reading OPENAI_API_KEY. */
   readonly client?: OpenAI;
+  /**
+   * Fires once per call with the billed (post-clamp) character count, so the
+   * composition root can account spend without this synthesizer knowing about
+   * ledgers. Must not throw; omitted ⇒ no accounting.
+   */
+  readonly onUsage?: (usage: TtsUsageReport) => void;
 }
 
 /**
@@ -41,12 +54,14 @@ export class OpenAITTS implements Synthesizer {
   }
 
   async synthesize(text: string): Promise<Buffer> {
+    const input = clampForTts(text);
     const res = await this.client.audio.speech.create({
       model: this.deps.model,
       voice: this.deps.voice,
-      input: clampForTts(text),
+      input,
       response_format: 'mp3',
     });
+    this.deps.onUsage?.({ characters: input.length });
     return Buffer.from(await res.arrayBuffer());
   }
 }

@@ -46,10 +46,30 @@ describe('StoryRepo', () => {
       memberRefs: [{ source: 'gdelt', externalId: '9' }] }));
 
     const map = await repo.existingAnalysis(['s1', 's2', 'missing']);
-    expect(map.get('s1')).toEqual({ summary: 'Sum one', whyItMatters: 'Why one' });
-    expect(map.get('s2')).toEqual({ summary: null, whyItMatters: null });
+    expect(map.get('s1')).toEqual({ summary: 'Sum one', whyItMatters: 'Why one', displayTitle: null });
+    expect(map.get('s2')).toEqual({ summary: null, whyItMatters: null, displayTitle: null });
     expect(map.has('missing')).toBe(false);
     expect(await repo.existingAnalysis([])).toEqual(new Map()); // empty input, no query
+  });
+
+  it('persists and returns displayTitle; defaults to null when omitted (Task 20)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+
+    expect((await repo.upsert(storyUpsert())).displayTitle).toBeNull();
+
+    const withTitle = await repo.upsert(
+      storyUpsert({ id: 's2', displayTitle: 'Clear English headline',
+        memberRefs: [{ source: 'gdelt', externalId: '9' }] }),
+    );
+    expect(withTitle.displayTitle).toBe('Clear English headline');
+
+    const found = await repo.get('s2');
+    expect(found?.displayTitle).toBe('Clear English headline');
+
+    // existingAnalysis surfaces it too, so a cheap re-upsert can preserve it (ADR-0047).
+    const map = await repo.existingAnalysis(['s2']);
+    expect(map.get('s2')?.displayTitle).toBe('Clear English headline');
   });
 
   it('persists and returns the score breakdown; defaults to null when omitted (ADR-0032)', async () => {
@@ -424,6 +444,39 @@ describe('StoryRepo', () => {
         stories: 2,
         multiSourceStories: 1,
         storiesUpdatedAcrossTicks: 1,
+      });
+    });
+
+    it('story stats use SQL counts (correct at scale, not JS-side array length)', async () => {
+      // A larger seeded set than the fixture above: if the multi-source count
+      // were still derived from a JS array `.length` over rows pulled back from
+      // the DB, any subquery/aggregation slip (e.g. counting group rows instead
+      // of the grouped-count) would show up here as a wrong number.
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+      const MULTI = 12;
+      const SINGLE = 7;
+      for (let i = 0; i < MULTI; i++) {
+        await repo.upsert(
+          storyUpsert({
+            id: `multi-${i}`,
+            memberRefs: [
+              { source: 'hackernews', externalId: `${i}-a` },
+              { source: 'gdelt', externalId: `${i}-b` },
+            ],
+          }),
+        );
+      }
+      for (let i = 0; i < SINGLE; i++) {
+        await repo.upsert(
+          storyUpsert({ id: `single-${i}`, memberRefs: [{ source: 'hackernews', externalId: `s${i}` }] }),
+        );
+      }
+
+      expect(await repo.stats(CROSS_TICK_MS)).toEqual({
+        stories: MULTI + SINGLE,
+        multiSourceStories: MULTI,
+        storiesUpdatedAcrossTicks: 0,
       });
     });
   });

@@ -22,11 +22,23 @@ const STOPWORDS = new Set([
 export function extractEntities(text: string): Set<string> {
   const out = new Set<string>();
 
+  // The all-caps-acronym exemption below only makes sense when uppercase is a
+  // *signal* — i.e. the surrounding text is mixed-case, so an all-caps token
+  // stands out as an acronym. In a shouty, predominantly-uppercase headline
+  // ("BREAKING: THE US AND UK RESPOND"), every token is uppercase, so
+  // uppercase carries no information and the exemption must not fire: the
+  // stopword filter applies to every token as usual (fail-closed).
+  const hasLowercase = /[a-zà-ÿ]/.test(text);
+
   // Capitalized proper-noun phrases (one or more capitalized words in a row).
   const proper = text.match(/[A-ZÀ-Þ][\wÀ-ÿ'’-]+(?:\s+[A-ZÀ-Þ][\wÀ-ÿ'’-]+)*/g) ?? [];
   for (const m of proper) {
     const norm = m.toLowerCase().trim();
-    if (norm.length >= 3 && !STOPWORDS.has(norm)) out.add(norm);
+    // Exempt all-uppercase acronyms (e.g. "US", "WHO") from stopword filter —
+    // but only when the source text has lowercase letters elsewhere, so the
+    // uppercase pattern is actually distinguishing.
+    const isAllUppercase = hasLowercase && /^[A-Z]+$/.test(m.trim());
+    if (norm.length >= 3 && (!STOPWORDS.has(norm) || isAllUppercase)) out.add(norm);
     // Also index each constituent word: cross-outlet phrasings rarely agree on
     // phrase boundaries ("Western Venezuela" vs "Venezuela", or a Title-Case
     // headline that greedily matches as ONE long phrase), and a phrase-only set
@@ -35,16 +47,25 @@ export function extractEntities(text: string): Set<string> {
     const words = norm.split(/\s+/);
     if (words.length > 1) {
       for (const w of words) {
-        if (w.length >= 3 && !STOPWORDS.has(w)) out.add(w);
+        // Check if the original word is all-uppercase before normalization.
+        const originalWords = m.trim().split(/\s+/);
+        const originalWord = originalWords.find((ow) => ow.toLowerCase() === w);
+        const wasAllUppercase = hasLowercase && originalWord && /^[A-Z]+$/.test(originalWord);
+        if (w.length >= 3 && (!STOPWORDS.has(w) || wasAllUppercase)) out.add(w);
       }
     }
   }
 
-  // Short all-caps acronyms (AI, WHO, SEC, NASA, GLM).
+  // Short all-caps acronyms (AI, WHO, SEC, NASA, GLM). These are added
+  // unconditionally (not stopword-filtered) because they aren't stopwords to
+  // begin with (see STOPWORDS) — but a shouty headline turns actual stopwords
+  // into all-caps tokens too, so we must not let this branch add stopwords
+  // when there's no mixed-case signal to justify the acronym reading.
   const acronyms = text.match(/\b[A-Z]{2,6}\b/g) ?? [];
   for (const m of acronyms) {
     const norm = m.toLowerCase();
-    if (!STOPWORDS.has(norm)) out.add(norm);
+    if (STOPWORDS.has(norm) && !hasLowercase) continue;
+    out.add(norm);
   }
 
   // Salient numbers — death tolls ("3,500"), magnitudes ("7.1"), quantities.

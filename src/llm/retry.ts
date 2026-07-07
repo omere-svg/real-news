@@ -20,17 +20,62 @@ export interface RetryOptions {
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Node/undici error codes for a dropped or unreachable connection. */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EAI_AGAIN',
+]);
+
+/**
+ * Whether a status-less error looks like a network blip worth retrying, as
+ * opposed to a programmer bug (TypeError, RangeError, ...) that will fail
+ * identically on every attempt. Judged by `code`/`name`/message since fetch
+ * and the OpenAI SDK don't agree on a single shape for these.
+ */
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error) && typeof err !== 'object') return false;
+  const e = err as { code?: string; name?: string; message?: string; transient?: boolean };
+  // Explicitly tagged by a caller that knows the error is a transport fault
+  // (see `markTransient`) — not inferred from the error's type/name, since a
+  // SyntaxError (say) is just as often a programmer bug as a wire fault.
+  if (e.transient === true) return true;
+  if (e.code && TRANSIENT_NETWORK_CODES.has(e.code)) return true;
+  if (e.name === 'AbortError') return true;
+  const message = e.message ?? '';
+  return /fetch failed|network|ENOTFOUND|socket hang up/i.test(message);
+}
+
+/**
+ * Tag an error as a transient transport fault so `isRetryable` retries it.
+ * Used by callers that parse a provider response body and know a parse
+ * failure there means a truncated/garbled wire response (a real transport
+ * fault) rather than a generic SyntaxError — which `isRetryable` otherwise
+ * treats as a programmer bug that will fail identically on every attempt.
+ * Mutates and returns the same error so it can be thrown inline: `throw
+ * markTransient(err)`.
+ */
+export function markTransient<E>(err: E): E {
+  if (err && typeof err === 'object') {
+    (err as { transient?: boolean }).transient = true;
+  }
+  return err;
+}
+
 /**
  * Whether an error is worth retrying: transient network drops and the transient
  * HTTP statuses (429 rate-limit, 5xx). A permanent 4xx (401 bad key, 400 invalid
  * request, content filter) will fail again identically, so retrying it only
  * triples latency before the resilient client degrades (ADR-0049). Errors with
- * no status (fetch/DNS/timeout) are treated as transient.
+ * no status are only retried when they look network-ish (ECONNRESET, timeout,
+ * fetch failure, ...) — a status-less TypeError/RangeError is a programmer bug
+ * that will fail identically every time, so it fails fast instead.
  */
 export function isRetryable(err: unknown): boolean {
   const status = (err as { status?: number; statusCode?: number })?.status
     ?? (err as { statusCode?: number })?.statusCode;
-  if (typeof status !== 'number') return true; // network/timeout — worth a retry
+  if (typeof status !== 'number') return isTransientNetworkError(err);
   return status === 429 || status >= 500;
 }
 

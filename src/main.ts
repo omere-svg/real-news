@@ -12,14 +12,12 @@ import { DrizzleRawItemRepo } from './db/raw-item-repo.js';
 import { DrizzleStoryRepo } from './db/story-repo.js';
 import type { StoryRepo } from './db/story-repo.js';
 import { DrizzleTickReportRepo } from './db/tick-report-repo.js';
-import type { TickRecord } from './db/tick-report-repo.js';
 import { DrizzleSignalObservationRepo, type SignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
 import { DrizzleAgentPolicyRepo } from './db/agent-policy-repo.js';
 import { DrizzleChatTraceRepo, type ChatTraceRepo } from './db/chat-trace-repo.js';
 import { DrizzleChatSessionRepo, type ChatSessionRepo } from './db/chat-session-repo.js';
 import { DrizzleTickLock } from './db/tick-lock-repo.js';
-import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
 import { ArxivSource } from './sources/arxiv.js';
 import { GdeltSource } from './sources/gdelt.js';
@@ -53,6 +51,7 @@ import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import type { LLMClient } from './llm/llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { OpenAIEmbedder } from './embedding/openai-embedder.js';
+import type { EmbeddingUsageReport } from './embedding/openai-embedder.js';
 import { ResilientEmbedder } from './embedding/resilient-embedder.js';
 import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
@@ -61,6 +60,8 @@ import { ConsoleLogger, type Logger } from './log/logger.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
 import { screenReflectionActions } from './pipeline/reflection-policy.js';
+import { maybeReflect, runMaintenanceSteps } from './pipeline/maintenance.js';
+import { withTimeout } from './scheduler/timeout.js';
 import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
@@ -157,13 +158,18 @@ function buildSource(id: StorySourceId, s: SourceConfig, fetchJson: JsonFetcher)
 }
 
 /** Build the Embedder seam from config — neural with a hashing fallback (ADR-0018). */
-function buildEmbedder(config: Config): Embedder {
+function buildEmbedder(
+  config: Config,
+  /** Reports embeddings-call token usage to the ledger (Task 15); omitted ⇒ no accounting. */
+  onUsage?: (usage: EmbeddingUsageReport) => void,
+): Embedder {
   const { provider, model, dimensions } = config.embedder;
   const hashing = new HashingEmbedder(dimensions);
   if (provider === 'hashing') return hashing;
   return new ResilientEmbedder(
-    new OpenAIEmbedder({ model, dimensions }),
+    new OpenAIEmbedder({ model, dimensions, ...(onUsage ? { onUsage } : {}) }),
     hashing,
+    (op, err) => log.warn('embedder.degraded', { op, err }),
   );
 }
 
@@ -208,8 +214,10 @@ function buildSignalSources(config: Config, fetchJson: JsonFetcher): SignalSourc
     .map((s) => buildSignalSource(s.id as SignalSourceId, s, fetchJson));
 }
 
-/** The structured log sink (src/log/logger.ts). Orchestration logs flow through
- * it; a few leaf resilient-wrappers still default to console.warn on degrade. */
+/** The structured log sink (src/log/logger.ts). Every orchestration log — including
+ * the leaf resilient-wrappers' degrade paths — flows through it; a raw `console.*`
+ * call anywhere else in src/ (outside this file and src/server/ui.ts's client
+ * script) is a bug (Task 18). */
 const log: Logger = new ConsoleLogger();
 
 async function main(): Promise<void> {
@@ -288,7 +296,9 @@ async function main(): Promise<void> {
   );
   // One embedder, shared by the tick pipeline (dedup) and — when semantic chat is
   // on — the bot's chat grounding (ADR-0045). Stateless, so sharing is safe.
-  const embedder = buildEmbedder(config);
+  const embedder = buildEmbedder(config, (u) =>
+    tokenLedger.record({ tier: 'embed', promptTokens: u.totalTokens, completionTokens: 0 }),
+  );
   const storySources = buildSources(config, fetchJson);
   const signalSources = buildSignalSources(config, fetchJson);
   const storySourceIds = storySources.map((s) => s.id);
@@ -304,6 +314,7 @@ async function main(): Promise<void> {
     embedder,
     clock: systemClock,
     config: toTickConfig(config),
+    log,
   });
 
   const retention = config.retention;
@@ -318,76 +329,71 @@ async function main(): Promise<void> {
   // below, before the first tick can ever invoke `maintain`.
   // eslint-disable-next-line prefer-const -- assigned exactly once below; declared early so `maintain` can close over it
   let tickLoop: TickLoop;
-  let tickCount = 0;
-  const maintain = async (): Promise<void> => {
-    tickCount += 1;
-    if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
-    if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
-    // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
-    if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
-    // Chat-agent trajectories and idle durable sessions are bounded too (ADR-0053).
-    await chatTraceRepo.pruneToRecent(200);
-    await chatSessionRepo.pruneIdleSince(systemClock.now() - 7 * 24 * 3600_000);
-
-    if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
-      // Reason over the trailing window of ticks as a group; persist the note
-      // AND act on it (ADR-0053): the model proposes bounded corrections, the
-      // deterministic policy guard screens them, the loop applies what survives.
-      const recent = await tickReportRepo.recent(retention.reflectWindow);
-      const reflection = await llm.reflect({ ticks: recent.map(toTickDigest) });
-      const accepted = screenReflectionActions(reflection.actions, {
-        validSources: allSourceIds,
-        topN: { min: 3, max: 15 },
-        maxBackoffTicks: 10,
-      });
-      for (const b of accepted.backoffs) {
-        backoff.force(b.source, tickLoop.tickIndex() + 1, b.ticks);
-        log.info('reflect.backoff_forced', { source: b.source, ticks: b.ticks, reason: b.reason });
-      }
-      if (accepted.deepAnalysisTopN) {
-        await agentPolicyRepo.set(
-          { deepAnalysisTopN: accepted.deepAnalysisTopN.value, reason: accepted.deepAnalysisTopN.reason },
-          systemClock.now(),
-        );
-        log.info('reflect.deep_analysis_top_n', {
-          value: accepted.deepAnalysisTopN.value,
-          reason: accepted.deepAnalysisTopN.reason,
-        });
-      }
-      for (const r of accepted.rejected) {
-        log.warn('reflect.action_rejected', { why: r.why, action: r.action });
-      }
-      const text = reflection.advisory.trim();
-      if (text) {
-        await tickReflectionRepo.record({
-          createdAt: systemClock.now(),
-          ticksCovered: recent.length,
-          text,
-          actions: [
-            ...accepted.backoffs.map((b) => ({
-              type: 'backoff_source', reason: b.reason, source: b.source, ticks: b.ticks,
-            })),
-            ...(accepted.deepAnalysisTopN
-              ? [{
-                  type:
-                    accepted.deepAnalysisTopN.value === null
-                      ? 'clear_deep_analysis_top_n'
-                      : 'set_deep_analysis_top_n',
-                  reason: accepted.deepAnalysisTopN.reason,
-                  ...(accepted.deepAnalysisTopN.value !== null
-                    ? { value: accepted.deepAnalysisTopN.value }
-                    : {}),
-                }]
-              : []),
-          ],
-        });
-        if (retention.reflections > 0) {
-          await tickReflectionRepo.pruneToRecent(retention.reflections);
-        }
-        log.info('reflect.advisory_written', { ticksCovered: recent.length });
-      }
-    }
-  };
+  // Each step runs in isolation (ADR-0054 audit fix): a failing prune must
+  // not starve the prunes after it or reflection for the cycle — see
+  // `runMaintenanceSteps` in pipeline/maintenance.ts for the isolation itself.
+  const maintain = async (): Promise<void> =>
+    runMaintenanceSteps(
+      [
+        {
+          name: 'tickReports',
+          run: async () => {
+            if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
+          },
+        },
+        {
+          name: 'webAuth',
+          run: async () => {
+            if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
+          },
+        },
+        {
+          // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
+          name: 'rawItems',
+          run: async () => {
+            if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
+          },
+        },
+        {
+          // Chat-agent trajectories are bounded too (ADR-0053).
+          name: 'chatTrace',
+          run: async () => {
+            await chatTraceRepo.pruneToRecent(200);
+          },
+        },
+        {
+          name: 'chatSession',
+          run: async () => {
+            await chatSessionRepo.pruneIdleSince(systemClock.now() - 7 * 24 * 3600_000);
+          },
+        },
+        {
+          // Reason over the trailing window of ticks as a group; persist the note
+          // AND act on it (ADR-0053): the model proposes bounded corrections, the
+          // deterministic policy guard screens them, the loop applies what survives.
+          // Cadence is derived from the durable tick_reports count, not an
+          // in-memory counter, so it survives restarts/deploys (ADR-0042).
+          name: 'reflect',
+          run: () =>
+            maybeReflect({
+              reflect: (input) => llm.reflect(input),
+              screen: screenReflectionActions,
+              backoff,
+              agentPolicyRepo,
+              tickReflectionRepo,
+              tickReportRepo,
+              log,
+              now: () => systemClock.now(),
+              nextTickIndex: () => tickLoop.tickIndex() + 1,
+              validSources: allSourceIds,
+              reflectEveryTicks: retention.reflectEveryTicks,
+              reflectWindow: retention.reflectWindow,
+              reflectionsRetention: retention.reflections,
+            }),
+        },
+      ],
+      log,
+    );
 
   // Optional cross-process advisory lock (ADR-0047): when two processes point at
   // one DB, only the lock holder ticks — the other skips instead of double-writing.
@@ -419,10 +425,17 @@ async function main(): Promise<void> {
   // Release the advisory lock on shutdown (ADR-0048). systemd restarts (every
   // deploy) land mid-tick about half the time; without this the dying process
   // leaves a stale lease that stalls ticking for up to lock.ttlMinutes.
+  // Bounded by withTimeout (ADR-0054 audit fix): a hung `lock.release()` (e.g.
+  // a wedged DB connection) used to hang this fire-and-forget closure forever,
+  // leaving `process.exit(0)` never called and the orchestrator to SIGKILL
+  // after its own grace period. Capping the release at 5s guarantees we still
+  // exit promptly even when the release itself never settles.
   const shutdown = (signal: string): void => {
     log.info('main.shutdown', { signal, action: 'releasing tick lock and exiting' });
     void (async () => {
-      if (lockEnabled) await tickLock.release().catch(() => undefined);
+      if (lockEnabled) {
+        await withTimeout(tickLock.release(), 5000).catch(() => undefined);
+      }
       process.exit(0);
     })();
   };
@@ -524,24 +537,9 @@ async function main(): Promise<void> {
   if (config.telegram.enabled) {
     startTelegramBot(
       config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage,
-      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
+      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo, tokenLedger,
     );
   }
-}
-
-/** Flatten a persisted tick record into the reflection prompt's digest (ADR-0042). */
-function toTickDigest(r: TickRecord): TickDigest {
-  return {
-    ranAt: r.ranAt,
-    ok: r.ok,
-    durationMs: r.durationMs,
-    extracted: r.extracted,
-    storiesUpserted: r.storiesUpserted,
-    signalsObserved: r.signalsObserved,
-    skipped: [...r.skipped, ...r.signalsSkipped],
-    failed: [...r.failed, ...r.signalsFailed],
-    error: r.error,
-  };
 }
 
 /** Build the web-search fallback for chat (ADR-0029), or null when off / unkeyed. */
@@ -557,6 +555,7 @@ function buildWebSearch(config: Config): WebSearch | null {
   }
   return new ResilientWebSearch(
     new TavilyWebSearch({ apiKey, maxResults: ws.maxResults }),
+    (err) => log.warn('web_search.degraded', { err }),
   );
 }
 
@@ -580,6 +579,8 @@ function startTelegramBot(
   traces?: ChatTraceRepo,
   /** Durable chat sessions — conversations survive deploys (ADR-0053). */
   sessionRepo?: ChatSessionRepo,
+  /** Token accounting sink for TTS spend (Task 15); omitted ⇒ no accounting. */
+  tokenLedger?: TokenLedger,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -596,7 +597,15 @@ function startTelegramBot(
 
   const tts = tg.tts;
   const synthesizer: Synthesizer | null = tts.enabled
-    ? new ResilientSynthesizer(new OpenAITTS({ model: tts.model, voice: tts.voice }))
+    ? new ResilientSynthesizer(
+        new OpenAITTS({
+          model: tts.model,
+          voice: tts.voice,
+          onUsage: (u) =>
+            tokenLedger?.record({ tier: 'tts', promptTokens: u.characters, completionTokens: 0 }),
+        }),
+        (op, err) => log.warn('tts.degraded', { op, err }),
+      )
     : null;
 
   // Chat about the news (ADR-0029): wired only when enabled; web search stays
@@ -668,6 +677,14 @@ function startTelegramBot(
       .catch((err) => log.error('telegram.scheduled_briefs_failed', { err }));
   }, 60_000);
 }
+
+// Last-resort backstop: any promise rejection that somehow escapes every awaited
+// try/catch (a bug, not the expected path) must never silently kill the daemon —
+// that would contradict the "degrades instead of crashing" guarantee. Logging and
+// continuing is the final safety net, not a substitute for handling errors locally.
+process.on('unhandledRejection', (reason) => {
+  log.error('process.unhandled_rejection', { err: reason });
+});
 
 main().catch((err) => {
   log.error('main.fatal', { err });

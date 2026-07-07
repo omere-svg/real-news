@@ -76,11 +76,20 @@ export class FrankfurterSource implements SignalSource {
         const a = latest[cur];
         const b = prior[cur];
         if (typeof a !== 'number' || typeof b !== 'number' || b === 0) return null;
+        const pct = Math.abs((a - b) / b) * 100;
+        // Defense-in-depth: `z.number()` accepts Infinity, and a JSON numeric
+        // literal beyond ±1.8e308 (a malformed/corrupt upstream rate) silently
+        // overflows to Infinity on parse — turning this into NaN/Infinity math.
+        // `value` is a raw numeric DB bind (signal_observations), not JSON; a
+        // non-finite bind is rejected by the store with a hard error that isn't
+        // isolated the way a throwing Source is, so it would crash the whole
+        // tick instead of just this one reading (ADR-0025).
+        if (!Number.isFinite(pct)) return null;
         return {
           source: 'frankfurter',
           topic: 'Business',
           key: `frankfurter:USD${cur}:${latestDate}`,
-          value: Math.abs((a - b) / b) * 100,
+          value: pct,
           observedAt: now,
         };
       })

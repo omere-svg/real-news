@@ -54,4 +54,50 @@ describe('OpenAIEmbedder', () => {
     });
     expect(embedder.dimensions).toBe(1536);
   });
+
+  it('reports token usage to the ledger via onUsage', async () => {
+    const create = vi.fn().mockResolvedValue({
+      data: [{ index: 0, embedding: [1, 0] }],
+      usage: { prompt_tokens: 12, total_tokens: 12 },
+    });
+    const onUsage = vi.fn();
+    const embedder = new OpenAIEmbedder({
+      model: 'text-embedding-3-small',
+      dimensions: 2,
+      client: stubClient(create),
+      onUsage,
+    });
+
+    await embedder.embed(['hello world']);
+
+    expect(onUsage).toHaveBeenCalledWith({ totalTokens: 12 });
+  });
+
+  it('does not report usage for an empty batch (no API call made)', async () => {
+    const onUsage = vi.fn();
+    const embedder = new OpenAIEmbedder({
+      model: 'm',
+      dimensions: 2,
+      client: stubClient(vi.fn()),
+      onUsage,
+    });
+
+    await embedder.embed([]);
+
+    expect(onUsage).not.toHaveBeenCalled();
+  });
+
+  it('tolerates a missing usage field on the response (never throws)', async () => {
+    const create = vi.fn().mockResolvedValue({ data: [{ index: 0, embedding: [1, 0] }] });
+    const onUsage = vi.fn();
+    const embedder = new OpenAIEmbedder({
+      model: 'm',
+      dimensions: 2,
+      client: stubClient(create),
+      onUsage,
+    });
+
+    await expect(embedder.embed(['x'])).resolves.toEqual([[1, 0]]);
+    expect(onUsage).not.toHaveBeenCalled();
+  });
 });

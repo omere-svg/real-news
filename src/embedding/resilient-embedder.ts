@@ -13,8 +13,9 @@ export class ResilientEmbedder implements Embedder {
   constructor(
     private readonly primary: Embedder,
     private readonly fallback: Embedder,
-    private readonly onError: (op: string, err: unknown) => void = (op, err) =>
-      console.warn(`[embedder] ${op} failed, degrading:`, err),
+    // Composition root wires the real Logger-backed callback (main.ts); this
+    // default only covers callers (tests) that don't care about the degrade log.
+    private readonly onError: (op: string, err: unknown) => void = () => undefined,
   ) {
     this.dimensions = primary.dimensions;
   }

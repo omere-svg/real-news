@@ -43,6 +43,8 @@ export interface StoredVector {
 export interface StoryAnalysisFields {
   readonly summary: string | null;
   readonly whyItMatters: string | null;
+  /** English display headline (Task 20); preserved the same way as summary/whyItMatters. */
+  readonly displayTitle: string | null;
 }
 
 /** Blocking filter for cross-tick dedup: recent window, optionally one topic (ADR-0017/0038). */
@@ -86,6 +88,8 @@ export interface StoryUpsert {
   /** Factual "what happened" summary; omit/null when not analyzed this tick. */
   readonly summary?: string | null;
   readonly whyItMatters: string | null;
+  /** English display headline from the deep tier; omit/null when not analyzed this tick (Task 20). */
+  readonly displayTitle?: string | null;
   /** Inspectable "why this score" snapshot (ADR-0032); omit/null when unavailable. */
   readonly scoreBreakdown?: ScoreBreakdown | null;
   readonly memberRefs: readonly RawItemRef[];
@@ -158,6 +162,7 @@ export class DrizzleStoryRepo implements StoryRepo {
         significance: input.significance,
         summary: input.summary ?? null,
         whyItMatters: input.whyItMatters,
+        displayTitle: input.displayTitle ?? null,
         scoreBreakdown: input.scoreBreakdown ?? null,
         firstSeenAt: now,
         updatedAt: now,
@@ -171,6 +176,7 @@ export class DrizzleStoryRepo implements StoryRepo {
           significance: input.significance,
           summary: input.summary ?? null,
           whyItMatters: input.whyItMatters,
+          displayTitle: input.displayTitle ?? null,
           scoreBreakdown: input.scoreBreakdown ?? null,
           updatedAt: now,
         },
@@ -245,11 +251,15 @@ export class DrizzleStoryRepo implements StoryRepo {
         id: stories.id,
         summary: stories.summary,
         whyItMatters: stories.whyItMatters,
+        displayTitle: stories.displayTitle,
       })
       .from(stories)
       .where(inArray(stories.id, ids as string[]));
     return new Map(
-      rows.map((r) => [r.id, { summary: r.summary, whyItMatters: r.whyItMatters }]),
+      rows.map((r) => [
+        r.id,
+        { summary: r.summary, whyItMatters: r.whyItMatters, displayTitle: r.displayTitle },
+      ]),
     );
   }
 
@@ -275,20 +285,23 @@ export class DrizzleStoryRepo implements StoryRepo {
 
   async stats(crossTickMs: number): Promise<StoryStats> {
     const [total] = await this.db.select({ n: count() }).from(stories);
-    // One grouped pass over membership: a row per Story owning more than one
-    // member ref — the corroboration/dedup evidence.
-    const multi = await this.db
+    // One grouped pass over membership — a row per Story owning more than one
+    // member ref (the corroboration/dedup evidence) — counted in SQL via a
+    // subquery rather than pulling every group row back to count in JS.
+    const multiGroups = this.db
       .select({ storyId: membership.storyId })
       .from(membership)
       .groupBy(membership.storyId)
-      .having(sql`count(*) > 1`);
+      .having(sql`count(*) > 1`)
+      .as('multi_groups');
+    const [multi] = await this.db.select({ n: count() }).from(multiGroups);
     const [developed] = await this.db
       .select({ n: count() })
       .from(stories)
       .where(gt(stories.updatedAt, sql`${stories.firstSeenAt} + ${crossTickMs}`));
     return {
       stories: total?.n ?? 0,
-      multiSourceStories: multi.length,
+      multiSourceStories: multi?.n ?? 0,
       storiesUpdatedAcrossTicks: developed?.n ?? 0,
     };
   }
@@ -412,6 +425,7 @@ function rowToStory(
     significance: row.significance,
     summary: row.summary,
     whyItMatters: row.whyItMatters,
+    displayTitle: row.displayTitle,
     scoreBreakdown: row.scoreBreakdown ?? null,
     memberRefs,
     firstSeenAt: row.firstSeenAt,

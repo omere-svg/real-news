@@ -81,4 +81,21 @@ describe('OpenAITransport', () => {
       new OpenAITransport(deps(unwired.client)).complete('p', { tier: 'cheap', maxTokens: 10 }),
     ).resolves.toBe('hi'); // no onUsage dep — must not throw
   });
+
+  it('retries a truncated-JSON transport response instead of throwing straight through', async () => {
+    // A provider glitch can truncate the streamed body mid-object; the retry
+    // should re-issue the whole call (parse lives inside withRetry) and
+    // succeed once the provider returns a complete response.
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce({ choices: [{ message: { content: '{"topic": "AI"' } }] }) // truncated
+      .mockResolvedValueOnce({ choices: [{ message: { content: '{"topic":"AI"}' } }] });
+    const client = { chat: { completions: { create } } } as unknown as OpenAI;
+    const t = new OpenAITransport(deps(client));
+
+    await expect(t.completeJson('p', { tier: 'cheap', maxTokens: 10 })).resolves.toEqual({
+      topic: 'AI',
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+  });
 });

@@ -344,19 +344,16 @@ describe('resolve', () => {
     });
     await storyRepo.putVector('hackernews:1', [1, 0, 0]);
 
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      const fresh = rawItem('gdelt', '2', 'Earthquake strikes area');
-      await resolve(
-        [{ items: [fresh], topic: 'AI' }],
-        [embedded(fresh, [0.99, 0.02, 0])],
-        { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: false }), clock },
-        opts,
-      );
-      expect(log).toHaveBeenCalledWith('[dedup] resolve confirmed=0 vetoed=1');
-    } finally {
-      log.mockRestore();
-    }
+    const info = vi.fn();
+    const log = { info, warn: vi.fn(), error: vi.fn() };
+    const fresh = rawItem('gdelt', '2', 'Earthquake strikes area');
+    await resolve(
+      [{ items: [fresh], topic: 'AI' }],
+      [embedded(fresh, [0.99, 0.02, 0])],
+      { storyRepo, rawItemRepo, llm: new FakeLLM({ confirm: false }), clock, log },
+      opts,
+    );
+    expect(info).toHaveBeenCalledWith('resolve.confirm.veto', { confirmed: 0, vetoed: 1 });
   });
 
   it('ignores stored stories outside the recency window', async () => {

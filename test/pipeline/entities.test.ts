@@ -93,4 +93,36 @@ describe('extractEntities (ADR-0036)', () => {
     expect(e.has('0.25')).toBe(false); // sub-1 decimal (rates)
     expect(e.has('1.5')).toBe(true); // >= 1 decimal still counts
   });
+
+  it('keeps uppercase acronyms WHO and US as entities while lowercase who/us remain stopwords', () => {
+    // Uppercase WHO/US (acronyms) should be kept
+    const upper = extractEntities('WHO declares outbreak; US responds');
+    expect(upper.has('who')).toBe(true);
+    expect(upper.has('us')).toBe(true);
+
+    // Lowercase who/us (common words) should be filtered
+    const lower = extractEntities('who said this is what the us is doing');
+    expect(lower.has('who')).toBe(false);
+    expect(lower.has('us')).toBe(false);
+  });
+
+  it('an all-caps headline does not promote stopwords as entities', () => {
+    // A shouty (predominantly/all-uppercase) headline has no mixed-case signal
+    // to distinguish an acronym from a shouted stopword — so the acronym
+    // exemption must NOT apply, and the/and/is/on/we stay filtered out.
+    const shouty = extractEntities('THE PRESIDENT IS ON THE MOVE AND WE RESPOND');
+    expect(shouty.has('the')).toBe(false);
+    expect(shouty.has('and')).toBe(false);
+    expect(shouty.has('is')).toBe(false);
+    expect(shouty.has('on')).toBe(false);
+    expect(shouty.has('we')).toBe(false);
+
+    const shouty2 = extractEntities('BREAKING: THE US AND UK RESPOND');
+    expect(shouty2.has('the')).toBe(false);
+    expect(shouty2.has('us')).toBe(false);
+    expect(shouty2.has('and')).toBe(false);
+    // "uk" is not a stopword, so it's still extracted as an acronym — only
+    // the stopword-exemption behavior is under test here.
+    expect(shouty2.has('uk')).toBe(true);
+  });
 });

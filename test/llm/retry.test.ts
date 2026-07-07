@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withRetry, isRetryable } from '../../src/llm/retry.js';
+import { withRetry, isRetryable, markTransient } from '../../src/llm/retry.js';
 
 const noSleep = async (): Promise<void> => undefined;
 
@@ -14,6 +14,27 @@ describe('isRetryable (ADR-0049)', () => {
     expect(isRetryable({ status: 401 })).toBe(false);
     expect(isRetryable({ status: 400 })).toBe(false);
     expect(isRetryable({ status: 404 })).toBe(false);
+  });
+
+  it('does not retry a programmer error with no status (TypeError etc.)', () => {
+    expect(isRetryable(new TypeError("Cannot read properties of undefined"))).toBe(false);
+    expect(isRetryable(new RangeError('oops'))).toBe(false);
+  });
+
+  it('retries recognizable network-ish status-less errors by code/name/message', () => {
+    expect(isRetryable(Object.assign(new Error('boom'), { code: 'ECONNRESET' }))).toBe(true);
+    expect(isRetryable(Object.assign(new Error('boom'), { code: 'ETIMEDOUT' }))).toBe(true);
+    expect(isRetryable(Object.assign(new Error('boom'), { code: 'ECONNREFUSED' }))).toBe(true);
+    expect(isRetryable(Object.assign(new Error('boom'), { code: 'EAI_AGAIN' }))).toBe(true);
+    expect(isRetryable(Object.assign(new Error('aborted'), { name: 'AbortError' }))).toBe(true);
+  });
+
+  it('does not blanket-retry a bare SyntaxError — not every parse failure is a wire fault', () => {
+    expect(isRetryable(new SyntaxError('Unexpected end of JSON input'))).toBe(false);
+  });
+
+  it('retries a SyntaxError explicitly tagged transient by a caller (markTransient)', () => {
+    expect(isRetryable(markTransient(new SyntaxError('Unexpected end of JSON input')))).toBe(true);
   });
 });
 
@@ -30,6 +51,25 @@ describe('withRetry', () => {
   it('fails fast on a permanent error — no wasted retries', async () => {
     const fn = vi.fn().mockRejectedValue({ status: 401 });
     await expect(withRetry(fn, { sleep: noSleep })).rejects.toMatchObject({ status: 401 });
+    expect(fn).toHaveBeenCalledTimes(1); // not 3
+  });
+
+  it('does not retry a TypeError — a programmer bug fails fast', async () => {
+    const err = new TypeError('boom');
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withRetry(fn, { sleep: noSleep })).rejects.toBe(err);
+    expect(fn).toHaveBeenCalledTimes(1); // not 3
+  });
+
+  it('does not retry a plain SyntaxError from a non-transport closure', async () => {
+    // Only `completeJson` (openai-transport.ts) knows a JSON.parse failure
+    // means a truncated wire response and tags it via `markTransient`. A
+    // SyntaxError from anywhere else is just as likely a programmer bug
+    // (e.g. `JSON.parse` on genuinely malformed local data), so it must fail
+    // fast like any other untagged error.
+    const err = new SyntaxError('Unexpected token');
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withRetry(fn, { sleep: noSleep })).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1); // not 3
   });
 

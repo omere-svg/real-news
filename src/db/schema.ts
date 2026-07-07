@@ -49,6 +49,11 @@ export const stories = sqliteTable('stories', {
   significance: real('significance').notNull(),
   summary: text('summary'),
   whyItMatters: text('why_it_matters'),
+  // English display headline from the deep-tier analyze call (Task 20); null
+  // until a Story is deep-analyzed, or below top-N. The presentation layer
+  // prefers this over `title` when set — the raw source headline (often
+  // non-English) stays in `title` for provenance.
+  displayTitle: text('display_title'),
   // Inspectable "why this score" snapshot (ADR-0032); null for pre-0032 stories.
   scoreBreakdown: text('score_breakdown', { mode: 'json' }).$type<ScoreBreakdown>(),
   firstSeenAt: integer('first_seen_at').notNull(),
@@ -232,12 +237,16 @@ export const chatTraces = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     createdAt: integer('created_at').notNull(),
-    /** The reader's question (clamped). */
+    /** An 80-char preview of the reader's question, never the verbatim text (privacy). */
     question: text('question').notNull(),
-    /** The trajectory: [{step, tool, args, resultPreview}]. */
+    /** The trajectory: [{step, tool, args, resultPreview}] — step 0 is the plan, when stated. */
     steps: text('steps', { mode: 'json' }).$type<StoredTraceStep[]>().notNull(),
     /** Whether the final answer was grounded in the news cache / web results. */
     answeredFromNews: integer('answered_from_news', { mode: 'boolean' }).notNull(),
+    /** The model's one-line stated plan (rubric plan→act→observe); '' if omitted. */
+    plan: text('plan').notNull().default(''),
+    /** Which code path produced this answer: the model-driven loop, or the fixed degrade (ADR-0053). */
+    path: text('path').notNull().default('agent'),
   },
   (t) => [index('chat_traces_created_idx').on(t.createdAt)],
 );

@@ -10,7 +10,9 @@ import type { TickReflectionRepo } from '../db/tick-reflection-repo.js';
 import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
 import { utcDay, type UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
+import { FixedWindowLimiter, type RateLimiter } from '../telegram/rate-limiter.js';
 import { TOPICS, type Topic } from '../domain/types.js';
+import { canonical } from '../domain/vocab.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
 import { scoreExplanation } from '../presentation/score-explanation.js';
@@ -44,6 +46,10 @@ export interface WebOptions {
    */
   readonly usage?: UsageRepo;
   readonly globalPodcastPerDay?: number;
+  /** Per-IP budget for `/api/podcast` (an LLM cost vector); default 10 per minute. */
+  readonly podcastIpLimit?: number;
+  /** Window for `podcastIpLimit`; default 60s. */
+  readonly podcastIpWindowMs?: number;
 }
 
 /**
@@ -69,6 +75,10 @@ export interface WebAuthOptions {
   readonly codeTtlMs?: number;
   /** Injectable time source (tests); defaults to `Date.now`. */
   readonly now?: () => number;
+  /** Per-IP budget for `/api/auth/start` (mints DB rows); default 5 per minute. */
+  readonly authStartLimit?: number;
+  /** Window for `authStartLimit`; default 60s. */
+  readonly authStartWindowMs?: number;
 }
 
 /** ~One tick — the "developed across ticks" threshold `/api/stats` counts against. */
@@ -77,6 +87,24 @@ const CROSS_TICK_MS = 25 * 60_000;
 const SESSION_COOKIE = 'horizon_session';
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 3600_000;
 const DEFAULT_CODE_TTL_MS = 10 * 60_000;
+const DEFAULT_AUTH_START_LIMIT = 5;
+const DEFAULT_AUTH_START_WINDOW_MS = 60_000;
+const DEFAULT_PODCAST_IP_LIMIT = 10;
+const DEFAULT_PODCAST_IP_WINDOW_MS = 60_000;
+
+/**
+ * Best-effort client IP for rate limiting. The deploy sits behind Caddy
+ * (docs/DEPLOY-HTTPS.md), which sets `x-forwarded-for`; Node's raw socket
+ * address would just be Caddy's loopback, so the header is the only signal
+ * that actually distinguishes visitors. Take the first hop (the original
+ * client) and fall back to a shared bucket when the header is absent, e.g.
+ * direct-to-Node access in dev/tests.
+ */
+function clientIp(c: Context): string {
+  const fwd = c.req.header('x-forwarded-for');
+  const first = fwd?.split(',')[0]?.trim();
+  return first || 'unknown';
+}
 /** Unambiguous code alphabet (no 0/O/1/I) so a human can retype it into the bot. */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -109,6 +137,14 @@ export function createApp(
 ): Hono {
   const app = new Hono();
 
+  // /api/podcast is an LLM-backed cost vector reachable without auth — cap it per
+  // IP so a script can't grief the shared global budget with rapid-fire requests
+  // (mirrors the /api/auth/start per-IP limiter below, ADR-0052).
+  const podcastIpLimiter: RateLimiter = new FixedWindowLimiter(
+    web.podcastIpLimit ?? DEFAULT_PODCAST_IP_LIMIT,
+    web.podcastIpWindowMs ?? DEFAULT_PODCAST_IP_WINDOW_MS,
+  );
+
   app.get('/health', (c) => c.json({ ok: true }));
 
   if (auth) wireAuth(app, auth, defaults, web);
@@ -127,7 +163,8 @@ export function createApp(
 
   // The chat agent's tool-loop trajectories (ADR-0053): which tools the model
   // chose, in what order, and whether the answer was grounded — the public,
-  // inspectable "how I answered" evidence. No chat identity is stored.
+  // inspectable "how I answered" evidence. No chat identity is stored, and the
+  // reader's question is redacted to an 80-char preview at the writer (repo).
   app.get('/api/chat-traces', async (c) => {
     const limit = normalizeLimit(c.req.query('limit'), 20);
     return c.json({ traces: chatTraces ? await chatTraces.recent(limit) : [] });
@@ -140,21 +177,47 @@ export function createApp(
     // Today's durable LLM token counters (TokenLedger writes them via the usage
     // repo) — read from the same store so a restart doesn't zero the surface.
     const day = utcDay(Date.now());
-    const [storyStats, signalStats, ticks, cheapTokens, deepTokens] = await Promise.all([
+    const [
+      storyStats,
+      signalStats,
+      ticks,
+      cheapTokens,
+      deepTokens,
+      embedTokens,
+      ttsTokens,
+      subscribers,
+      questionsAnswered,
+    ] = await Promise.all([
       storyRepo.stats(CROSS_TICK_MS),
       signalObservations?.stats() ?? { observations: 0, oldestObservedAt: null },
       tickReports?.recent(200) ?? [],
       web.usage?.peek('global:tokens:cheap', day) ?? 0,
       web.usage?.peek('global:tokens:deep', day) ?? 0,
+      web.usage?.peek('global:tokens:embed', day) ?? 0,
+      web.usage?.peek('global:tokens:tts', day) ?? 0,
+      auth?.prefs.countSubscribed() ?? 0,
+      chatTraces?.count() ?? 0,
     ]);
     return c.json({
-      tokens: { day, cheap: cheapTokens, deep: deepTokens, total: cheapTokens + deepTokens },
+      tokens: {
+        day,
+        cheap: cheapTokens,
+        deep: deepTokens,
+        embed: embedTokens,
+        tts: ttsTokens,
+        // Token-denominated tiers only — tts bills in characters, not
+        // tokens, so it is excluded and reported separately below.
+        total: cheapTokens + deepTokens + embedTokens,
+        ttsCharacters: ttsTokens,
+      },
       stories: storyStats.stories,
       multiSourceStories: storyStats.multiSourceStories,
       storiesUpdatedAcrossTicks: storyStats.storiesUpdatedAcrossTicks,
       signalObservations: signalStats.observations,
       oldestSignalAt: signalStats.oldestObservedAt,
       ticksRecorded: ticks.length,
+      subscribers,
+      questionsAnswered,
       generatedAt: Date.now(),
     });
   });
@@ -203,21 +266,44 @@ export function createApp(
     // process-wide daily podcast budget so open web access can't run up OpenAI spend
     // (ADR-0052) — the last uncapped cost vector, now closed.
     if (!web.podcastEnabled) return c.json({ error: 'not found' }, 404);
+    if (!podcastIpLimiter.allow(clientIp(c), Date.now())) {
+      return c.json({ error: 'too many requests; try again later' }, 429);
+    }
+    // Peek (no charge) the global ceiling: a refused request must not itself burn
+    // budget, else a flood of already-over-cap requests keeps draining a counter
+    // that's already exhausted for no reason (mirrors quota-guard's peek-then-charge
+    // shape, ADR-0051/ADR-0052 hardening). Only a successful script generation
+    // charges the counter, below.
     if (web.usage && web.globalPodcastPerDay !== undefined) {
       const day = utcDay(Date.now());
-      const count = await web.usage.incrementAndGet('global:podcast', day);
-      if (count > web.globalPodcastPerDay) {
+      const current = await web.usage.peek('global:podcast', day);
+      if (current >= web.globalPodcastPerDay) {
         return c.json({ error: 'daily podcast limit reached; try again tomorrow (UTC)' }, 429);
       }
     }
     // Podcasts get the tighter audio cap, not the general maxMinutes.
     const podcastWeb = { ...web, maxMinutes: Math.min(web.maxMinutes, web.maxPodcastMinutes) };
-    return c.json({ script: await queryEngine.podcastScript(briefRequestOf(c, defaults, podcastWeb)) });
+    const script = await queryEngine.podcastScript(briefRequestOf(c, defaults, podcastWeb));
+    if (web.usage && web.globalPodcastPerDay !== undefined) {
+      await web.usage.incrementAndGet('global:podcast', utcDay(Date.now()));
+    }
+    return c.json({ script });
   });
 
   app.get('/api/outline', async (c) => {
-    const topic = (c.req.query('topic') ?? defaults.topics?.[0]) as Topic | undefined;
-    if (!topic) return c.json({ error: 'topic is required' }, 400);
+    const raw = c.req.query('topic');
+    if (raw === undefined) {
+      const topic = defaults.topics?.[0];
+      if (!topic) return c.json({ error: 'topic is required' }, 400);
+      return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
+    }
+    // Validate against the controlled vocabulary the same way the Telegram bot
+    // does (canonical()) — an unrecognized topic must 400, not silently flow
+    // through as a fake Topic and hit the query engine with garbage.
+    const topic = canonical(TOPICS, raw);
+    if (!topic) {
+      return c.json({ error: `unknown topic "${raw}"; expected one of ${TOPICS.join(', ')}` }, 400);
+    }
     return c.json({ outline: await queryEngine.topicOutline(topic, briefRequestOf(c, defaults, web)) });
   });
 
@@ -251,6 +337,12 @@ function wireAuth(
   const now = auth.now ?? Date.now;
   const sessionTtlMs = auth.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const codeTtlMs = auth.codeTtlMs ?? DEFAULT_CODE_TTL_MS;
+  // /api/auth/start mints a web_sessions + link_codes row per POST, unauthenticated
+  // and otherwise unlimited — cap it per IP so a script can't flood the DB.
+  const authStartLimiter: RateLimiter = new FixedWindowLimiter(
+    auth.authStartLimit ?? DEFAULT_AUTH_START_LIMIT,
+    auth.authStartWindowMs ?? DEFAULT_AUTH_START_WINDOW_MS,
+  );
 
   /** The linked chat for the request's session cookie, or null when unauthenticated. */
   const currentChat = async (
@@ -266,6 +358,9 @@ function wireAuth(
   // Begin pairing: mint a session + short-lived code, set the cookie, and return
   // the code plus a deep link the visitor opens in Telegram to confirm.
   app.post('/api/auth/start', async (c) => {
+    if (!authStartLimiter.allow(clientIp(c), now())) {
+      return c.json({ error: 'too many requests; try again later' }, 429);
+    }
     const token = newToken();
     const code = newCode();
     // The pending session lives only as long as its code (ADR-0048); the cookie
@@ -323,11 +418,21 @@ function wireAuth(
     const patch: { topics?: Topic[] | undefined; defaultMinutes?: number } = {};
 
     if (Array.isArray(body.topics)) {
+      // A client-controlled array with no bound could carry thousands of
+      // (possibly duplicated) entries; reject anything bigger than the whole
+      // vocabulary outright rather than doing wasted work on it.
+      if (body.topics.length > TOPICS.length) {
+        return c.json(
+          { error: `too many topics; at most ${TOPICS.length} distinct topics are supported` },
+          400,
+        );
+      }
       const valid = body.topics.filter((t): t is Topic =>
         (TOPICS as readonly string[]).includes(t as string),
       );
+      const deduped = [...new Set(valid)];
       // An empty/no-valid selection clears the filter back to the default ("all").
-      patch.topics = valid.length ? valid : undefined;
+      patch.topics = deduped.length ? deduped : undefined;
     }
     if (body.minutes !== undefined && Number.isFinite(Number(body.minutes))) {
       patch.defaultMinutes = normalizeMinutes(Number(body.minutes), web.maxMinutes);

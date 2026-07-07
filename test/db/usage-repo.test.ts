@@ -19,4 +19,12 @@ describe('UsageRepo', () => {
     expect(await repo.incrementAndGet('chat:1:podcast', '2026-06-18')).toBe(1); // next day resets
     expect(await repo.incrementAndGet('global:podcast', '2026-06-17')).toBe(1); // global counter
   });
+
+  it('is atomic under concurrent increments', async () => {
+    const repo = new DrizzleUsageRepo(await createTestDb());
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => repo.incrementAndGet('chat:9:cmd', '2026-06-17')),
+    );
+    expect(new Set(results)).toEqual(new Set(Array.from({ length: 20 }, (_, i) => i + 1)));
+  });
 });

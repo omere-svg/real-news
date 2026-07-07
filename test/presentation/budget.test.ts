@@ -20,6 +20,7 @@ function story(id: string, significance: number): Story {
     significance,
     summary: null,
     whyItMatters: null,
+    displayTitle: null,
     scoreBreakdown: null,
     memberRefs: [],
     firstSeenAt: 0,

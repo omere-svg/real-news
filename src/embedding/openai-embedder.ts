@@ -2,6 +2,11 @@ import OpenAI from 'openai';
 import type { Embedder } from './embedder.js';
 import { withRetry } from '../llm/retry.js';
 
+/** One embeddings call's token usage, reported for accounting (TokenLedger, Task 15). */
+export interface EmbeddingUsageReport {
+  readonly totalTokens: number;
+}
+
 export interface OpenAIEmbedderDeps {
   /** Embeddings model, e.g. `text-embedding-3-small` (ADR-0018). */
   readonly model: string;
@@ -9,6 +14,12 @@ export interface OpenAIEmbedderDeps {
   readonly dimensions: number;
   /** Injectable for testing; defaults to a real client reading OPENAI_API_KEY. */
   readonly client?: OpenAI;
+  /**
+   * Fires once per call with the provider-reported token usage, so the
+   * composition root can account spend without this embedder knowing about
+   * ledgers. Must not throw; omitted ⇒ no accounting.
+   */
+  readonly onUsage?: (usage: EmbeddingUsageReport) => void;
 }
 
 /**
@@ -43,6 +54,10 @@ export class OpenAIEmbedder implements Embedder {
         input: texts as string[],
       }),
     );
+    const total = res.usage?.total_tokens;
+    if (total !== undefined && this.deps.onUsage) {
+      this.deps.onUsage({ totalTokens: total });
+    }
     // The API returns one entry per input carrying its `index`; order by it so
     // each vector lines up with its text regardless of response ordering.
     return [...res.data]

@@ -30,12 +30,16 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       # Gate the deploy on the same checks as ci.yml — never ship code that
-      # doesn't typecheck or fails tests.
+      # doesn't typecheck, lint, or fails tests. A direct push to main used to
+      # race ci.yml instead of being blocked by it; this makes deploy self-gating.
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
-        run: npm test
+      - name: Lint
+        run: npm run lint
+
+      - name: Test with coverage
+        run: npm run test:coverage
 
       - name: Compile (in CI, not on the tiny VM)
         run: npm run build
@@ -79,6 +83,19 @@ jobs:
           if [ -d dist ]; then mv dist dist.prev; fi
           EOF
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r dist "opc@${{ secrets.DEPLOY_HOST }}:~/real-news/"
+
+      # Snapshot the live DB before the restart below applies any pending migrations
+      # (main.ts runs migrate() on boot) — scripts/_backup-db.ts, compiled to
+      # dist/scripts/ above and shipped with the rest of dist/ so nothing needs
+      # tsx/tsc on the box. Fails the deploy (not just a warning) so a broken
+      # backup never lets a migration run against unprotected data.
+      - name: Backup DB on the VM (before migrations apply)
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "opc@${{ secrets.DEPLOY_HOST }}" 'bash -s' <<'EOF'
+          set -euo pipefail
+          cd ~/real-news
+          node --env-file-if-exists=.env dist/scripts/_backup-db.js
+          EOF
 
       - name: Restart service + health check (rollback on failure)
         run: |

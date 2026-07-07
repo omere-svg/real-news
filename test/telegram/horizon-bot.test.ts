@@ -70,6 +70,7 @@ function makeStory(over: Partial<Story> = {}): Story {
     significance: 5,
     summary: null,
     whyItMatters: null,
+    displayTitle: null,
     scoreBreakdown: null,
     memberRefs: [],
     firstSeenAt: 0,
@@ -601,9 +602,19 @@ describe('HorizonBot', () => {
       };
       const discussant = new FakeLLM();
       // In-memory trace store: the bot only needs `record`.
-      const recorded: { steps: readonly { tool: string }[]; answeredFromNews: boolean }[] = [];
+      const recorded: {
+        steps: readonly { tool: string }[];
+        answeredFromNews: boolean;
+        plan: string;
+        path: string;
+      }[] = [];
       const traces = {
-        record: async (rec: { steps: readonly { tool: string; step: number; args: string; resultPreview: string }[]; answeredFromNews: boolean }) => {
+        record: async (rec: {
+          steps: readonly { tool: string; step: number; args: string; resultPreview: string }[];
+          answeredFromNews: boolean;
+          plan: string;
+          path: string;
+        }) => {
           recorded.push(rec);
         },
         recent: async () => [],
@@ -617,8 +628,11 @@ describe('HorizonBot', () => {
       expect(discussant.discussCalls).toBe(0); // the fixed two-pass never ran
       expect(offeredTools[0]).toContain('search_stories');
       expect(recorded).toHaveLength(1);
-      expect(recorded[0]?.steps.map((s) => s.tool)).toEqual(['search_stories']);
+      // Step 0 is the model's plan (rubric plan→act→observe); real tool steps follow.
+      expect(recorded[0]?.steps.map((s) => s.tool)).toEqual(['plan', 'search_stories']);
       expect(recorded[0]?.answeredFromNews).toBe(true);
+      // The agent path is marked distinctly from the fixed-degrade path (ADR-0053).
+      expect(recorded[0]?.path).toBe('agent');
     });
 
     it('a failing agent degrades to the fixed discuss path, never to the user (ADR-0053)', async () => {
@@ -634,6 +648,30 @@ describe('HorizonBot', () => {
 
       expect(llm.discussCalls).toBe(1); // fallback path ran
       expect(transport.messages.at(-1)?.text).toContain('Answer to: tell me about AI');
+    });
+
+    it('a fallback answer records a trace marked path=fallback (ADR-0053)', async () => {
+      const agentTransport: ToolCapableTransport = {
+        completeWithTools: async () => {
+          throw new Error('model exploded');
+        },
+      };
+      const llm = new FakeLLM();
+      const recorded: { path: string; plan: string; steps: readonly unknown[] }[] = [];
+      const traces = {
+        record: async (rec: { path: string; plan: string; steps: readonly unknown[] }) => {
+          recorded.push(rec);
+        },
+        recent: async () => [],
+        pruneToRecent: async () => 0,
+      } as unknown as ChatTraceRepo;
+      const { bot, transport } = await chatBuild({ agentTransport, discussant: llm, traces });
+
+      await bot.handle(update(5, '/chat tell me about AI'));
+
+      expect(transport.messages.at(-1)?.text).toContain('Answer to: tell me about AI');
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.path).toBe('fallback');
     });
 
     it('escalates to web search only when the cache cannot answer (ADR-0029)', async () => {

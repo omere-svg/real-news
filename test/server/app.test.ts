@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/server/app.js';
+import { TOPICS } from '../../src/domain/types.js';
 import { renderDashboard } from '../../src/server/ui.js';
 import { DrizzleStoryRepo } from '../../src/db/story-repo.js';
 import { DrizzleSignalObservationRepo } from '../../src/db/signal-observation-repo.js';
 import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report-repo.js';
 import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 import { DrizzleWebAuthRepo } from '../../src/db/web-auth-repo.js';
-import { DrizzleUsageRepo } from '../../src/db/usage-repo.js';
+import { DrizzleUsageRepo, utcDay } from '../../src/db/usage-repo.js';
+import { DrizzleChatTraceRepo } from '../../src/db/chat-trace-repo.js';
 import { HorizonQuery, type QueryParams } from '../../src/presentation/horizon-query.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
@@ -153,6 +155,14 @@ describe('HTTP API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('GET /api/outline rejects an unknown topic with 400', async () => {
+    const app = await appWithStories();
+    const res = await app.request('/api/outline?topic=NotARealTopic');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/topic/i);
+  });
+
   it('GET /api/podcast returns a narrated script', async () => {
     const app = await appWithStories();
     const res = await app.request('/api/podcast?minutes=10');
@@ -183,6 +193,65 @@ describe('HTTP API', () => {
     expect((await app.request('/api/podcast?minutes=5')).status).toBe(429); // 2nd over the cap
   });
 
+  it('podcast refusals do not consume the global budget', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const usage = new DrizzleUsageRepo(db);
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      usage, globalPodcastPerDay: 1,
+      // A generous per-IP allowance so this test exercises the global-budget path,
+      // not the per-IP limiter — each call uses a distinct IP for the same reason.
+      podcastIpLimit: 100,
+    });
+    const day = utcDay(Date.now());
+
+    const first = await app.request('/api/podcast?minutes=5', { headers: { 'x-forwarded-for': '1.1.1.1' } });
+    expect(first.status).toBe(200); // charges the budget to 1 on success
+    expect(await usage.peek('global:podcast', day)).toBe(1);
+
+    // Every subsequent refusal (already at cap) must leave the counter untouched.
+    const refused1 = await app.request('/api/podcast?minutes=5', { headers: { 'x-forwarded-for': '1.1.1.2' } });
+    expect(refused1.status).toBe(429);
+    expect(await usage.peek('global:podcast', day)).toBe(1);
+
+    const refused2 = await app.request('/api/podcast?minutes=5', { headers: { 'x-forwarded-for': '1.1.1.3' } });
+    expect(refused2.status).toBe(429);
+    expect(await usage.peek('global:podcast', day)).toBe(1);
+  });
+
+  it('per-IP limit returns 429', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'a', title: 'AI story', url: null, topic: 'AI', significance: 9,
+      whyItMatters: 'Because.', memberRefs: [{ source: 'hackernews', externalId: '1' }],
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: true,
+      podcastIpLimit: 2, podcastIpWindowMs: 60_000,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.50' };
+
+    expect((await app.request('/api/podcast?minutes=5', { headers })).status).toBe(200);
+    expect((await app.request('/api/podcast?minutes=5', { headers })).status).toBe(200);
+    const limited = await app.request('/api/podcast?minutes=5', { headers });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'too many requests; try again later' });
+
+    // A different IP is unaffected by the first IP's budget.
+    const other = await app.request('/api/podcast?minutes=5', {
+      headers: { 'x-forwarded-for': '198.51.100.9' },
+    });
+    expect(other.status).toBe(200);
+  });
+
   it('clamps an oversized minutes query param', async () => {
     // maxMinutes 1 → even a huge request yields a tiny brief (1 story, headline only).
     const app = await appWith({ maxMinutes: 1, podcastEnabled: false });
@@ -207,7 +276,7 @@ describe('HTTP API', () => {
     expect(html).toContain('function renderScript');
     // Score rationale is surfaced always-visible + the top breakdown auto-opens.
     expect(html).toContain('scoreTags');
-    expect(html).toContain('breakdownHtml(s.scoreBreakdown, i === 0)');
+    expect(html).toContain('breakdownHtml(s.scoreBreakdown, i === 0, SCORE_LABELS)');
     // Backend is made legible (sources / zero-scraping / live freshness).
     expect(html).toContain('zero scraping');
     expect(html).toContain('loadFreshness');
@@ -325,8 +394,67 @@ describe('HTTP API', () => {
     const body = (await (await app.request('/api/stats')).json()) as Record<string, unknown>;
     expect(body).toMatchObject({
       stories: 2, signalObservations: 0, oldestSignalAt: null, ticksRecorded: 0,
-      tokens: { cheap: 0, deep: 0, total: 0 }, // no usage store wired
+      tokens: { cheap: 0, deep: 0, embed: 0, tts: 0, total: 0, ttsCharacters: 0 }, // no usage store wired
+      subscribers: 0, questionsAnswered: 0, // no prefs/chatTraces repo wired
     });
+  });
+
+  it('stats expose subscribers and answered-questions counts', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const prefs = new DrizzleChatPreferencesRepo(db);
+    const webAuth = new DrizzleWebAuthRepo(db);
+    const chatTraces = new DrizzleChatTraceRepo(db);
+
+    // Two chats with an active daily-brief subscription (briefAt set), one without.
+    await prefs.set(1, { briefAt: '08:00' });
+    await prefs.set(2, { briefAt: '09:30' });
+    await prefs.set(3, { topics: ['AI'] }); // no briefAt ⇒ not subscribed
+
+    await chatTraces.record({
+      createdAt: 1000, question: 'q1', steps: [], answeredFromNews: true, plan: '', path: 'agent',
+    });
+    await chatTraces.record({
+      createdAt: 2000, question: 'q2', steps: [], answeredFromNews: false, plan: '', path: 'fallback',
+    });
+
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(
+      repo, queryEngine, { minutes: 10 },
+      { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false },
+      undefined, { webAuth, prefs, now: () => 1000 }, undefined, undefined, chatTraces,
+    );
+
+    const body = (await (await app.request('/api/stats')).json()) as Record<string, number>;
+    expect(body.subscribers).toBe(2);
+    expect(body.questionsAnswered).toBe(2);
+  });
+
+  it('public chat-traces endpoint never returns the full question text', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const chatTraces = new DrizzleChatTraceRepo(db);
+    const fullQuestion = 'q'.repeat(300);
+    await chatTraces.record({
+      createdAt: 1000, question: fullQuestion, steps: [], answeredFromNews: false,
+      plan: 'search then answer', path: 'agent',
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(
+      repo, queryEngine, { minutes: 10 },
+      { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false },
+      undefined, undefined, undefined, undefined, chatTraces,
+    );
+
+    const res = await app.request('/api/chat-traces');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { traces: { question: string; plan: string; path: string }[] };
+    expect(body.traces).toHaveLength(1);
+    expect(body.traces[0]?.question).not.toBe(fullQuestion);
+    expect(body.traces[0]?.question.length).toBeLessThanOrEqual(80);
+    // The rubric plan→act→observe evidence is exposed alongside the trajectory.
+    expect(body.traces[0]?.plan).toBe('search then answer');
+    expect(body.traces[0]?.path).toBe('agent');
   });
 
   it("GET /api/stats surfaces today's durable LLM token counters", async () => {
@@ -344,9 +472,43 @@ describe('HTTP API', () => {
     });
 
     const body = (await (await app.request('/api/stats')).json()) as {
-      tokens: { day: string; cheap: number; deep: number; total: number };
+      tokens: {
+        day: string;
+        cheap: number;
+        deep: number;
+        embed: number;
+        tts: number;
+        total: number;
+        ttsCharacters: number;
+      };
     };
-    expect(body.tokens).toEqual({ day: today, cheap: 1500, deep: 400, total: 1900 });
+    // total is token-denominated tiers only (cheap + deep + embed); tts
+    // bills in characters, not tokens, so it does not feed total.
+    expect(body.tokens).toEqual({
+      day: today, cheap: 1500, deep: 400, embed: 0, tts: 0, total: 1900, ttsCharacters: 0,
+    });
+  });
+
+  it("GET /api/stats surfaces today's embed and tts token counters, and keeps tts out of total", async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const usage = new DrizzleUsageRepo(db);
+    const today = new Date().toISOString().slice(0, 10);
+    await usage.add('global:tokens:embed', today, 300);
+    await usage.add('global:tokens:tts', today, 900);
+
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, {
+      maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false, usage,
+    });
+
+    const body = (await (await app.request('/api/stats')).json()) as {
+      tokens: { embed: number; tts: number; total: number; ttsCharacters: number };
+    };
+    expect(body.tokens.embed).toBe(300);
+    expect(body.tokens.tts).toBe(900);
+    expect(body.tokens.total).toBe(300); // embed only — tts is reported separately
+    expect(body.tokens.ttsCharacters).toBe(900);
   });
 
   it('a first-time visitor (no saved prefs) defaults to ALL topics, so the global lead is visible', async () => {
@@ -511,6 +673,57 @@ describe('Log in with Telegram + shared preferences (ADR-0040)', () => {
     const body = (await put.json()) as { topics: string[]; minutes: number };
     expect(body.topics).toEqual(['AI']); // "Nonsense" filtered out
     expect(body.minutes).toBe(60); // clamped to maxMinutes
+  });
+
+  it('preferences dedupes topics and rejects oversized arrays', async () => {
+    const { app, webAuth } = await appWithAuth();
+    const start = await app.request('/api/auth/start', { method: 'POST' });
+    const { code } = (await start.json()) as { code: string };
+    const cookie = cookieOf(start);
+    await webAuth.claim(code, 11, null, 1000);
+
+    // Duplicate entries collapse to a single occurrence.
+    const dup = await app.request('/api/preferences', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ topics: ['AI', 'AI', 'Israel', 'Israel'] }),
+    });
+    expect(dup.status).toBe(200);
+    const dupBody = (await dup.json()) as { topics: string[] };
+    expect(dupBody.topics).toEqual(['AI', 'Israel']);
+
+    // An array larger than the Topic vocabulary is rejected outright.
+    const oversized = Array.from({ length: TOPICS.length + 1 }, () => 'AI');
+    const big = await app.request('/api/preferences', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ topics: oversized }),
+    });
+    expect(big.status).toBe(400);
+    const bigBody = (await big.json()) as { error: string };
+    expect(bigBody.error).toMatch(/topic/i);
+  });
+
+  it('rate-limits /api/auth/start per IP: 429 after N requests in the window', async () => {
+    const { app } = await appWithAuth();
+    const headers = { 'x-forwarded-for': '203.0.113.9' };
+
+    // Default budget is 5/window; the fixed clock (now: () => 1000) keeps every
+    // call in the same window, so the 6th must be rejected.
+    for (let i = 0; i < 5; i++) {
+      const res = await app.request('/api/auth/start', { method: 'POST', headers });
+      expect(res.status).toBe(200);
+    }
+    const limited = await app.request('/api/auth/start', { method: 'POST', headers });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'too many requests; try again later' });
+
+    // A different IP is unaffected by the first IP's budget.
+    const other = await app.request('/api/auth/start', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '198.51.100.4' },
+    });
+    expect(other.status).toBe(200);
   });
 
   it('logout ends the session', async () => {

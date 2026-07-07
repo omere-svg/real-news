@@ -38,6 +38,32 @@ describe('FrankfurterSource', () => {
     expect(obs[0]?.observedAt).toBe(NOW);
   });
 
+  it('never emits a non-finite value when a rate overflows to Infinity (defense-in-depth)', async () => {
+    // A JSON numeric literal beyond ±1.8e308 silently overflows to Infinity on
+    // parse — `z.number()` accepts it, and (a - Infinity) / Infinity ⇒ NaN. That
+    // NaN would hit signal_observations.value, a raw numeric DB bind rejected by
+    // the store with an unrecoverable error — unlike a throwing Source, nothing
+    // isolates it, so it would crash the whole tick (ADR-0025).
+    const CORRUPT = {
+      base: 'USD',
+      rates: {
+        '2026-06-26': { EUR: 1e309, JPY: 161.5 }, // overflows to Infinity
+        '2026-06-27': { EUR: 0.88, JPY: 161.5 },
+      },
+    };
+    const source = new FrankfurterSource({
+      fetchJson: async () => CORRUPT,
+      maxItems: 10,
+      clock: new FakeClock(NOW),
+    });
+
+    const obs = await source.observe();
+
+    expect(obs.every((o) => Number.isFinite(o.value))).toBe(true);
+    expect(obs.find((o) => o.key.includes('EUR'))).toBeUndefined(); // dropped, not NaN
+    expect(obs.find((o) => o.key.includes('JPY'))).toBeDefined(); // unaffected pair survives
+  });
+
   it('declares a saturation scale and never throws in healthCheck on failure', async () => {
     const source = new FrankfurterSource({
       fetchJson: async () => TIMESERIES,

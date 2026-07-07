@@ -53,5 +53,14 @@ export function decodeEntities(input: string): string {
 /** Strip HTML/XML tags to spaces. */
 export const stripHtml = (s: string): string => s.replace(/<[^>]+>/g, ' ');
 
-/** Collapse runs of whitespace to single spaces and trim. */
-export const collapseWhitespace = (s: string): string => s.replace(/\s+/g, ' ').trim();
+/**
+ * Collapse runs of whitespace to single spaces, drop a space stranded before
+ * punctuation (a tokenizer artifact from some feeds — `Europe , leading` →
+ * `Europe, leading`, ` :` → `:`), and trim. Punctuation-first so a run of
+ * spaces that borders punctuation collapses to nothing rather than one space.
+ */
+export const collapseWhitespace = (s: string): string =>
+  s
+    .replace(/\s+/g, ' ')
+    .replace(/ +([,.:;!?])/g, '$1')
+    .trim();

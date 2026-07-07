@@ -586,6 +586,21 @@ export class HorizonBot {
           result = await discussant.discuss({ ...base, web });
         }
       }
+      // The agent path (above) always leaves a trace; the fixed degrade path
+      // must too — otherwise a judge who chats and hits the fallback sees no
+      // evidence of what happened at all (ADR-0053).
+      if (this.deps.traces) {
+        await this.deps.traces
+          .record({
+            createdAt: this.deps.clock.now(),
+            question: q,
+            steps: usedWeb ? [{ step: 1, tool: 'web_search', args: '', resultPreview: '' }] : [],
+            answeredFromNews: result.answeredFromNews,
+            plan: '',
+            path: 'fallback',
+          })
+          .catch((err) => this.log.warn('telegram.trace_record_failed', { err }));
+      }
     }
 
     this.remember(chatId, { role: 'user', content: q });
@@ -601,7 +616,7 @@ export class HorizonBot {
     question: string,
     history: readonly ConversationTurn[],
     prefs: ChatPreferences | null,
-  ): Promise<(DiscussResult & { steps: readonly { tool: string }[] }) | null> {
+  ): Promise<(DiscussResult & { steps: readonly { tool: string }[]; plan: string }) | null> {
     const { agentTransport, storyRepo, embedder, webSearch, signals } = this.deps;
     if (!agentTransport || !storyRepo) return null;
 
@@ -626,13 +641,18 @@ export class HorizonBot {
     if (!out.answer.trim()) return null;
 
     // Persist the trajectory (best-effort): the inspectable "how I answered".
+    // The model's stated plan (rubric plan→act→observe) is recorded as both a
+    // dedicated field and the trace's step 0, so either view surfaces it.
     if (this.deps.traces) {
+      const planStep = { step: 0, tool: 'plan', args: '', resultPreview: out.plan };
       await this.deps.traces
         .record({
           createdAt: this.deps.clock.now(),
           question,
-          steps: out.steps,
+          steps: [planStep, ...out.steps],
           answeredFromNews: out.answeredFromNews,
+          plan: out.plan,
+          path: 'agent',
         })
         .catch((err) => this.log.warn('telegram.trace_record_failed', { err }));
     }

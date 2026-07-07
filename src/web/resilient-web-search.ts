@@ -9,8 +9,9 @@ import type { WebResult, WebSearch } from './web-search.js';
 export class ResilientWebSearch implements WebSearch {
   constructor(
     private readonly delegate: WebSearch,
-    private readonly onError: (err: unknown) => void = (err) =>
-      console.warn('[web-search] failed, degrading to no results:', err),
+    // Composition root wires the real Logger-backed callback (main.ts); this
+    // default only covers callers (tests) that don't care about the degrade log.
+    private readonly onError: (err: unknown) => void = () => undefined,
   ) {}
 
   async search(query: string): Promise<readonly WebResult[]> {

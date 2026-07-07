@@ -1,0 +1,15 @@
+{
+  "tokens": {
+    "day": "2026-07-07",
+    "cheap": 2135791,
+    "deep": 166023,
+    "total": 2301814
+  },
+  "stories": 315,
+  "multiSourceStories": 17,
+  "storiesUpdatedAcrossTicks": 264,
+  "signalObservations": 3342,
+  "oldestSignalAt": 1783417161567,
+  "ticksRecorded": 5,
+  "generatedAt": 1783432230061
+}

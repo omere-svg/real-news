@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { ChatAgent, type ChatTool } from '../../src/telegram/chat-agent.js';
+import { ChatAgent, buildChatTools, type ChatTool } from '../../src/telegram/chat-agent.js';
 import type {
   AgentMessage,
   CompletionOptions,
   ToolCompletion,
   ToolSpec,
 } from '../../src/llm/chat-transport.js';
+import { createTestDb } from '../helpers/test-db.js';
+import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 
 /**
  * The chat agent loop (ADR-0053): the MODEL drives — it chooses which tools to
@@ -31,14 +33,19 @@ class ScriptedTransport {
   }
 }
 
-function tool(name: string, result: string | (() => string)): ChatTool & { calls: unknown[] } {
+function tool(
+  name: string,
+  result: string | (() => string),
+  urls?: readonly string[],
+): ChatTool & { calls: unknown[] } {
   const calls: unknown[] = [];
   return {
     calls,
     spec: { name, description: `${name} tool`, parameters: { type: 'object', properties: {} } },
     run: async (args) => {
       calls.push(args);
-      return typeof result === 'function' ? result() : result;
+      const text = typeof result === 'function' ? result() : result;
+      return urls === undefined ? { text } : { text, urls };
     },
   };
 }
@@ -164,7 +171,11 @@ describe('ChatAgent (ADR-0053)', () => {
   });
 
   it('strips answer URLs the tools never surfaced; grounded URLs survive (ADR-0054)', async () => {
-    const web = tool('web_search', '1. Markets drop\n   snippet\n   https://good.example/story');
+    const web = tool(
+      'web_search',
+      '1. Markets drop\n   snippet\n   https://good.example/story',
+      ['https://good.example/story'],
+    );
     const transport = new ScriptedTransport([
       callTool('c1', 'web_search', { query: 'markets' }),
       finalAnswer(
@@ -178,6 +189,53 @@ describe('ChatAgent (ADR-0053)', () => {
 
     expect(out.answer).toContain('https://good.example/story');
     expect(out.answer).not.toContain('evil.example');
+  });
+
+  it('accepts the structured web result url (grounded via WebResult.url, not text scanning)', async () => {
+    const web = tool('web_search', '1. Markets drop\n   snippet\n   https://good.example/story', [
+      'https://good.example/story',
+    ]);
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer('See https://good.example/story for details.', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).toContain('https://good.example/story');
+  });
+
+  it('rejects a URL that appears only inside a web snippet body, not the structured url field', async () => {
+    // The snippet body mentions an attacker URL; the tool's structured `urls`
+    // (what a real WebResult.url would contribute) never includes it.
+    const web = tool(
+      'web_search',
+      '1. Markets drop\n   Visit https://evil.example/steal for more\n   https://good.example/story',
+      ['https://good.example/story'],
+    );
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer('See https://evil.example/steal for the full story.', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).not.toContain('evil.example');
+  });
+
+  it('rejects a suffixed-host lookalike of a grounded URL', async () => {
+    const web = tool('web_search', 'result', ['https://good.example/story']);
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer('See https://good.example.evil.tld/story for details.', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).not.toContain('good.example.evil.tld');
   });
 
   it('caps a runaway final answer', async () => {
@@ -200,6 +258,178 @@ describe('ChatAgent (ADR-0053)', () => {
     expect(out.steps[0]?.tool).toBe('save_memory');
     expect(out.steps[0]?.args).toBe('(private note)');
     expect(JSON.stringify(out.steps)).not.toContain('Tel Aviv');
+  });
+
+  it('a memory saved on one turn is injected as reader context on the next (save_memory → repo → prompt)', async () => {
+    // Real seam (mirrors horizon-bot's wiring): buildChatTools' save_memory
+    // persists into an actual ChatPreferencesRepo backed by an in-memory DB —
+    // not a mock echo — and the second, unrelated conversation reads it back
+    // and passes it in as `memory`, exactly as the composition root does.
+    const db = await createTestDb();
+    const prefs = new DrizzleChatPreferencesRepo(db);
+    const chatId = 42;
+    const saveMemory = async (note: string): Promise<void> => {
+      const existing = (await prefs.get(chatId))?.memory;
+      await prefs.set(chatId, { memory: existing ? `${existing}\n${note}` : note });
+    };
+    const tools = buildChatTools({ reader: { topStories: async () => [] }, saveMemory });
+
+    // Turn 1: the model calls save_memory with durable personal context.
+    const transport1 = new ScriptedTransport([
+      callTool('c1', 'save_memory', { note: 'I trade commodities' }),
+      finalAnswer('Got it, noted!', true),
+    ]);
+    const agent1 = new ChatAgent({ transport: transport1, tools });
+    await agent1.answer({ question: 'remember that I trade commodities', history: [] });
+
+    const stored = await prefs.get(chatId);
+    expect(stored?.memory).toBe('I trade commodities');
+
+    // Turn 2: a fresh conversation (fresh transport, no history) hydrates
+    // memory from the repo and passes it into the agent, as handleChat does.
+    const transport2 = new ScriptedTransport([finalAnswer('Here is the latest.', true)]);
+    const agent2 = new ChatAgent({ transport: transport2, tools });
+    await agent2.answer({
+      question: "what's new today?",
+      history: [],
+      ...(stored?.memory ? { memory: stored.memory } : {}),
+    });
+
+    const firstTurnMessages = transport2.turns[0]!.messages;
+    const userMsg = firstTurnMessages.find((m) => m.role === 'user');
+    const content = userMsg && 'content' in userMsg ? (userMsg.content ?? '') : '';
+    expect(content).toContain('I trade commodities');
+    expect(content).toMatch(/<reader_context>/);
+  });
+
+  it('executes at most 3 tool calls per turn', async () => {
+    const search = tool('search_stories', 'ok');
+    const transport = new ScriptedTransport([
+      {
+        text: null,
+        toolCalls: [
+          { id: 'c1', name: 'search_stories', args: { query: '1' } },
+          { id: 'c2', name: 'search_stories', args: { query: '2' } },
+          { id: 'c3', name: 'search_stories', args: { query: '3' } },
+          { id: 'c4', name: 'search_stories', args: { query: '4' } },
+          { id: 'c5', name: 'search_stories', args: { query: '5' } },
+        ],
+      },
+      finalAnswer('done', false),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search] });
+
+    const out = await agent.answer({ question: 'q', history: [] });
+
+    // Only the first 3 calls actually ran the tool.
+    expect(search.calls).toHaveLength(3);
+    // All 5 are recorded in the trace, the last 2 as budget-exhausted observations.
+    expect(out.steps).toHaveLength(5);
+    expect(out.steps[3]?.resultPreview).toContain('tool budget exhausted');
+    expect(out.steps[4]?.resultPreview).toContain('tool budget exhausted');
+    // The model still gets a tool-role observation for every call, including skipped ones.
+    const secondTurn = transport.turns[1]!.messages;
+    const toolMsgs = secondTurn.filter((m) => m.role === 'tool');
+    expect(toolMsgs).toHaveLength(5);
+  });
+
+  it('executes at most 8 tool calls per trajectory', async () => {
+    const search = tool('search_stories', 'ok');
+    const transport = new ScriptedTransport([
+      // 3 turns x 3 calls = 9 requested calls, cap is 8 across the whole trajectory.
+      {
+        text: null,
+        toolCalls: [
+          { id: 'a1', name: 'search_stories', args: { query: '1' } },
+          { id: 'a2', name: 'search_stories', args: { query: '2' } },
+          { id: 'a3', name: 'search_stories', args: { query: '3' } },
+        ],
+      },
+      {
+        text: null,
+        toolCalls: [
+          { id: 'b1', name: 'search_stories', args: { query: '4' } },
+          { id: 'b2', name: 'search_stories', args: { query: '5' } },
+          { id: 'b3', name: 'search_stories', args: { query: '6' } },
+        ],
+      },
+      {
+        text: null,
+        toolCalls: [
+          { id: 'c1', name: 'search_stories', args: { query: '7' } },
+          { id: 'c2', name: 'search_stories', args: { query: '8' } },
+          { id: 'c3', name: 'search_stories', args: { query: '9' } },
+        ],
+      },
+      finalAnswer('done', false),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search], maxSteps: 5 });
+
+    const out = await agent.answer({ question: 'q', history: [] });
+
+    // Only 8 of the 9 requested calls actually ran the tool.
+    expect(search.calls).toHaveLength(8);
+    expect(out.steps).toHaveLength(9);
+    expect(out.steps[8]?.resultPreview).toContain('tool budget exhausted');
+  });
+
+  it('tool results fed to the model are truncated', async () => {
+    const huge = 'x'.repeat(10_000);
+    const search = tool('search_stories', huge);
+    const transport = new ScriptedTransport([
+      callTool('c1', 'search_stories', { query: 'q' }),
+      finalAnswer('done', false),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search] });
+
+    await agent.answer({ question: 'q', history: [] });
+
+    const secondTurn = transport.turns[1]!.messages;
+    const toolMsg = secondTurn.find((m) => m.role === 'tool');
+    const content = toolMsg && 'content' in toolMsg ? toolMsg.content ?? '' : '';
+    expect(content).toContain('[truncated]');
+    expect(content.length).toBeLessThan(huge.length);
+  });
+
+  it("captures the model's plan from a JSON final answer on the first turn", async () => {
+    const transport = new ScriptedTransport([
+      { text: JSON.stringify({ answer: 'ok', answeredFromNews: true, plan: 'Answer directly.' }), toolCalls: [] },
+    ]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.plan).toBe('Answer directly.');
+  });
+
+  it("captures the model's plan from leading text sent alongside a first-turn tool call", async () => {
+    const search = tool('search_stories', 'ok');
+    const transport = new ScriptedTransport([
+      { text: 'Plan: search the cache, then answer.', toolCalls: [{ id: 'c1', name: 'search_stories', args: {} }] },
+      finalAnswer('done', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.plan).toBe('Plan: search the cache, then answer.');
+    // The plan is captured once from turn 0, not re-derived from later tool steps.
+    expect(out.steps.map((s) => s.tool)).toEqual(['search_stories']);
+  });
+
+  it('tolerates a missing plan — never fails the answer', async () => {
+    const transport = new ScriptedTransport([finalAnswer('ok', true)]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    expect(out.plan).toBe('');
+    expect(out.answer).toBe('ok');
+  });
+
+  it('a malformed final answer on turn 0 does not become the plan', async () => {
+    const transport = new ScriptedTransport([{ text: 'not json, just a broken final answer', toolCalls: [] }]);
+    const agent = new ChatAgent({ transport, tools: [] });
+    const out = await agent.answer({ question: 'q', history: [] });
+    // parseFinal's raw-text degrade still applies to the answer...
+    expect(out.answer).toBe('not json, just a broken final answer');
+    // ...but the same raw text must not be misfiled as the plan: there were no
+    // tool calls on turn 0, so this was never an agentic "state your plan" turn.
+    expect(out.plan).toBe('');
   });
 
   it('calls the same tool with distinct arguments across steps (real iteration)', async () => {

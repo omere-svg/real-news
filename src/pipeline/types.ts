@@ -24,6 +24,8 @@ export interface AnalyzedCluster extends ScoredCluster {
   /** Factual "what happened" recap; null unless this Cluster was deep-analyzed. */
   readonly summary: string | null;
   readonly whyItMatters: string | null;
+  /** English display headline from the deep tier; null unless this Cluster was deep-analyzed (Task 20). */
+  readonly displayTitle: string | null;
 }
 
 export type { Cluster, RawItem, Topic };
