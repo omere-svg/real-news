@@ -52,6 +52,20 @@ describe('parseRssItems', () => {
     expect(item?.publishedAt).toBe(Date.parse('2026-06-17T00:00:00Z'));
   });
 
+  it('decodes HTML entities in titles and descriptions (ADR-0051 shared decoder)', () => {
+    const feed = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <item>
+        <title>Rocks &amp; minerals &#8212; a trader&#x2019;s guide</title>
+        <link>https://example.com/e</link>
+        <description>Supply &amp;amp; demand&amp;hellip;</description>
+      </item>
+    </channel></rss>`;
+    const [item] = parseRssItems(feed);
+    expect(item?.title).toBe('Rocks & minerals — a trader’s guide');
+    // Double-encoded entities decode exactly one level — no re-opening (ADR-0051).
+    expect(item?.description).toBe('Supply &amp; demand&hellip;');
+  });
+
   it('returns [] for malformed or itemless XML', () => {
     expect(parseRssItems('<rss><channel></channel></rss>')).toEqual([]);
     expect(parseRssItems('not xml at all')).toEqual([]);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { collapseWhitespace, decodeEntities, stripHtml } from '../text/clean.js';
 import type { SourceAdapter } from './source-adapter.js';
 import type { JsonFetcher } from './http.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -37,17 +38,41 @@ function stableId(text: string): string {
   return (h >>> 0).toString(36);
 }
 
-/** Strip HTML tags + decode the common entities, collapse whitespace. */
+/** Strip HTML tags + decode entities, collapse whitespace (shared, ADR-0051). */
 function plainText(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
+  return collapseWhitespace(decodeEntities(stripHtml(html)));
+}
+
+/** Headline length above which we look for a clause boundary to cut at. */
+const MAX_HEADLINE_CHARS = 110;
+/** Never cut a headline shorter than this — it would drop the event itself. */
+const MIN_HEADLINE_CHARS = 60;
+
+/**
+ * Clause boundaries usable as headline cut points: a comma/semicolon followed by
+ * whitespace (so "3,500" never splits), or a trailing participial clause
+ * (" leaving ...", " causing ...").
+ */
+const CLAUSE_BOUNDARY = /[,;](?=\s)|\s(?=(?:leaving|causing)\s)/g;
+
+/**
+ * Shape a current-events sentence into a headline (live judge finding: full
+ * sentences like "Two earthquakes strike Venezuela, ... missing." read as prose,
+ * not headlines). Trims the trailing period; if still over MAX_HEADLINE_CHARS,
+ * cuts at the last clause boundary in [MIN, MAX] chars. With no usable boundary
+ * the sentence stays whole — never hard-truncate mid-word. The full sentence is
+ * always preserved in the item's text, so nothing is lost.
+ */
+function toHeadline(sentence: string): string {
+  const trimmed = sentence.replace(/\.\s*$/, '');
+  if (trimmed.length <= MAX_HEADLINE_CHARS) return trimmed;
+
+  let cut = -1;
+  for (const m of trimmed.matchAll(CLAUSE_BOUNDARY)) {
+    const i = m.index ?? -1;
+    if (i >= MIN_HEADLINE_CHARS && i <= MAX_HEADLINE_CHARS) cut = Math.max(cut, i);
+  }
+  return cut === -1 ? trimmed : trimmed.slice(0, cut).trimEnd();
 }
 
 export interface WikipediaDeps {
@@ -89,19 +114,22 @@ export class WikipediaSource implements SourceAdapter {
       .slice(0, this.deps.maxItems)
       .map((item): RawItem | null => {
         const lead = item.links?.[0];
-        const title = plainText(item.story);
-        if (!title) return null;
+        const sentence = plainText(item.story);
+        if (!sentence) return null;
         return {
           source: 'wikipedia' as const,
           // Prefer the lead article title (stable). Only when a blurb has no
-          // linked article, key off the headline text — NOT the wall-clock time
-          // (mints a new id every tick, ADR-0047) and NOT the list index (ADR-0049:
-          // the featured-news list reorders within a day, so the index minted a
-          // duplicate of the same blurb). Hash the headline text alone.
-          externalId: lead?.title ?? `news:${stableId(title)}`,
-          title,
+          // linked article, key off the FULL sentence text — NOT the wall-clock
+          // time (mints a new id every tick, ADR-0047), NOT the list index
+          // (ADR-0049: the list reorders within a day), and not the shaped
+          // headline (its shaping rules may evolve; the sentence is the feed's
+          // own stable text).
+          externalId: lead?.title ?? `news:${stableId(sentence)}`,
+          // Headline-shaped title; the untouched sentence stays in `text` so the
+          // Reasoner and renderers keep the full information.
+          title: toHeadline(sentence),
           url: lead?.content_urls?.desktop?.page ?? null,
-          text: title,
+          text: sentence,
           publishedAt: now,
           metadata: {},
         };

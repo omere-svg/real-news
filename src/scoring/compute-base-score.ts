@@ -23,6 +23,15 @@ const CORROBORATION_REF = 5;
 const IMPACT_CAP = 1.0;
 const CORROBORATION_CAP = 0.9;
 const AUTHORITY_CAP = 0.55;
+/**
+ * Authority's effective cap scales with the impact estimate (calibration fix,
+ * live evidence: fresh NBER working papers — authority 0.7, lone source, routine
+ * impact — outranked mass-casualty storms). At impact 0 authority still counts
+ * (floor × cap, keeping the axis monotonic per ADR-0034), but only a genuinely
+ * impactful item lets authority contribute its full cap — authority alone can no
+ * longer lift a low-impact item into the top bands.
+ */
+const AUTHORITY_IMPACT_FLOOR = 0.3;
 /** Attention (social popularity) is a bounded add-on that never penalizes absence. */
 const ATTENTION_BOOST = 0.15;
 /** Recency floor: age de-emphasizes but never erases a major story (ADR-0034). */
@@ -71,13 +80,18 @@ export function baseScoreBreakdown(
 
   const recencyFactor = recencyFactorOf(signals.ageHours, params.recencyHalfLifeHours);
 
+  // Authority is worth most when it vouches for something impactful (see
+  // AUTHORITY_IMPACT_FLOOR): a routine item from an authoritative source is not
+  // big news because of who published it.
+  const authorityScale = AUTHORITY_IMPACT_FLOOR + (1 - AUTHORITY_IMPACT_FLOOR) * impact01;
+
   // Noisy-OR: strong on any importance axis ⇒ high. Reaches ~1 only for a major,
   // corroborated, authoritative event — so the full 0–10 range is usable.
   const importance =
     1 -
     (1 - impact01 * IMPACT_CAP) *
       (1 - corroboration01 * CORROBORATION_CAP) *
-      (1 - authority01 * AUTHORITY_CAP);
+      (1 - authority01 * AUTHORITY_CAP * authorityScale);
   const quality = clamp01(importance + ATTENTION_BOOST * attention01);
   const base = clamp(MAX_SCORE * quality * recencyFactor, MIN_SCORE, MAX_SCORE);
 

@@ -87,6 +87,20 @@ describe('impact-first base score (ADR-0034)', () => {
     expect(major).toBeGreaterThan(9);
   });
 
+  it('authority alone cannot lift a low-impact item into the top bands (calibration)', () => {
+    // Live finding: fresh NBER working papers (sourceWeight 0.7, lone source, no
+    // attention) outranked mass-casualty storms. Authority must scale with impact.
+    const paperish = signals({ sourceWeight: 0.7, corroboration: 1, points: 0, ageHours: 0 });
+    // A routine paper (impact ~0.15) stays firmly in the low band.
+    expect(baseScoreBreakdown(paperish, 0.15, params).base).toBeLessThan(3.5);
+    // Even a generously mid-impact estimate (0.5) cannot reach the 6.5+ band on
+    // authority + freshness alone.
+    expect(baseScoreBreakdown(paperish, 0.5, params).base).toBeLessThan(6.5);
+    // But a genuinely high-impact item from the same source still scores high —
+    // the scaling must not blunt real events.
+    expect(baseScoreBreakdown(paperish, 0.9, params).base).toBeGreaterThan(7);
+  });
+
   it('recency de-emphasizes but never erases — floored at half', () => {
     const fresh = baseScoreBreakdown(signals(), 0.9, params);
     const ancient = baseScoreBreakdown(signals({ ageHours: 100_000 }), 0.9, params);

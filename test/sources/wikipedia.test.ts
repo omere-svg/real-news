@@ -39,9 +39,66 @@ describe('WikipediaSource', () => {
     expect(requested).toContain('/featured/2026/06/13');
     expect(raw?.source).toBe('wikipedia');
     expect(raw?.externalId).toBe('Major_summit');
-    expect(raw?.title).toBe('A major diplomatic summit concluded today.'); // tags stripped, ws collapsed
+    expect(raw?.title).toBe('A major diplomatic summit concluded today'); // tags stripped, ws collapsed, period trimmed
+    expect(raw?.text).toBe('A major diplomatic summit concluded today.'); // body keeps the full sentence
     expect(raw?.url).toBe('https://en.wikipedia.org/wiki/Major_summit');
     expect(raw?.metadata.topic).toBeUndefined(); // classifier decides
+  });
+
+  // Headline-shaping (live judge finding): current-events blurbs are whole
+  // sentences; the title gets headline treatment, the full sentence stays in text.
+  const extractWith = async (story: string) => {
+    const source = new WikipediaSource({
+      fetchJson: async () => ({ news: [{ story, links: [] }] }),
+      maxItems: 10,
+      clock: new FakeClock(NOW),
+    });
+    const [raw] = await source.extract();
+    return raw;
+  };
+
+  it('trims the trailing period but keeps a ~110-char sentence whole (real feed example)', async () => {
+    const story =
+      'Two earthquakes strike Venezuela, leaving more than 3,500 people dead and tens of thousands of others missing.';
+    const raw = await extractWith(story);
+    expect(raw?.title).toBe(
+      'Two earthquakes strike Venezuela, leaving more than 3,500 people dead and tens of thousands of others missing',
+    );
+    expect(raw?.text).toBe(story); // no information lost
+  });
+
+  it('truncates an over-long sentence at the last clause boundary above ~60 chars', async () => {
+    const story =
+      'A suicide bombing at a mosque in Peshawar, Pakistan, kills at least 61 people and injures more than 150 others, with officials warning that the death toll may rise.';
+    const raw = await extractWith(story);
+    expect(raw?.title).toBe(
+      'A suicide bombing at a mosque in Peshawar, Pakistan, kills at least 61 people and injures more than 150 others',
+    );
+    expect(raw?.text).toBe(story);
+  });
+
+  it('truncates at a participial clause (" leaving") when no comma boundary fits', async () => {
+    const story =
+      'Severe monsoon flooding sweeps across large parts of central and eastern Bangladesh leaving hundreds of thousands of residents displaced.';
+    const raw = await extractWith(story);
+    expect(raw?.title).toBe(
+      'Severe monsoon flooding sweeps across large parts of central and eastern Bangladesh',
+    );
+    expect(raw?.text).toBe(story);
+  });
+
+  it('keeps an over-long sentence whole when no clause boundary is usable', async () => {
+    const story = `${'A'.repeat(130)}.`; // no boundary at all — never hard-truncate mid-word
+    const raw = await extractWith(story);
+    expect(raw?.title).toBe('A'.repeat(130));
+  });
+
+  it('does not treat numeric commas ("3,500") as clause boundaries', async () => {
+    const story =
+      'Authorities in the affected coastal provinces confirm that at least 3,500,000 residents have now been evacuated inland ahead of the approaching storm system.';
+    const raw = await extractWith(story);
+    // The only commas are inside the number — the sentence stays whole.
+    expect(raw?.title).toBe(story.slice(0, -1));
   });
 
   it('healthCheck returns false (never throws) on failure', async () => {
