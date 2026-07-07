@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTestDb } from '../helpers/test-db.js';
-import { maybeReflect, type ReflectionBackoff, type ReflectionDeps } from '../../src/pipeline/maintenance.js';
+import {
+  maybeReflect,
+  runMaintenanceSteps,
+  type ReflectionBackoff,
+  type ReflectionDeps,
+} from '../../src/pipeline/maintenance.js';
 import { screenReflectionActions } from '../../src/pipeline/reflection-policy.js';
 import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report-repo.js';
 import { DrizzleTickReflectionRepo } from '../../src/db/tick-reflection-repo.js';
@@ -175,5 +180,58 @@ describe('maybeReflect (ADR-0042/0053)', () => {
     });
 
     expect(calls).toBe(0);
+  });
+});
+
+describe('runMaintenanceSteps (ADR-0054 audit fix)', () => {
+  it('a failing prune step does not prevent reflection from running', async () => {
+    const order: string[] = [];
+    const errors: { step: string; err: unknown }[] = [];
+    const log = {
+      info: () => undefined,
+      warn: () => undefined,
+      error: (_event: string, fields?: Record<string, unknown>) => {
+        errors.push({ step: String(fields?.step), err: fields?.err });
+      },
+    };
+
+    await runMaintenanceSteps(
+      [
+        { name: 'tickReports', run: async () => { order.push('tickReports'); throw new Error('boom'); } },
+        { name: 'webAuth', run: async () => { order.push('webAuth'); } },
+        { name: 'rawItems', run: async () => { order.push('rawItems'); } },
+        { name: 'chatTrace', run: async () => { order.push('chatTrace'); } },
+        { name: 'chatSession', run: async () => { order.push('chatSession'); } },
+        { name: 'reflect', run: async () => { order.push('reflect'); } },
+      ],
+      log,
+    );
+
+    expect(order).toEqual(['tickReports', 'webAuth', 'rawItems', 'chatTrace', 'chatSession', 'reflect']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.step).toBe('tickReports');
+    expect(errors[0]?.err).toBeInstanceOf(Error);
+  });
+
+  it('logs each failing step independently and still runs every step', async () => {
+    const order: string[] = [];
+    let failures = 0;
+    const log = {
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => { failures += 1; },
+    };
+
+    await runMaintenanceSteps(
+      [
+        { name: 'a', run: async () => { order.push('a'); throw new Error('a-fail'); } },
+        { name: 'b', run: async () => { order.push('b'); throw new Error('b-fail'); } },
+        { name: 'c', run: async () => { order.push('c'); } },
+      ],
+      log,
+    );
+
+    expect(order).toEqual(['a', 'b', 'c']);
+    expect(failures).toBe(2);
   });
 });

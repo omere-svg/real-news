@@ -59,7 +59,8 @@ import { ConsoleLogger, type Logger } from './log/logger.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
 import { screenReflectionActions } from './pipeline/reflection-policy.js';
-import { maybeReflect } from './pipeline/maintenance.js';
+import { maybeReflect, runMaintenanceSteps } from './pipeline/maintenance.js';
+import { withTimeout } from './scheduler/timeout.js';
 import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
@@ -317,36 +318,71 @@ async function main(): Promise<void> {
   // below, before the first tick can ever invoke `maintain`.
   // eslint-disable-next-line prefer-const -- assigned exactly once below; declared early so `maintain` can close over it
   let tickLoop: TickLoop;
-  const maintain = async (): Promise<void> => {
-    if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
-    if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
-    // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
-    if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
-    // Chat-agent trajectories and idle durable sessions are bounded too (ADR-0053).
-    await chatTraceRepo.pruneToRecent(200);
-    await chatSessionRepo.pruneIdleSince(systemClock.now() - 7 * 24 * 3600_000);
-
-    // Reason over the trailing window of ticks as a group; persist the note
-    // AND act on it (ADR-0053): the model proposes bounded corrections, the
-    // deterministic policy guard screens them, the loop applies what survives.
-    // Cadence is derived from the durable tick_reports count, not an
-    // in-memory counter, so it survives restarts/deploys (ADR-0042).
-    await maybeReflect({
-      reflect: (input) => llm.reflect(input),
-      screen: screenReflectionActions,
-      backoff,
-      agentPolicyRepo,
-      tickReflectionRepo,
-      tickReportRepo,
+  // Each step runs in isolation (ADR-0054 audit fix): a failing prune must
+  // not starve the prunes after it or reflection for the cycle — see
+  // `runMaintenanceSteps` in pipeline/maintenance.ts for the isolation itself.
+  const maintain = async (): Promise<void> =>
+    runMaintenanceSteps(
+      [
+        {
+          name: 'tickReports',
+          run: async () => {
+            if (retention.tickReports > 0) await tickReportRepo.pruneToRecent(retention.tickReports);
+          },
+        },
+        {
+          name: 'webAuth',
+          run: async () => {
+            if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
+          },
+        },
+        {
+          // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
+          name: 'rawItems',
+          run: async () => {
+            if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
+          },
+        },
+        {
+          // Chat-agent trajectories are bounded too (ADR-0053).
+          name: 'chatTrace',
+          run: async () => {
+            await chatTraceRepo.pruneToRecent(200);
+          },
+        },
+        {
+          name: 'chatSession',
+          run: async () => {
+            await chatSessionRepo.pruneIdleSince(systemClock.now() - 7 * 24 * 3600_000);
+          },
+        },
+        {
+          // Reason over the trailing window of ticks as a group; persist the note
+          // AND act on it (ADR-0053): the model proposes bounded corrections, the
+          // deterministic policy guard screens them, the loop applies what survives.
+          // Cadence is derived from the durable tick_reports count, not an
+          // in-memory counter, so it survives restarts/deploys (ADR-0042).
+          name: 'reflect',
+          run: () =>
+            maybeReflect({
+              reflect: (input) => llm.reflect(input),
+              screen: screenReflectionActions,
+              backoff,
+              agentPolicyRepo,
+              tickReflectionRepo,
+              tickReportRepo,
+              log,
+              now: () => systemClock.now(),
+              nextTickIndex: () => tickLoop.tickIndex() + 1,
+              validSources: allSourceIds,
+              reflectEveryTicks: retention.reflectEveryTicks,
+              reflectWindow: retention.reflectWindow,
+              reflectionsRetention: retention.reflections,
+            }),
+        },
+      ],
       log,
-      now: () => systemClock.now(),
-      nextTickIndex: () => tickLoop.tickIndex() + 1,
-      validSources: allSourceIds,
-      reflectEveryTicks: retention.reflectEveryTicks,
-      reflectWindow: retention.reflectWindow,
-      reflectionsRetention: retention.reflections,
-    });
-  };
+    );
 
   // Optional cross-process advisory lock (ADR-0047): when two processes point at
   // one DB, only the lock holder ticks — the other skips instead of double-writing.
@@ -378,10 +414,17 @@ async function main(): Promise<void> {
   // Release the advisory lock on shutdown (ADR-0048). systemd restarts (every
   // deploy) land mid-tick about half the time; without this the dying process
   // leaves a stale lease that stalls ticking for up to lock.ttlMinutes.
+  // Bounded by withTimeout (ADR-0054 audit fix): a hung `lock.release()` (e.g.
+  // a wedged DB connection) used to hang this fire-and-forget closure forever,
+  // leaving `process.exit(0)` never called and the orchestrator to SIGKILL
+  // after its own grace period. Capping the release at 5s guarantees we still
+  // exit promptly even when the release itself never settles.
   const shutdown = (signal: string): void => {
     log.info('main.shutdown', { signal, action: 'releasing tick lock and exiting' });
     void (async () => {
-      if (lockEnabled) await tickLock.release().catch(() => undefined);
+      if (lockEnabled) {
+        await withTimeout(tickLock.release(), 5000).catch(() => undefined);
+      }
       process.exit(0);
     })();
   };

@@ -124,6 +124,33 @@ export async function maybeReflect(deps: ReflectionDeps): Promise<void> {
   }
 }
 
+/** One unit of the maintenance sequence — a name for logging plus the work itself. */
+export interface MaintenanceStep {
+  readonly name: string;
+  readonly run: () => Promise<void>;
+}
+
+/**
+ * Run each maintenance step (retention prunes, then reflection) in isolation
+ * (ADR-0054 audit fix): a failing step used to be one un-isolated `await` chain
+ * in `main.ts`'s `maintain()`, so a single rejecting prune (e.g. a locked table)
+ * short-circuited every step after it for that cycle — including reflection,
+ * which then silently starved for as long as the fault persisted. Each step's
+ * failure is caught, logged, and the sequence continues in order.
+ */
+export async function runMaintenanceSteps(
+  steps: readonly MaintenanceStep[],
+  log: Pick<Logger, 'error'>,
+): Promise<void> {
+  for (const step of steps) {
+    try {
+      await step.run();
+    } catch (err) {
+      log.error('maintain.step_failed', { step: step.name, err });
+    }
+  }
+}
+
 /** The screened actions the loop actually applied, in the shape the receipt stores. */
 function actionsFor(
   accepted: ReturnType<typeof screenReflectionActions>,
