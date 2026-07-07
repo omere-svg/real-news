@@ -24,4 +24,15 @@ describe('FixedWindowLimiter', () => {
     expect(limiter.allow('chat:2', 0)).toBe(true); // different key, own budget
     expect(limiter.allow('chat:1', 1)).toBe(false);
   });
+
+  it('sweeps expired windows so the map cannot grow unbounded (ADR-0050)', () => {
+    const limiter = new FixedWindowLimiter(5, 1000);
+    // Fill past the sweep floor with one-off keys, all in the same instant.
+    for (let i = 0; i < 300; i += 1) limiter.allow('chat:' + i, 0);
+    const size = (limiter as unknown as { windows: Map<string, unknown> }).windows;
+    expect(size.size).toBe(300);
+    // Long after every window expired, a new key triggers a sweep of the stale ones.
+    limiter.allow('chat:new', 10_000);
+    expect(size.size).toBe(1); // 300 expired windows dropped, only the fresh key remains
+  });
 });

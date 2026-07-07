@@ -50,10 +50,15 @@ export type WebLinker = Pick<WebAuthRepo, 'claim'>;
 interface ChatSession {
   mode: 'idle' | 'chat' | 'feedback';
   history: ConversationTurn[];
+  /** Last time this chat sent anything — for evicting idle sessions (ADR-0050). */
+  lastSeen: number;
 }
 
 /** How many prior turns to carry as conversation context. */
 const MAX_HISTORY_TURNS = 6;
+/** Evict a chat's in-memory session after this much inactivity; under open access
+ * every stranger's chat id would otherwise accumulate forever (ADR-0050). */
+const SESSION_TTL_MS = 6 * 3600_000;
 /**
  * Minimum cosine similarity for a Story to count as relevant chat grounding
  * (ADR-0047). Without a floor, semantic search always returns its top-k even
@@ -196,7 +201,7 @@ export class HorizonBot {
     // Inline button taps (ADR-0028/0030): menu navigation and tap-to-run actions.
     if (update.callbackData !== undefined) return this.handleCallback(chatId, update, now);
 
-    const session = this.session(chatId);
+    const session = this.session(chatId, now);
     const awaitingFeedback = session.mode === 'feedback';
 
     // Routing plain text is itself a cheap-tier LLM call. If the chat (or the
@@ -233,13 +238,24 @@ export class HorizonBot {
   }
 
   /** The session for a chat, created idle on first contact. */
-  private session(chatId: number): ChatSession {
+  private session(chatId: number, now: number = this.deps.clock.now()): ChatSession {
     let s = this.sessions.get(chatId);
     if (!s) {
-      s = { mode: 'idle', history: [] };
+      this.evictIdle(now);
+      s = { mode: 'idle', history: [], lastSeen: now };
       this.sessions.set(chatId, s);
+    } else {
+      s.lastSeen = now;
     }
     return s;
+  }
+
+  /** Drop sessions untouched for SESSION_TTL_MS, so open access can't grow the map
+   * without bound (ADR-0050). Runs only when a new chat appears — cheap, amortized. */
+  private evictIdle(now: number): void {
+    for (const [id, s] of this.sessions) {
+      if (now - s.lastSeen >= SESSION_TTL_MS) this.sessions.delete(id);
+    }
   }
 
   /** Chat is available only when both an answerer and a Story reader are wired. */

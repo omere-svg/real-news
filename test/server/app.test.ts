@@ -179,6 +179,20 @@ describe('HTTP API', () => {
     expect(await res.text()).toContain('value="10"'); // defaults.minutes
   });
 
+  it('the viewer ships the card renderers and score-surfacing UI (ADR-0050)', async () => {
+    const app = await appWithStories();
+    const html = await (await app.request('/')).text();
+    // Brief/outline/podcast render as cards + prose, not a <pre> blob.
+    expect(html).toContain('function renderDoc');
+    expect(html).toContain('function renderScript');
+    // Score rationale is surfaced always-visible + the top breakdown auto-opens.
+    expect(html).toContain('scoreTags');
+    expect(html).toContain('breakdownHtml(s.scoreBreakdown, i === 0)');
+    // Backend is made legible (sources / zero-scraping / live freshness).
+    expect(html).toContain('zero scraping');
+    expect(html).toContain('loadFreshness');
+  });
+
   it('the viewer routes story links through a scheme-checked safeUrl, never a raw href (ADR-0049)', async () => {
     const app = await appWithStories();
     const html = await (await app.request('/')).text();

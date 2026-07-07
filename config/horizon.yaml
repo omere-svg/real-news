@@ -214,7 +214,10 @@ presentation:
   defaultMinutes: 3
   maxMinutes: 60            # hard cap on requested minutes (cost guard, ADR-0023)
   maxPodcastMinutes: 20     # tighter cap for podcasts (TTS cost guard) — clamps the audio path
-  webPodcastEnabled: false  # expose the LLM-backed /api/podcast on the web (ADR-0023)
+  webPodcastEnabled: true   # expose the LLM-backed /api/podcast on the web (ADR-0023/0050).
+                            # Bounded per call by maxPodcastMinutes; script-only (no web TTS).
+                            # NOTE: the web path has no per-user quota — fine for the demo; add a
+                            # global web cap before long-term public exposure.
   # Readability floor (ADR-0024): prefer few, fully-explained stories over many headlines.
   minDepth: full           # headline | brief | full — minimum depth every story gets
   minStories: 3            # always show at least this many, even at /brief 1

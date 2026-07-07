@@ -183,6 +183,18 @@ describe('HorizonBot', () => {
     expect(transport.messages.at(-1)).toEqual({ chatId: 5, text: 'BRIEF[7]' });
   });
 
+  it('evicts idle in-memory sessions so open access cannot grow the map forever (ADR-0050)', async () => {
+    const { bot, clock } = await build();
+    const sessions = (bot as unknown as { sessions: Map<number, unknown> }).sessions;
+    await bot.handle(update(1, '/brief'));
+    expect(sessions.has(1)).toBe(true);
+    // 7 hours later (past the 6h TTL) a different chat arrives → chat 1 is swept.
+    clock.advance(7 * 3600_000);
+    await bot.handle(update(2, '/brief'));
+    expect(sessions.has(1)).toBe(false);
+    expect(sessions.has(2)).toBe(true);
+  });
+
   it('/brief falls back to the chat default minutes, then config default', async () => {
     const { bot, query, prefs } = await build();
     await bot.handle(update(5, '/brief'));
