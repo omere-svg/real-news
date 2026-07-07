@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-07-06 (**444 tests green, 52 ADRs**; live on an Oracle Cloud VM +
+the plan to finish it. Updated 2026-07-07 (**701 tests green, 95.66% line / 85.45% branch coverage, 55 ADRs**; live on an Oracle Cloud VM +
 Turso). Latest: a **Log in with Telegram** web-auth (ADR-0040, no passwords/emails), all
 five optional deepenings shipped (ADR-0041–0045), and web-session security hardening
 (ADR-0046). See §"Optional deepening — DONE" below. A production-DB review drove a throughput/dedup/integrity hardening pass
@@ -30,7 +30,7 @@ remains is optional deepening (below).
 
 | Layer | Modules | Status |
 |---|---|---|
-| **Extraction worker** (Feature 1) | `pipeline/extract` + **18 Story adapters** behind the `SourceAdapter` seam (ADR-0004): Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, **Guardian, Times of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv** (ADR-0021), **TheSportsDB (Sports), WHO Outbreaks (Health), NASA EONET / USGS / GDACS (Climate)** (ADR-0031); plus **5 Signal adapters** behind the sibling `SignalSource` seam (`pipeline/observe-signals`): **Wikipedia Pageviews, World Bank** (ADR-0025), **CoinGecko, Frankfurter FX, OpenAlex** (ADR-0031). Shared `rss.ts` parser for RSS/RDF feeds. Health-checked, per-source failure isolation. | ✅ |
+| **Extraction worker** (Feature 1) | `pipeline/extract` + **18 Story adapters** behind the `SourceAdapter` seam (ADR-0004): Hacker News, arXiv, GDELT, Knesset bills, SEC EDGAR, Wikipedia, **Guardian, Times of Israel, Knesset Votes, HF Daily Papers, NBER, Nature, PsyArXiv** (ADR-0021), **TheSportsDB (Sports), WHO Outbreaks (Health), NASA EONET / USGS / GDACS (Climate)** (ADR-0031); plus **6 Signal adapters** behind the sibling `SignalSource` seam (`pipeline/observe-signals`): **Wikipedia Pageviews, World Bank** (ADR-0025), **CoinGecko, Frankfurter FX, OpenAlex** (ADR-0031), **GDELT tone** (ADR-0041). Shared `rss.ts` parser for RSS/RDF feeds. Health-checked, per-source failure isolation. | ✅ |
 | **Relational cache** (Feature 2) | SQLite + Drizzle (ADR-0002/0005): `raw_items` → `stories` → `membership`, plus `story_vectors` (ADR-0017), `chat_preferences` + `usage` (ADR-0019/0022). Idempotent upsert (reassigns a member across Stories without a `(source, externalId)` PK collision); filtered `topStories`. | ✅ |
 | **Reasoning loop** (Feature 3) | `classify → embed → cluster → resolve → score → analyze → upsert`, sequenced by `TickRunner`. Impact-first `computeBaseScore` — real-world impact (Reasoner `assessImpact`) + corroboration + authority, popularity a bounded booster (ADR-0034). `Reasoner` (prompts/schemas/tiering) over a thin `ChatTransport` (OpenAI), wrapped in `ResilientLLMClient` (ADR-0016). Neural `OpenAIEmbedder` + hashing fallback (ADR-0018). Cross-tick dedup via `resolve` (ADR-0017). | ✅ |
 | **Scheduler / daemon** | In-process tick loop every X min (`main.ts`, ADR-0001). | ✅ |
@@ -228,3 +228,23 @@ covered by tests:
 
 Cost stays bounded — concurrency and retries change *throughput/reliability*, not the
 per-call design. See ADR-0047.
+
+## 7. Agentic evidence & hardening pass — score-100-hardening (2026-07-07)
+
+A further pass (ADR-0048–0054, ~29 commits) added: a recorded one-line **plan** persisted as
+chat-trace step 0 (plan→act→observe, public at `/api/chat-traces`) plus a fallback-vs-agent
+path marker; a rewritten URL output guard (real host/path parsing, no query/fragment
+smuggling, grounding only from structured tool results) with adversarial bypass tests; hard
+per-turn/per-trajectory tool budgets on the chat agent; atomic, non-double-charging quota
+increments; a tick loop that survives lock/tick errors instead of dying; non-finite signal
+values dropped before they can crash a tick; single-source stories no longer show a
+misleading 0% corroboration bar; `/api/stats` now exposes subscriber/question/token
+accounting; real coverage measurement gated in CI (90% lines / 80% branches); and
+`signalHistoryDays` raised from 14 to 365 so the moat time-series stops pruning itself.
+
+**Honesty notes:** a production `SERVER_ERROR: HTTP status 400` was observed on a recent tick;
+the root cause is **unconfirmed** — this pass shipped defensive hardening (the non-finite
+signal guard) and per-source failure isolation is now demonstrable (recent ticks show failed
+sources isolated with `ok: true`), but the 400 itself was not root-caused. `/api/chat-traces`
+and `/api/reflection` are **empty until the deploy sees real usage** — ask the bot a question
+to generate the first trace. No demo video exists yet, and there are no external users yet.

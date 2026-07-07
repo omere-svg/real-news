@@ -1,0 +1,19 @@
+# Minimal second-tenant config (Task 26 evidence artifact). Proves multi-tenancy:
+# a distinct config + distinct file-backed DB run the same binary as an independent
+# instance. Two keyless sources only, to keep boot fast and API-key-free.
+tickIntervalMinutes: 20
+
+sources:
+  - id: hackernews    # keyless — global tech
+    enabled: true
+    weight: 0.35
+    maxItems: 10
+  - id: wikipedia     # keyless — general current events
+    enabled: true
+    weight: 0.6
+    maxItems: 10
+
+reasoner: {}
+dedup: {}
+scoring: {}
+presentation: {}

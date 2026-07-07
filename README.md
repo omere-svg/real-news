@@ -52,7 +52,8 @@ Open **http://localhost:3000**. The first tick runs on boot, then every
   defaults to Other, summary and "why it matters" left blank.
 
 ```bash
-npm test         # the whole engine
+npm test              # the whole engine
+npm run test:coverage # same suite + coverage report (CI-gated at 90% lines / 80% branches)
 npm run typecheck
 ```
 
