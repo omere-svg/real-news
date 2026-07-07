@@ -45,7 +45,13 @@ export function breakdownHtml(
 ): string {
   if (!b) return '';
   const pct = (v: number): string => Math.round(Number(v) * 100) + '%';
+  // A lone-source story has nothing to corroborate with — a 0% bar reads as a
+  // penalty, not a fact, and contradicts the dedup pitch. Drop that row
+  // entirely rather than show a bar that can only ever say "0%" (Task 21).
+  const cor = Number(b.signals.corroboration) || 0;
+  const isSingleSource = cor <= 1;
   const bars = b.components
+    .filter((c) => !(isSingleSource && c.key === 'corroboration'))
     .map(
       (c) =>
         '<div class="lbl">' +
@@ -65,7 +71,6 @@ export function breakdownHtml(
       ? ' · attention/macro nudge ' + (b.signalNudge >= 0 ? '+' : '') + Number(b.signalNudge).toFixed(1)
       : '';
   // Corroboration only when it says something ("0 sources" is noise, not a fact).
-  const cor = Number(b.signals.corroboration) || 0;
   const facts = (cor >= 1 ? cor + ' source' + (cor === 1 ? '' : 's') + ' · ' : '') + 'recency ' + recency + nudge;
   return (
     '<details class="why-score"' +

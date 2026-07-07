@@ -42,6 +42,7 @@ describe('breakdownHtml — the "Why this score?" widget', () => {
     components: [
       { key: 'impact', value: 0.8 },
       { key: '<script>', value: 0.3 }, // an unknown key falls back to itself, must still be escaped
+      { key: 'corroboration', value: 0.6 },
     ],
     signals: { corroboration: 3 },
     recencyFactor: 0.95,
@@ -78,6 +79,27 @@ describe('breakdownHtml — the "Why this score?" widget', () => {
   it('renders nothing for a missing breakdown (pre-ADR-0032 stories)', () => {
     expect(breakdownHtml(null, false, LABELS)).toBe('');
     expect(breakdownHtml(undefined, true, LABELS)).toBe('');
+  });
+
+  it('renders the corroboration bar for a multi-source story', () => {
+    const html = breakdownHtml(breakdown, false, LABELS);
+    expect(html).toContain('Corroboration');
+    expect(html).toContain('width:60%');
+  });
+
+  it('single-source story renders no corroboration bar', () => {
+    const single = {
+      ...breakdown,
+      components: [
+        { key: 'impact', value: 0.8 },
+        { key: 'corroboration', value: 0 },
+      ],
+      signals: { corroboration: 1 },
+    };
+    const html = breakdownHtml(single, false, LABELS);
+    expect(html).not.toContain('Corroboration');
+    expect(html).not.toContain('width:0%');
+    expect(html).toContain('Real-world impact'); // other bars still render
   });
 });
 
