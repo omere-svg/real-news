@@ -122,7 +122,7 @@ export class DrizzleStoryRepo implements StoryRepo {
   async upsert(input: StoryUpsert): Promise<Story> {
     const now = this.clock.now();
 
-    await this.db
+    const storyWrite = this.db
       .insert(stories)
       .values({
         id: input.id,
@@ -158,17 +158,26 @@ export class DrizzleStoryRepo implements StoryRepo {
     const ownsIncoming = input.memberRefs.map((ref) =>
       and(eq(membership.source, ref.source), eq(membership.externalId, ref.externalId)),
     );
-    await this.db
+    const clearMembership = this.db
       .delete(membership)
       .where(or(eq(membership.storyId, input.id), ...ownsIncoming));
+
+    // One atomic batch (a libsql transaction): the story write, the membership
+    // release, and the re-insert commit together or not at all. Previously these
+    // were three separate awaits — a failure between the DELETE and the INSERT
+    // orphaned this story (and any raided prior owner), which the tick's
+    // `finally` pruneOrphans then deleted along with its paid summary (ADR-0049).
     if (input.memberRefs.length > 0) {
-      await this.db.insert(membership).values(
+      const insertMembership = this.db.insert(membership).values(
         input.memberRefs.map((ref) => ({
           storyId: input.id,
           source: ref.source,
           externalId: ref.externalId,
         })),
       );
+      await this.db.batch([storyWrite, clearMembership, insertMembership]);
+    } else {
+      await this.db.batch([storyWrite, clearMembership]);
     }
 
     const story = await this.get(input.id);
