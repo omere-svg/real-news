@@ -1,4 +1,7 @@
 import { parseCommand, type Command, type PrefsField } from './command.js';
+import { QuotaGuard, LIMIT_MSG, type BotLimits } from './quota-guard.js';
+import { SessionStore, type ChatSession } from './session-store.js';
+import { ChatGrounding } from './chat-grounding.js';
 import type { InlineButton, TelegramTransport, TelegramUpdate } from './telegram-transport.js';
 import type { Synthesizer } from './synthesizer.js';
 import type { RateLimiter } from './rate-limiter.js';
@@ -8,7 +11,7 @@ import type {
   PreviousPreferences,
 } from '../db/chat-preferences-repo.js';
 import type { StoryRepo } from '../db/story-repo.js';
-import { utcDay, type UsageRepo } from '../db/usage-repo.js';
+import type { UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
@@ -21,7 +24,6 @@ import type {
   IntentRouter,
   PreferencesInterpreter,
   PrefsListChange,
-  StoryContext,
 } from '../llm/llm-client.js';
 import type { WebSearch } from '../web/web-search.js';
 import { applyFeedback, type PreferenceProfile } from '../preferences/feedback.js';
@@ -41,32 +43,6 @@ export type StoryReader = Pick<StoryRepo, 'topStories'> &
 /** The slice of the web-auth store the bot needs to claim a pairing code (ADR-0040). */
 export type WebLinker = Pick<WebAuthRepo, 'claim'>;
 
-/**
- * Per-chat conversational state (ADR-0028/0029), held in memory. `idle` is the
- * pre-brief default (plain text ⇒ help); after a brief the chat enters `chat`
- * (plain text ⇒ questions about the news); the feedback button parks it in
- * `feedback` for one message (the next plain text ⇒ tuning).
- */
-interface ChatSession {
-  mode: 'idle' | 'chat' | 'feedback';
-  history: ConversationTurn[];
-  /** Last time this chat sent anything — for evicting idle sessions (ADR-0050). */
-  lastSeen: number;
-}
-
-/** How many prior turns to carry as conversation context. */
-const MAX_HISTORY_TURNS = 6;
-/** Evict a chat's in-memory session after this much inactivity; under open access
- * every stranger's chat id would otherwise accumulate forever (ADR-0050). */
-const SESSION_TTL_MS = 6 * 3600_000;
-/**
- * Minimum cosine similarity for a Story to count as relevant chat grounding
- * (ADR-0047). Without a floor, semantic search always returns its top-k even
- * when nothing is actually about the question, so the model gets fed unrelated
- * stories and answers from noise. Below the floor we fall back to top-by-
- * significance (a sensible "here's today's news" default).
- */
-const CHAT_MIN_SIMILARITY = 0.35;
 /** Cap on stored memory length, to bound the prompt it's injected into. */
 const MAX_MEMORY_CHARS = 2000;
 /** The inline button that opens the per-answer feedback flow (ADR-0028). */
@@ -88,15 +64,9 @@ const MENU_BUTTONS = [
  * podcasts). No network or model code lives here; everything is behind seams and
  * tested with fakes.
  */
-/** Rate-limit + cost-quota knobs (ADR-0022). */
-export interface BotLimits {
-  readonly perMinute: number;
-  readonly podcastPerDay: number;
-  readonly commandsPerDay: number;
-  readonly globalPodcastPerDay: number;
-  /** Process-wide command ceiling per UTC day — the total-cost backstop (ADR-0031). */
-  readonly globalCommandsPerDay: number;
-}
+// Quota policy (limits, counters, free-command exemption, limit messages) lives in
+// QuotaGuard (ADR-0052). BotLimits is re-exported so existing importers are unaffected.
+export type { BotLimits };
 
 export interface HorizonBotDeps {
   readonly transport: TelegramTransport;
@@ -142,20 +112,6 @@ export interface HorizonBotDeps {
   readonly openAccess: boolean;
 }
 
-const LIMIT_MSG = {
-  commands:
-    'You’ve hit today’s limit for briefs and questions — it resets at midnight UTC. ' +
-    'Menus and preferences still work in the meantime.',
-  podcast:
-    'You’ve used today’s podcast allowance — it resets at midnight UTC. A text brief is ' +
-    'still free anytime: /brief.',
-  global:
-    'The podcast service is busy right now (lots of listeners). Please try again shortly — ' +
-    'a text brief works instantly: /brief.',
-  globalCommands:
-    'Horizon has reached its daily total across all readers — it resets at midnight UTC. ' +
-    'Thanks for your patience.',
-} as const;
 
 /** Followable topics, newest-vocabulary order, minus the `Other` catch-all. */
 const FOLLOWABLE_TOPICS = TOPICS.filter((t) => t !== 'Other').join(' · ');
@@ -186,9 +142,19 @@ const HELP = [
 
 export class HorizonBot {
   /** Per-chat conversational state (ADR-0028/0029). In-memory; transient by design. */
-  private readonly sessions = new Map<number, ChatSession>();
+  private readonly sessions = new SessionStore();
 
-  constructor(private readonly deps: HorizonBotDeps) {}
+  /** Cost/rate policy, extracted from the dispatcher (ADR-0052). */
+  private readonly quota: QuotaGuard;
+  /** Chat grounding retrieval; present only when chat is wired (needs a story reader). */
+  private readonly grounding: ChatGrounding | undefined;
+
+  constructor(private readonly deps: HorizonBotDeps) {
+    this.quota = new QuotaGuard(deps.usage, deps.limits, deps.transport);
+    this.grounding = deps.storyRepo
+      ? new ChatGrounding(deps.storyRepo, deps.embedder, deps.defaults.topics as readonly Topic[] | undefined)
+      : undefined;
+  }
 
   async handle(update: TelegramUpdate): Promise<void> {
     const { chatId } = update;
@@ -213,20 +179,20 @@ export class HorizonBot {
     const willRoute =
       parseCommand(update.text).kind === 'unknown' && !awaitingFeedback && this.deps.router !== undefined;
     if (willRoute) {
-      if (await this.overCommandQuota(chatId, now)) {
+      if (await this.quota.overCommandQuota(chatId, now)) {
         await this.deps.transport.sendMessage(chatId, LIMIT_MSG.commands);
         return;
       }
     }
 
     const command = await this.interpret(session, update.text);
-    if (!(await this.withinQuota(chatId, command, now))) return;
+    if (!(await this.quota.withinQuota(chatId, command, now))) return;
 
     // A routed message spent a cheap-tier LLM call even when it resolved to a
     // "free" command (help/prefs/remember). withinQuota didn't charge those, so
     // count the routing spend once here — else open access is uncapped for the
     // routing tier (ADR-0051). Non-free routes were already charged by withinQuota.
-    if (willRoute && isFreeCommand(command.kind)) await this.chargeCommand(chatId, now);
+    if (willRoute && this.quota.isFree(command.kind)) await this.quota.chargeCommand(chatId, now);
 
     await this.dispatch(chatId, command, update.senderName);
 
@@ -234,44 +200,9 @@ export class HorizonBot {
     if (awaitingFeedback && session.mode === 'feedback') session.mode = 'chat';
   }
 
-  /** Charge one command against the per-chat + global daily counters (no gating —
-   * used to bill a routed message whose resolved command is otherwise free, ADR-0051). */
-  private async chargeCommand(chatId: number, now: number): Promise<void> {
-    const day = utcDay(now);
-    await this.deps.usage.incrementAndGet(`chat:${chatId}:cmd`, day);
-    await this.deps.usage.incrementAndGet('global:cmd', day);
-  }
-
-  /** Read-only: is the chat or the process already at/over the daily command cap?
-   * A pre-gate for the router LLM call; the real increment stays in withinQuota. */
-  private async overCommandQuota(chatId: number, now: number): Promise<boolean> {
-    const day = utcDay(now);
-    const { usage, limits } = this.deps;
-    const mine = await usage.peek(`chat:${chatId}:cmd`, day);
-    if (mine >= limits.commandsPerDay) return true;
-    const total = await usage.peek('global:cmd', day);
-    return total >= limits.globalCommandsPerDay;
-  }
-
   /** The session for a chat, created idle on first contact. */
   private session(chatId: number, now: number = this.deps.clock.now()): ChatSession {
-    let s = this.sessions.get(chatId);
-    if (!s) {
-      this.evictIdle(now);
-      s = { mode: 'idle', history: [], lastSeen: now };
-      this.sessions.set(chatId, s);
-    } else {
-      s.lastSeen = now;
-    }
-    return s;
-  }
-
-  /** Drop sessions untouched for SESSION_TTL_MS, so open access can't grow the map
-   * without bound (ADR-0050). Runs only when a new chat appears — cheap, amortized. */
-  private evictIdle(now: number): void {
-    for (const [id, s] of this.sessions) {
-      if (now - s.lastSeen >= SESSION_TTL_MS) this.sessions.delete(id);
-    }
+    return this.sessions.get(chatId, now);
   }
 
   /** Chat is available only when both an answerer and a Story reader are wired. */
@@ -369,7 +300,7 @@ export class HorizonBot {
       await this.sendTopicMenu(chatId);
     } else {
       const command = callbackCommand(data);
-      if (command && (await this.withinQuota(chatId, command, now))) {
+      if (command && (await this.quota.withinQuota(chatId, command, now))) {
         await this.dispatch(chatId, command);
       }
     }
@@ -383,62 +314,6 @@ export class HorizonBot {
     return this.deps.openAccess;
   }
 
-  /**
-   * Durable daily quotas (ADR-0022). Counts every command; podcasts also draw a
-   * per-chat and a global ceiling. A chat can only spend up to its own podcast
-   * budget against the global counter (per-chat checked first). Sends exactly one
-   * notice when a limit is first crossed, then stays silent.
-   */
-  private async withinQuota(
-    chatId: number,
-    command: Command,
-    now: number,
-  ): Promise<boolean> {
-    // Free, zero-cost navigation (menu/help, viewing/clearing prefs, pairing)
-    // never draws down the daily command budget — only work that reads the cache
-    // or hits the model does. Otherwise a few menu taps could burn a user's whole
-    // allowance and lock them out of an actual brief (ADR-0047).
-    if (isFreeCommand(command.kind)) return true;
-
-    const day = utcDay(now);
-    const { usage, transport, limits } = this.deps;
-
-    const cmds = await usage.incrementAndGet(`chat:${chatId}:cmd`, day);
-    if (cmds > limits.commandsPerDay) {
-      if (cmds === limits.commandsPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.commands);
-      return false;
-    }
-
-    // Process-wide daily ceiling across all chats — the hard total-cost backstop
-    // that makes openAccess safe (bounds the chat/discuss LLM spend too). ADR-0031.
-    const totalCmds = await usage.incrementAndGet('global:cmd', day);
-    if (totalCmds > limits.globalCommandsPerDay) {
-      if (totalCmds === limits.globalCommandsPerDay + 1)
-        await transport.sendMessage(chatId, LIMIT_MSG.globalCommands);
-      return false;
-    }
-
-    if (command.kind === 'podcast') {
-      // Check the global ceiling before charging this chat's personal podcast
-      // counter, so a globally-blocked request doesn't waste the user's own daily
-      // allowance (ADR-0051).
-      if ((await usage.peek('global:podcast', day)) >= limits.globalPodcastPerDay) {
-        await transport.sendMessage(chatId, LIMIT_MSG.global);
-        return false;
-      }
-      const mine = await usage.incrementAndGet(`chat:${chatId}:podcast`, day);
-      if (mine > limits.podcastPerDay) {
-        if (mine === limits.podcastPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.podcast);
-        return false;
-      }
-      const global = await usage.incrementAndGet('global:podcast', day);
-      if (global > limits.globalPodcastPerDay) {
-        if (global === limits.globalPodcastPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.global);
-        return false;
-      }
-    }
-    return true;
-  }
 
   private async dispatch(
     chatId: number,
@@ -570,7 +445,7 @@ export class HorizonBot {
     }
 
     const prefs = await this.deps.prefs.get(chatId);
-    const stories = await this.storyContext(prefs, q);
+    const stories = await this.grounding!.stories(prefs, q);
     const memory = prefs?.memory;
     const history = this.session(chatId).history;
     const base = { question: q, history, stories, ...(memory ? { memory } : {}) };
@@ -598,64 +473,9 @@ export class HorizonBot {
    * question via cosine over `story_vectors` (ADR-0045); otherwise fall back to the
    * chat's preferred top Stories by significance. Preference topics filter both.
    */
-  private async storyContext(
-    prefs: ChatPreferences | null,
-    question?: string,
-  ): Promise<StoryContext[]> {
-    const topics = (prefs?.topics ?? this.deps.defaults.topics) as readonly Topic[] | undefined;
-    const topicFilter = topics?.length ? { topic: topics } : {};
-    const reader = this.deps.storyRepo!;
-
-    const q = question?.trim();
-    const search = reader.semanticSearch;
-    const stories =
-      q && this.deps.embedder && search
-        ? await this.semanticStories(search.bind(reader), q, topicFilter)
-        : await reader.topStories({ limit: 30, ...topicFilter });
-
-    return stories.map((s) => ({
-      title: s.title,
-      summary: s.summary,
-      whyItMatters: s.whyItMatters,
-      topic: s.topic,
-      significance: s.significance,
-      url: s.url,
-    }));
-  }
-
-  /**
-   * Embed the question and retrieve the most semantically similar Stories (ADR-0045).
-   * A degenerate/empty embedding can't rank anything — fall back to significance.
-   */
-  private async semanticStories(
-    search: NonNullable<StoryReader['semanticSearch']>,
-    question: string,
-    topicFilter: { topic?: readonly Topic[] },
-  ): Promise<Awaited<ReturnType<StoryReader['topStories']>>> {
-    const [vector] = await this.deps.embedder!.embed([question]);
-    // A missing or all-zero embedding can't rank anything (cosine is 0 everywhere).
-    if (!vector || vector.length === 0 || vector.every((v) => v === 0)) {
-      return this.deps.storyRepo!.topStories({ limit: 30, ...topicFilter });
-    }
-    // Only ground on genuinely-relevant matches (ADR-0047); if nothing clears the
-    // floor, fall back to today's top stories rather than feeding the model noise.
-    const relevant = await search({
-      vector,
-      limit: 12,
-      minSimilarity: CHAT_MIN_SIMILARITY,
-      ...topicFilter,
-    });
-    if (relevant.length > 0) return relevant;
-    return this.deps.storyRepo!.topStories({ limit: 30, ...topicFilter });
-  }
-
   /** Append a turn to the session, keeping only the most recent ones. */
   private remember(chatId: number, turn: ConversationTurn): void {
-    const s = this.session(chatId);
-    s.history.push(turn);
-    if (s.history.length > MAX_HISTORY_TURNS) {
-      s.history.splice(0, s.history.length - MAX_HISTORY_TURNS);
-    }
+    this.sessions.remember(chatId, this.deps.clock.now(), turn);
   }
 
   /** Persist personal context the LLM weaves into every reply (ADR-0028). */
@@ -942,28 +762,6 @@ function callbackCommand(data: string): Command | null {
   return null;
 }
 
-/**
- * Commands that cost nothing (no model call, no cache render) and so are exempt
- * from the daily command quota (ADR-0047): menu/help, pairing, and viewing or
- * changing settings. Everything else (brief/outline/podcast/chat/feedback)
- * still counts.
- */
-const FREE_COMMANDS: ReadonlySet<Command['kind']> = new Set([
-  'start',
-  'link',
-  'help',
-  'unknown',
-  'prefsShow',
-  'prefsSet',
-  'prefsClear',
-  'feedbackUndo',
-  'remember',
-  'forget',
-]);
-
-function isFreeCommand(kind: Command['kind']): boolean {
-  return FREE_COMMANDS.has(kind);
-}
 
 /** Parse a comma list against a controlled vocabulary, dropping invalid entries. */
 function parseList<T extends string>(vocab: readonly T[], value: string): T[] {
