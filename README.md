@@ -176,7 +176,7 @@ docker run -p 3000:3000 -e OPENAI_API_KEY=sk-... horizon
 ## What's left
 
 **Everything planned is built, tested, and live in production.** All source types and the full
-reasoning/presentation stack ship, deployed on Render + Turso (ADR-0031); every Story carries an
+reasoning/presentation stack ship, deployed on an Oracle Cloud VM + Turso (ADR-0031); every Story carries an
 inspectable score breakdown ("why this score", ADR-0032); and every tick is persisted and
 surfaced on a `/dashboard` health page (ADR-0033).
 

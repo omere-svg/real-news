@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-07-06 (**389 tests green, 46 ADRs**; live on Render +
+the plan to finish it. Updated 2026-07-06 (**431 tests green, 50 ADRs**; live on an Oracle Cloud VM +
 Turso). Latest: a **Log in with Telegram** web-auth (ADR-0040, no passwords/emails), all
 five optional deepenings shipped (ADR-0041–0045), and web-session security hardening
 (ADR-0046). See §"Optional deepening — DONE" below. A production-DB review drove a throughput/dedup/integrity hardening pass
@@ -16,7 +16,7 @@ each Signal source's saturation scale onto the `SignalSource` seam. **Phase 6
 (presentation deepening) is now done** — brief provenance links, per-chat memory + inline
 per-answer feedback, a cache-grounded chat-about-the-news with an off-by-default web
 fallback, and a natural-language + buttons UX over the bot (ADR-0027/0028/0029/0030).
-**Phase 5 (productionize) is now done too** — deployed live on Render + Turso (ADR-0031) and
+**Phase 5 (productionize) is now done too** — deployed live on an Oracle Cloud VM + Turso (ADR-0031) and
 fully observable via persisted tick reports + a `/dashboard` (ADR-0033). Every Story also ships
 an inspectable score breakdown (ADR-0032). A scoring/dedup hardening pass followed: **impact-first
 Significance** (ADR-0034), **richer dedup embeddings + entity-aware clustering** (ADR-0035/0036),
