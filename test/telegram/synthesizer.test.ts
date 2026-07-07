@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type OpenAI from 'openai';
-import { OpenAITTS } from '../../src/telegram/openai-tts.js';
+import { OpenAITTS, clampForTts } from '../../src/telegram/openai-tts.js';
 import { ResilientSynthesizer } from '../../src/telegram/resilient-synthesizer.js';
 import type { Synthesizer } from '../../src/telegram/synthesizer.js';
 
@@ -18,6 +18,27 @@ describe('OpenAITTS', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'gpt-4o-mini-tts', voice: 'alloy', input: 'hello world' }),
     );
+  });
+
+  it('clamps an over-long script to the TTS char limit before the API call (ADR-0049)', async () => {
+    const create = vi.fn().mockResolvedValue({ arrayBuffer: async () => new Uint8Array([1]).buffer });
+    const client = { audio: { speech: { create } } } as unknown as OpenAI;
+    const long = ('This is a sentence. '.repeat(400)); // ~8000 chars
+    await new OpenAITTS({ model: 'm', voice: 'v', client }).synthesize(long);
+    const sent = (create.mock.calls[0]?.[0] as { input: string }).input;
+    expect(sent.length).toBeLessThanOrEqual(4000);
+    expect(sent.endsWith('.')).toBe(true); // cut at a sentence boundary
+  });
+});
+
+describe('clampForTts', () => {
+  it('leaves a short script untouched', () => {
+    expect(clampForTts('short')).toBe('short');
+  });
+  it('truncates a long script at a sentence boundary under the cap', () => {
+    const out = clampForTts('A. '.repeat(3000), 100);
+    expect(out.length).toBeLessThanOrEqual(100);
+    expect(out.endsWith('.')).toBe(true);
   });
 });
 

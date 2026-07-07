@@ -763,10 +763,13 @@ export class HorizonBot {
   private async setPref(chatId: number, field: PrefsField, value: string): Promise<void> {
     const { prefs, transport } = this.deps;
     if (field === 'minutes') {
-      const minutes = Number(value);
-      if (!Number.isFinite(minutes) || minutes <= 0) {
+      const raw = Number(value);
+      if (!Number.isFinite(raw) || raw <= 0) {
         return transport.sendMessage(chatId, 'Minutes must be a positive number.');
       }
+      // Clamp to maxMinutes like the NL and web-PUT paths do, so `/prefs minutes
+      // 100000` can't store (and then display) an absurd budget (ADR-0049).
+      const minutes = normalizeMinutes(raw, this.deps.maxMinutes);
       await prefs.set(chatId, { defaultMinutes: minutes });
       return transport.sendMessage(chatId, `Default budget set to ${minutes} min.`);
     }
