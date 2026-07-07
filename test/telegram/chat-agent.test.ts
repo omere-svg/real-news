@@ -258,6 +258,95 @@ describe('ChatAgent (ADR-0053)', () => {
     expect(JSON.stringify(out.steps)).not.toContain('Tel Aviv');
   });
 
+  it('executes at most 3 tool calls per turn', async () => {
+    const search = tool('search_stories', 'ok');
+    const transport = new ScriptedTransport([
+      {
+        text: null,
+        toolCalls: [
+          { id: 'c1', name: 'search_stories', args: { query: '1' } },
+          { id: 'c2', name: 'search_stories', args: { query: '2' } },
+          { id: 'c3', name: 'search_stories', args: { query: '3' } },
+          { id: 'c4', name: 'search_stories', args: { query: '4' } },
+          { id: 'c5', name: 'search_stories', args: { query: '5' } },
+        ],
+      },
+      finalAnswer('done', false),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search] });
+
+    const out = await agent.answer({ question: 'q', history: [] });
+
+    // Only the first 3 calls actually ran the tool.
+    expect(search.calls).toHaveLength(3);
+    // All 5 are recorded in the trace, the last 2 as budget-exhausted observations.
+    expect(out.steps).toHaveLength(5);
+    expect(out.steps[3]?.resultPreview).toContain('tool budget exhausted');
+    expect(out.steps[4]?.resultPreview).toContain('tool budget exhausted');
+    // The model still gets a tool-role observation for every call, including skipped ones.
+    const secondTurn = transport.turns[1]!.messages;
+    const toolMsgs = secondTurn.filter((m) => m.role === 'tool');
+    expect(toolMsgs).toHaveLength(5);
+  });
+
+  it('executes at most 8 tool calls per trajectory', async () => {
+    const search = tool('search_stories', 'ok');
+    const transport = new ScriptedTransport([
+      // 3 turns x 3 calls = 9 requested calls, cap is 8 across the whole trajectory.
+      {
+        text: null,
+        toolCalls: [
+          { id: 'a1', name: 'search_stories', args: { query: '1' } },
+          { id: 'a2', name: 'search_stories', args: { query: '2' } },
+          { id: 'a3', name: 'search_stories', args: { query: '3' } },
+        ],
+      },
+      {
+        text: null,
+        toolCalls: [
+          { id: 'b1', name: 'search_stories', args: { query: '4' } },
+          { id: 'b2', name: 'search_stories', args: { query: '5' } },
+          { id: 'b3', name: 'search_stories', args: { query: '6' } },
+        ],
+      },
+      {
+        text: null,
+        toolCalls: [
+          { id: 'c1', name: 'search_stories', args: { query: '7' } },
+          { id: 'c2', name: 'search_stories', args: { query: '8' } },
+          { id: 'c3', name: 'search_stories', args: { query: '9' } },
+        ],
+      },
+      finalAnswer('done', false),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search], maxSteps: 5 });
+
+    const out = await agent.answer({ question: 'q', history: [] });
+
+    // Only 8 of the 9 requested calls actually ran the tool.
+    expect(search.calls).toHaveLength(8);
+    expect(out.steps).toHaveLength(9);
+    expect(out.steps[8]?.resultPreview).toContain('tool budget exhausted');
+  });
+
+  it('tool results fed to the model are truncated', async () => {
+    const huge = 'x'.repeat(10_000);
+    const search = tool('search_stories', huge);
+    const transport = new ScriptedTransport([
+      callTool('c1', 'search_stories', { query: 'q' }),
+      finalAnswer('done', false),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [search] });
+
+    await agent.answer({ question: 'q', history: [] });
+
+    const secondTurn = transport.turns[1]!.messages;
+    const toolMsg = secondTurn.find((m) => m.role === 'tool');
+    const content = toolMsg && 'content' in toolMsg ? toolMsg.content ?? '' : '';
+    expect(content).toContain('[truncated]');
+    expect(content.length).toBeLessThan(huge.length);
+  });
+
   it('calls the same tool with distinct arguments across steps (real iteration)', async () => {
     const search = tool('search_stories', '(nothing)');
     const transport = new ScriptedTransport([

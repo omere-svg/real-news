@@ -73,6 +73,13 @@ const PREVIEW_CHARS = 200;
 const ARGS_CHARS = 200;
 const MAX_ANSWER_CHARS = 3_500;
 const URL_RE = /https?:\/\/[^\s)\]}>"'<‹]+/gi;
+// Hard spend ceiling (§5): a model emitting a burst of tool calls can't turn
+// one quota-charged command into an unbounded fan-out, and can't grow the
+// prompt without limit by having tools echo huge results back forever.
+const MAX_TOOL_CALLS_PER_TURN = 3;
+const MAX_TOOL_CALLS_PER_TRAJECTORY = 8;
+const MAX_TOOL_RESULT_CHARS = 4_000;
+const BUDGET_EXHAUSTED = 'tool_error: tool budget exhausted — this call was skipped, answer with what you already have';
 
 // Lenient final-reply parse: a malformed reply degrades to raw text.
 const finalSchema = z.object({
@@ -116,6 +123,7 @@ export class ChatAgent {
     // appear in the answer — a poisoned web snippet can't make the agent relay
     // an attacker link that never grounded anything.
     const groundedUrls = new Set<string>();
+    let trajectoryToolCalls = 0;
 
     for (let turn = 0; turn <= this.maxSteps; turn += 1) {
       // On the last permitted turn the tools are withdrawn: answer NOW.
@@ -132,13 +140,23 @@ export class ChatAgent {
       }
 
       messages.push({ role: 'assistant', content: res.text, toolCalls: res.toolCalls });
+      let turnToolCalls = 0;
       for (const call of res.toolCalls) {
-        const tool = byName.get(call.name);
-        // A tool failure (or an unknown tool) is an observation for the model,
-        // never an exception for the user.
-        const result = tool
-          ? await tool.run(call.args).catch((err: unknown) => toolError(err))
-          : toolError(new Error(`unknown tool "${call.name}"`));
+        const withinBudget =
+          turnToolCalls < MAX_TOOL_CALLS_PER_TURN && trajectoryToolCalls < MAX_TOOL_CALLS_PER_TRAJECTORY;
+        let result: ToolResult;
+        if (!withinBudget) {
+          result = { text: BUDGET_EXHAUSTED };
+        } else {
+          turnToolCalls += 1;
+          trajectoryToolCalls += 1;
+          const tool = byName.get(call.name);
+          // A tool failure (or an unknown tool) is an observation for the model,
+          // never an exception for the user.
+          result = tool
+            ? await tool.run(call.args).catch((err: unknown) => toolError(err))
+            : toolError(new Error(`unknown tool "${call.name}"`));
+        }
         for (const url of result.urls ?? []) groundedUrls.add(url);
         steps.push({
           step: steps.length + 1,
@@ -150,8 +168,12 @@ export class ChatAgent {
         messages.push({
           role: 'tool',
           toolCallId: call.id,
-          // Tool results carry third-party content (feeds, web) — fence them.
-          content: asData(result.text.startsWith('tool_error:') ? 'tool_error' : 'tool_result', result.text),
+          // Tool results carry third-party content (feeds, web) — fence them,
+          // and cap what's fed back so prompt tokens can't grow unbounded.
+          content: asData(
+            result.text.startsWith('tool_error:') ? 'tool_error' : 'tool_result',
+            truncateForModel(result.text),
+          ),
         });
       }
     }
@@ -182,6 +204,11 @@ function userBlock(input: ChatAgentInput): string {
 
 function toolError(err: unknown): ToolResult {
   return { text: `tool_error: ${err instanceof Error ? err.message : String(err)}` };
+}
+
+/** Cap a tool result fed back to the model — the stored trace preview is untouched. */
+function truncateForModel(text: string): string {
+  return text.length > MAX_TOOL_RESULT_CHARS ? `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n[truncated]` : text;
 }
 
 /** Strip URLs the tools never surfaced; cap a runaway answer (ADR-0053/0054). */
