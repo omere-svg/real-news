@@ -30,6 +30,23 @@ describe('RawItemRepo', () => {
     expect(found).toEqual(item);
   });
 
+  it('batches a large set across chunks without loss (ADR-0051)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleRawItemRepo(db);
+    const items = Array.from({ length: 250 }, (_, i) =>
+      rawItem({ externalId: String(i), title: 'Item ' + i }),
+    );
+    await repo.upsert(items);
+    expect(await repo.get({ source: 'hackernews', externalId: '0' })).not.toBeNull();
+    expect(await repo.get({ source: 'hackernews', externalId: '249' })).not.toBeNull();
+    expect((await repo.get({ source: 'hackernews', externalId: '150' }))?.title).toBe('Item 150');
+  });
+
+  it('is a no-op on an empty batch', async () => {
+    const db = await createTestDb();
+    await new DrizzleRawItemRepo(db).upsert([]); // must not throw on empty
+  });
+
   it('is idempotent: re-upserting the same (source, externalId) does not duplicate', async () => {
     const db = await createTestDb();
     const repo = new DrizzleRawItemRepo(db);

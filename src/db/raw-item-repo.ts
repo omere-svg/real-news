@@ -40,8 +40,13 @@ export class DrizzleRawItemRepo implements RawItemRepo {
   constructor(private readonly db: Db) {}
 
   async upsert(items: readonly RawItem[]): Promise<void> {
-    for (const item of items) {
-      await this.db
+    if (items.length === 0) return;
+    // Batch the per-item upserts instead of one awaited round-trip each (ADR-0051):
+    // extraction persists hundreds of items/tick — serial writes to remote Turso were
+    // the largest remaining tick-latency source. Chunked to stay within libsql's
+    // batch statement cap.
+    const stmt = (item: RawItem) =>
+      this.db
         .insert(rawItems)
         .values({
           source: item.source,
@@ -62,6 +67,10 @@ export class DrizzleRawItemRepo implements RawItemRepo {
             metadata: item.metadata,
           },
         });
+    const CHUNK = 100;
+    for (let i = 0; i < items.length; i += CHUNK) {
+      const chunk = items.slice(i, i + CHUNK).map(stmt);
+      await this.db.batch(chunk as [typeof chunk[number], ...typeof chunk]);
     }
   }
 

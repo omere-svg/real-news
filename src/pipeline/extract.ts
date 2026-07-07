@@ -1,5 +1,10 @@
 import type { SourceAdapter } from '../sources/source-adapter.js';
 import type { RawItem, SourceId } from '../domain/types.js';
+import { mapWithConcurrency } from './concurrency.js';
+
+/** Max sources fetched concurrently. Per-host self-limits (e.g. GDELT) still
+ * serialize their own calls inside the shared fetcher, so parallelism here is safe. */
+const EXTRACT_CONCURRENCY = 8;
 
 export interface SourceFailure {
   readonly source: SourceId;
@@ -24,23 +29,30 @@ export interface ExtractReport {
 export async function extract(
   sources: readonly SourceAdapter[],
 ): Promise<ExtractReport> {
+  // Run sources with bounded concurrency (ADR-0051) — health-check + extract per
+  // source were fully serial, tens of network round-trips end-to-end. Order is
+  // preserved (mapWithConcurrency keeps input order) so clustering stays
+  // deterministic; per-source try/catch isolation is unchanged.
+  type Outcome =
+    | { kind: 'items'; items: RawItem[] }
+    | { kind: 'skipped'; id: SourceId }
+    | { kind: 'failed'; failure: SourceFailure };
+  const outcomes = await mapWithConcurrency(sources, EXTRACT_CONCURRENCY, async (source): Promise<Outcome> => {
+    try {
+      if (!(await source.healthCheck())) return { kind: 'skipped', id: source.id };
+      return { kind: 'items', items: [...(await source.extract())] };
+    } catch (err) {
+      return { kind: 'failed', failure: { source: source.id, error: err instanceof Error ? err.message : String(err) } };
+    }
+  });
+
   const items: RawItem[] = [];
   const skipped: SourceId[] = [];
   const failed: SourceFailure[] = [];
-
-  for (const source of sources) {
-    if (!(await source.healthCheck())) {
-      skipped.push(source.id);
-      continue;
-    }
-    try {
-      items.push(...(await source.extract()));
-    } catch (err) {
-      failed.push({
-        source: source.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  for (const o of outcomes) {
+    if (o.kind === 'items') items.push(...o.items);
+    else if (o.kind === 'skipped') skipped.push(o.id);
+    else failed.push(o.failure);
   }
 
   return { items, skipped, failed };
