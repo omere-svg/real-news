@@ -154,6 +154,60 @@ describe('maybeReflect (ADR-0042/0053)', () => {
     expect(calls).toBe(1);
   });
 
+  it('reflection cadence keeps advancing after tick_reports is pruned to the '
+    + 'retention cap (post-ship hardening-pass regression: count() pins at the '
+    + 'cap once pruning kicks in, so a count-based cadence either fires every '
+    + 'tick or goes dead forever)', async () => {
+    const db = await createTestDb();
+    const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);
+    let calls = 0;
+    const deps = {
+      reflect: async () => {
+        calls += 1;
+        return emptyReflection;
+      },
+      screen: screenReflectionActions,
+      backoff: fakeBackoff(),
+      agentPolicyRepo,
+      tickReflectionRepo,
+      tickReportRepo,
+      log: nullLogger,
+      now: () => 1,
+      nextTickIndex: () => 1,
+      validSources: [],
+      reflectEveryTicks: 3,
+      reflectWindow: 5,
+      reflectionsRetention: 20,
+    };
+    const CAP = 5;
+
+    // Seed well past the retention cap, exactly like a long-running deploy
+    // would: ids 1..10, cap prunes it down to the most recent 5 (ids 6..10)
+    // every maintenance cycle, same as `main.ts`'s `maintain()` does before
+    // calling `maybeReflect` in the same cycle.
+    for (let i = 1; i <= 10; i += 1) {
+      await tickReportRepo.record(record({ ranAt: i }));
+    }
+    await tickReportRepo.pruneToRecent(CAP);
+    expect(await tickReportRepo.count()).toBe(CAP); // pinned at the cap from here on
+
+    // Simulate 6 more maintenance cycles: prune-to-cap then maybeReflect, in
+    // that order, each cycle — matching main.ts's step sequence. ids run
+    // 11..16; reflectEveryTicks=3 means ids 12 and 15 should each fire once.
+    for (let i = 11; i <= 16; i += 1) {
+      await tickReportRepo.record(record({ ranAt: i }));
+      await tickReportRepo.pruneToRecent(CAP);
+      expect(await tickReportRepo.count()).toBe(CAP); // still pinned — count() alone is useless here
+      await maybeReflect(deps);
+    }
+
+    // ids 12 and 15 are the only multiples of 3 in 11..16 → exactly 2
+    // reflections. A count()-based cadence would instead be pinned at
+    // count()=5 forever (5 % 3 !== 0), so it would never reflect again once
+    // pruning kicked in — the regression this test guards against.
+    expect(calls).toBe(2);
+  });
+
   it('never reflects when reflectEveryTicks is 0', async () => {
     const db = await createTestDb();
     const { tickReportRepo, tickReflectionRepo, agentPolicyRepo } = await harness(db);

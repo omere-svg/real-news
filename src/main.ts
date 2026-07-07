@@ -371,8 +371,10 @@ async function main(): Promise<void> {
           // Reason over the trailing window of ticks as a group; persist the note
           // AND act on it (ADR-0053): the model proposes bounded corrections, the
           // deterministic policy guard screens them, the loop applies what survives.
-          // Cadence is derived from the durable tick_reports count, not an
-          // in-memory counter, so it survives restarts/deploys (ADR-0042).
+          // Cadence is derived from tick_reports' durable max id (survives
+          // both restarts/deploys AND this same cycle's prune step above —
+          // see maybeReflect's docstring in pipeline/maintenance.ts), not an
+          // in-memory counter and not a row count (ADR-0042).
           name: 'reflect',
           run: () =>
             maybeReflect({

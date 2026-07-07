@@ -1,4 +1,4 @@
-import { count, desc, notInArray } from 'drizzle-orm';
+import { count, desc, max, notInArray } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { tickReports } from './schema.js';
 import type { SourceId } from '../domain/types.js';
@@ -51,9 +51,17 @@ export interface TickReportRepo {
   recent(limit: number): Promise<TickRecord[]>;
   /** Delete all but the most recent `keep` records (ADR-0042). Returns rows removed. */
   pruneToRecent(keep: number): Promise<number>;
-  /** Total persisted rows — the durable cadence source for reflection (ADR-0042);
-   * unlike an in-memory tick counter it survives restarts and deploys. */
+  /** Total persisted rows. Unlike an in-memory tick counter this survives
+   * restarts and deploys — but it is NOT the reflection cadence source (see
+   * `maxId`): pruning to a retention cap pins `count()` at the cap, which
+   * would freeze or corrupt a count-based cadence once the table fills up. */
   count(): Promise<number>;
+  /** The highest `id` ever assigned (0 if the table is empty) — monotonic,
+   * autoincrement PK, so it keeps growing even after `pruneToRecent` deletes
+   * old rows. This is the durable cadence source for reflection (ADR-0042): a
+   * newly-inserted row always survives that cycle's prune, so its id is
+   * always the current max regardless of how many older rows were pruned. */
+  maxId(): Promise<number>;
 }
 
 export class DrizzleTickReportRepo implements TickReportRepo {
@@ -105,6 +113,11 @@ export class DrizzleTickReportRepo implements TickReportRepo {
 
   async count(): Promise<number> {
     const [row] = await this.db.select({ n: count() }).from(tickReports);
+    return row?.n ?? 0;
+  }
+
+  async maxId(): Promise<number> {
+    const [row] = await this.db.select({ n: max(tickReports.id) }).from(tickReports);
     return row?.n ?? 0;
   }
 }

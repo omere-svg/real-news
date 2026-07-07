@@ -66,10 +66,19 @@ export function toTickDigest(r: TickRecord): TickDigest {
  * proposed corrective actions through the deterministic policy guard, apply
  * what survives, and persist a receipt (ADR-0042/0053).
  *
- * Cadence is derived from the durable count of persisted `tick_reports` rows,
- * not an in-memory counter (ADR-0042 audit fix (b)) — an in-memory `tickCount`
- * resets every deploy, so a process that restarts often (the common case in
- * prod) could go long stretches — or forever — without ever reflecting.
+ * Cadence is derived from the tick_reports table's durable max `id`, not an
+ * in-memory counter (ADR-0042 audit fix (b)) and not `count()` (post-ship
+ * hardening-pass fix): an in-memory `tickCount` resets every deploy, so a
+ * process that restarts often (the common case in prod) could go long
+ * stretches — or forever — without ever reflecting. `count()` has its own,
+ * subtler bug: the SAME maintenance cycle prunes `tick_reports` to the
+ * retention cap (see `main.ts`'s `maintain()`) before this runs, so once the
+ * table fills up, `count()` is pinned at the cap forever — reflection then
+ * fires every single tick (if `cap % reflectEveryTicks === 0`) or never again
+ * otherwise. `id` is an autoincrement PK, so it keeps growing even as old
+ * rows are pruned — the newest row always survives that cycle's prune, so its
+ * id is always the current max — giving a cadence that keeps advancing
+ * exactly like an unbounded row count would.
  *
  * The receipt is persisted whenever the model said anything worth keeping —
  * non-empty advisory text OR at least one accepted action (audit fix (a)) —
@@ -80,8 +89,8 @@ export function toTickDigest(r: TickRecord): TickDigest {
  */
 export async function maybeReflect(deps: ReflectionDeps): Promise<void> {
   if (deps.reflectEveryTicks <= 0) return;
-  const count = await deps.tickReportRepo.count();
-  if (count === 0 || count % deps.reflectEveryTicks !== 0) return;
+  const id = await deps.tickReportRepo.maxId();
+  if (id === 0 || id % deps.reflectEveryTicks !== 0) return;
 
   const recent = await deps.tickReportRepo.recent(deps.reflectWindow);
   const reflection = await deps.reflect({ ticks: recent.map(toTickDigest) });
