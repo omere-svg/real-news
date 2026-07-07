@@ -575,6 +575,28 @@ describe('Log in with Telegram + shared preferences (ADR-0040)', () => {
     expect(bigBody.error).toMatch(/topic/i);
   });
 
+  it('rate-limits /api/auth/start per IP: 429 after N requests in the window', async () => {
+    const { app } = await appWithAuth();
+    const headers = { 'x-forwarded-for': '203.0.113.9' };
+
+    // Default budget is 5/window; the fixed clock (now: () => 1000) keeps every
+    // call in the same window, so the 6th must be rejected.
+    for (let i = 0; i < 5; i++) {
+      const res = await app.request('/api/auth/start', { method: 'POST', headers });
+      expect(res.status).toBe(200);
+    }
+    const limited = await app.request('/api/auth/start', { method: 'POST', headers });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'too many requests; try again later' });
+
+    // A different IP is unaffected by the first IP's budget.
+    const other = await app.request('/api/auth/start', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '198.51.100.4' },
+    });
+    expect(other.status).toBe(200);
+  });
+
   it('logout ends the session', async () => {
     const { app, webAuth } = await appWithAuth();
     const start = await app.request('/api/auth/start', { method: 'POST' });

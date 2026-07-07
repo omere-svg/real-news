@@ -10,6 +10,7 @@ import type { TickReflectionRepo } from '../db/tick-reflection-repo.js';
 import type { ChatPreferencesRepo } from '../db/chat-preferences-repo.js';
 import { utcDay, type UsageRepo } from '../db/usage-repo.js';
 import type { WebAuthRepo } from '../db/web-auth-repo.js';
+import { FixedWindowLimiter, type RateLimiter } from '../telegram/rate-limiter.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import { canonical } from '../domain/vocab.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
@@ -70,6 +71,10 @@ export interface WebAuthOptions {
   readonly codeTtlMs?: number;
   /** Injectable time source (tests); defaults to `Date.now`. */
   readonly now?: () => number;
+  /** Per-IP budget for `/api/auth/start` (mints DB rows); default 5 per minute. */
+  readonly authStartLimit?: number;
+  /** Window for `authStartLimit`; default 60s. */
+  readonly authStartWindowMs?: number;
 }
 
 /** ~One tick — the "developed across ticks" threshold `/api/stats` counts against. */
@@ -78,6 +83,22 @@ const CROSS_TICK_MS = 25 * 60_000;
 const SESSION_COOKIE = 'horizon_session';
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 3600_000;
 const DEFAULT_CODE_TTL_MS = 10 * 60_000;
+const DEFAULT_AUTH_START_LIMIT = 5;
+const DEFAULT_AUTH_START_WINDOW_MS = 60_000;
+
+/**
+ * Best-effort client IP for rate limiting. The deploy sits behind Caddy
+ * (docs/DEPLOY-HTTPS.md), which sets `x-forwarded-for`; Node's raw socket
+ * address would just be Caddy's loopback, so the header is the only signal
+ * that actually distinguishes visitors. Take the first hop (the original
+ * client) and fall back to a shared bucket when the header is absent, e.g.
+ * direct-to-Node access in dev/tests.
+ */
+function clientIp(c: Context): string {
+  const fwd = c.req.header('x-forwarded-for');
+  const first = fwd?.split(',')[0]?.trim();
+  return first || 'unknown';
+}
 /** Unambiguous code alphabet (no 0/O/1/I) so a human can retype it into the bot. */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -264,6 +285,12 @@ function wireAuth(
   const now = auth.now ?? Date.now;
   const sessionTtlMs = auth.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const codeTtlMs = auth.codeTtlMs ?? DEFAULT_CODE_TTL_MS;
+  // /api/auth/start mints a web_sessions + link_codes row per POST, unauthenticated
+  // and otherwise unlimited — cap it per IP so a script can't flood the DB.
+  const authStartLimiter: RateLimiter = new FixedWindowLimiter(
+    auth.authStartLimit ?? DEFAULT_AUTH_START_LIMIT,
+    auth.authStartWindowMs ?? DEFAULT_AUTH_START_WINDOW_MS,
+  );
 
   /** The linked chat for the request's session cookie, or null when unauthenticated. */
   const currentChat = async (
@@ -279,6 +306,9 @@ function wireAuth(
   // Begin pairing: mint a session + short-lived code, set the cookie, and return
   // the code plus a deep link the visitor opens in Telegram to confirm.
   app.post('/api/auth/start', async (c) => {
+    if (!authStartLimiter.allow(clientIp(c), now())) {
+      return c.json({ error: 'too many requests; try again later' }, 429);
+    }
     const token = newToken();
     const code = newCode();
     // The pending session lives only as long as its code (ADR-0048); the cookie
