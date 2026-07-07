@@ -283,7 +283,7 @@ describe('HorizonBot', () => {
     await bot.handle(update(5, '/podcast')); // still over — no second notice
 
     expect(transport.audios).toHaveLength(1); // only the first delivered
-    const notices = transport.messages.filter((m) => /podcast limit/i.test(m.text));
+    const notices = transport.messages.filter((m) => /podcast allowance/i.test(m.text));
     expect(notices).toHaveLength(1); // notified exactly once
   });
 
@@ -300,7 +300,7 @@ describe('HorizonBot', () => {
     await bot.handle(update(6, '/brief')); // chat 6: global cmd exceeded → blocked
     await bot.handle(update(7, '/brief')); // chat 7: still over — no second notice
 
-    const notices = transport.messages.filter((m) => /across all users/i.test(m.text));
+    const notices = transport.messages.filter((m) => /across all readers/i.test(m.text));
     expect(notices).toHaveLength(1); // notified exactly once, then silent
     expect(notices[0]?.chatId).toBe(6);
   });
@@ -772,7 +772,7 @@ describe('HorizonBot', () => {
       await bot.handle(callback(5, 'podcast'));
       await bot.handle(callback(5, 'podcast')); // over quota
       expect(transport.audios).toHaveLength(1);
-      const notices = transport.messages.filter((m) => /podcast limit/i.test(m.text));
+      const notices = transport.messages.filter((m) => /podcast allowance/i.test(m.text));
       expect(notices).toHaveLength(1);
     });
 
