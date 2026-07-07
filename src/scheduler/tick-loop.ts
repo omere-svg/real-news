@@ -128,7 +128,32 @@ export class TickLoop {
 
   private async tickBody(): Promise<void> {
     const { deps } = this;
-    if (deps.lockEnabled && !(await deps.lock.acquire(deps.clock.now(), deps.lockTtlMs))) {
+    let acquired: boolean;
+    try {
+      // Guard lock.acquire itself (a transient DB error here used to be an
+      // unhandled rejection under `void this.runTick()` — it must degrade like
+      // every other tick failure, never kill the daemon).
+      acquired = deps.lockEnabled ? await deps.lock.acquire(deps.clock.now(), deps.lockTtlMs) : true;
+    } catch (err) {
+      deps.log.error('tick.failed', { err });
+      this.recordTick({
+        ranAt: deps.clock.now(),
+        durationMs: 0,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        extracted: 0,
+        storiesUpserted: 0,
+        signalsObserved: 0,
+        skipped: [],
+        failed: [],
+        signalsSkipped: [],
+        signalsFailed: [],
+      });
+      // The lock was never acquired, so there's nothing to release and no
+      // maintenance to run for a tick that made zero attempt.
+      return;
+    }
+    if (!acquired) {
       deps.log.warn('tick.lock_skip', { reason: 'another process holds the tick lock' });
       // Make the skip visible in tick_reports (ADR-0048): a remote observer must
       // be able to tell "skipped by lock" from "process dead".

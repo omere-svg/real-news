@@ -253,6 +253,31 @@ describe('TickLoop', () => {
     expect(log.events('error')).toContain('maintain.failed');
   });
 
+  it('tick loop survives a lock.acquire rejection and runs the next tick', async () => {
+    let calls = 0;
+    const acquire = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('DB connection reset');
+      return true;
+    });
+    const release = vi.fn().mockResolvedValue(undefined);
+    const { deps, recorded, log } = makeDeps({ lock: { acquire, release } });
+    const loop = new TickLoop(deps);
+
+    // The first tick's lock.acquire rejects — runTick must not itself reject
+    // (an unhandled rejection here, per `void this.runTick()`, would kill the daemon).
+    await expect(loop.runTick()).resolves.toBeUndefined();
+    expect(log.events('error')).toContain('tick.failed');
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ ok: false, error: expect.stringMatching(/DB connection reset/) });
+
+    // The loop is still alive: the next tick acquires the lock and runs normally.
+    await loop.runTick();
+    expect(log.events('info')).toContain('tick.ok');
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1]).toMatchObject({ ok: true });
+  });
+
   it('resumes the backoff clock from the seeded index', async () => {
     const backoffRecord = vi.fn().mockReturnValue([]);
     const { deps } = makeDeps({

@@ -669,6 +669,14 @@ function startTelegramBot(
   }, 60_000);
 }
 
+// Last-resort backstop: any promise rejection that somehow escapes every awaited
+// try/catch (a bug, not the expected path) must never silently kill the daemon —
+// that would contradict the "degrades instead of crashing" guarantee. Logging and
+// continuing is the final safety net, not a substitute for handling errors locally.
+process.on('unhandledRejection', (reason) => {
+  log.error('process.unhandled_rejection', { err: reason });
+});
+
 main().catch((err) => {
   log.error('main.fatal', { err });
   process.exit(1);
