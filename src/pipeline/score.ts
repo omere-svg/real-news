@@ -10,7 +10,7 @@ import { dedupText } from './embed.js';
 import { mapWithConcurrency, DEFAULT_CONFIRM_CONCURRENCY } from './concurrency.js';
 import { representativeOf } from '../domain/cluster.js';
 import type { Clock } from '../scheduler/clock.js';
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Cluster, Signals, SourceId } from '../domain/types.js';
 import type { ScoredCluster } from './types.js';
 
@@ -81,7 +81,7 @@ export function assembleSignals(
  */
 export async function score(
   clusters: readonly Cluster[],
-  llm: LLMClient,
+  llm: PipelineReasoner,
   ctx: ScoreContext,
 ): Promise<ScoredCluster[]> {
   const now = ctx.clock.now();

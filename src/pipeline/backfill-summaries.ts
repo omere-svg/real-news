@@ -1,6 +1,6 @@
 import type { StoryRepo } from '../db/story-repo.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { RawItemRef, Story } from '../domain/types.js';
 import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import { representativeRefOf } from '../domain/cluster.js';
@@ -17,7 +17,7 @@ import { representativeRefOf } from '../domain/cluster.js';
 export interface BackfillDeps {
   readonly storyRepo: StoryRepo;
   readonly rawItemRepo: RawItemRepo;
-  readonly llm: LLMClient;
+  readonly llm: PipelineReasoner;
 }
 
 export interface BackfillOptions {

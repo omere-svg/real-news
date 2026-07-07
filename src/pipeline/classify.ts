@@ -1,4 +1,4 @@
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { RawItem } from '../domain/types.js';
 import type { ClassifiedItem } from './types.js';
 import { mapWithConcurrency, DEFAULT_CONFIRM_CONCURRENCY } from './concurrency.js';
@@ -11,7 +11,7 @@ import { mapWithConcurrency, DEFAULT_CONFIRM_CONCURRENCY } from './concurrency.j
  */
 export async function classify(
   items: readonly RawItem[],
-  llm: LLMClient,
+  llm: PipelineReasoner,
   concurrency: number = DEFAULT_CONFIRM_CONCURRENCY,
 ): Promise<ClassifiedItem[]> {
   return mapWithConcurrency(items, concurrency, (item) => classifyItem(item, llm));
@@ -19,7 +19,7 @@ export async function classify(
 
 async function classifyItem(
   item: RawItem,
-  llm: LLMClient,
+  llm: PipelineReasoner,
 ): Promise<ClassifiedItem> {
   const { topic } = item.metadata;
 

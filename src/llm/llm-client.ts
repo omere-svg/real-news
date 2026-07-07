@@ -1,104 +1,56 @@
 import type { Topic } from '../domain/types.js';
 
 /**
- * The Reasoner seam (ADR-0006). All model access — both tiers — lives behind
- * this interface so the pipeline is fully unit-testable with a FakeLLM and
- * never calls the network in tests. The tier (Haiku vs Opus) is an
- * implementation detail of the adapter, selected per method.
+ * The Reasoner seam (ADR-0006), split into ROLE interfaces so each consumer
+ * depends only on the model capabilities it actually uses (ADR-0052) — the tick
+ * pipeline can't reach the bot's NLU, and vice versa. All model access lives
+ * behind these so callers are fully unit-testable with a FakeLLM and never touch
+ * the network in tests. The tier (cheap vs deep) is an adapter detail, per method.
  */
-export interface LLMClient {
-  /**
-   * Cheap tier (Haiku): classify a free-form item when metadata-first
-   * classification (ADR-0009) came up empty.
-   */
+
+/** The model capabilities the tick PIPELINE uses (classify → confirm → score → analyze). */
+export interface PipelineReasoner {
+  /** Cheap tier: classify a free-form item when metadata-first classification (ADR-0009) is empty. */
   classify(input: ClassifyInput): Promise<Classification>;
-
-  /**
-   * Cheap tier (Haiku): confirm whether two candidate items are the same
-   * Story. Called only on embedding-blocked candidate pairs (ADR-0007).
-   */
+  /** Cheap tier: confirm whether two candidate items are the same Story (ADR-0007). */
   confirmSameStory(a: StoryStub, b: StoryStub): Promise<boolean>;
-
-  /**
-   * Cheap tier: estimate a story's real-world impact in [0, 1] — casualties,
-   * disaster scale, major economic/geopolitical stakes (ADR-0034). An inspectable
-   * extracted input to the deterministic score, not a final rating.
-   */
+  /** Cheap tier: estimate real-world impact in [0,1] — an inspectable score input, not a rating (ADR-0034). */
   assessImpact(input: ImpactInput): Promise<number>;
-
-  /**
-   * Expensive tier (Opus): in one call, write both a factual "what happened"
-   * summary and the editorial "why it matters" justification. Called only on the
-   * top-N most significant Clusters per tick.
-   */
+  /** Deep tier: write the factual summary + "why it matters" for the top-N Clusters. */
   analyze(input: AnalyzeInput): Promise<StoryAnalysis>;
+}
 
-  /**
-   * Expensive tier (Opus): turn a budgeted text brief into spoken-flow podcast
-   * narration (ADR-0014). Read-path only artifact that touches the model.
-   */
-  narrate(input: NarrateInput): Promise<string>;
-
-  /**
-   * Cheap tier (Haiku): interpret a user's free-text feedback into a structured
-   * preference intent (ADR-0026). Pure NLU — it names directions, never numbers;
-   * the deterministic weight math lives in `applyFeedback`.
-   */
+/** The model capabilities the BOT's conversational surface uses (ADR-0026/0029/0030). */
+export interface ChatReasoner {
+  /** Cheap tier: interpret free-text feedback into a preference intent (ADR-0026). */
   interpretFeedback(input: FeedbackInput): Promise<FeedbackIntent>;
-
-  /**
-   * Deep tier: answer a user's follow-up question about the news, grounded in
-   * the Stories drawn from the cache (and optional web results when the cache
-   * came up short). Reports whether the cache alone sufficed so the caller can
-   * escalate to a web search (ADR-0029).
-   */
+  /** Deep tier: answer a question grounded in cache stories (+ optional web) (ADR-0029). */
   discuss(input: DiscussInput): Promise<DiscussResult>;
-
-  /**
-   * Cheap tier: map a free-text message to the single action the user wants
-   * (ADR-0030), so plain English and tapped buttons drive the bot instead of
-   * slash commands. Pure intent classification — it names the action and pulls
-   * out minutes/topic; the dispatcher does the work behind the existing seams.
-   */
+  /** Cheap tier: map a free-text message to a single action (ADR-0030). */
   routeIntent(input: RouteInput): Promise<RouterIntent>;
-
-  /**
-   * Cheap tier: interpret a plain-language request to change the hard
-   * preference filters (ADR-0030) — set/add/remove topics, set the default
-   * budget. Names the change; the bot validates against the controlled
-   * vocabulary and merges it. Distinct from `interpretFeedback` (soft weights).
-   */
+  /** Cheap tier: interpret a plain-language hard-preference edit (ADR-0030). */
   interpretPrefs(input: PrefsInput): Promise<PrefsPatch>;
+}
 
-  /**
-   * Deep tier: read the last few tick outcomes as a group and write a short
-   * operator advisory — recurring failures, throughput drift, and concrete
-   * things to improve (ADR-0042). An internal ops aid, not user-facing content;
-   * runs infrequently (every N ticks) so its cost is negligible.
-   */
+/** Deep tier: turn a budgeted brief into spoken-flow podcast narration (ADR-0014). */
+export interface Narrator {
+  narrate(input: NarrateInput): Promise<string>;
+}
+
+/** Deep tier: read recent tick outcomes as a group and write an operator advisory (ADR-0042). */
+export interface Reflector {
   reflect(input: ReflectInput): Promise<string>;
 }
 
-/**
- * The narrow seam the Telegram bot depends on for feedback (ADR-0026) — it has
- * no business calling classify/analyze/narrate. Any `LLMClient` satisfies it.
- */
-export type FeedbackInterpreter = Pick<LLMClient, 'interpretFeedback'>;
+/** The full Reasoner — the intersection of every role. `Reasoner` implements this;
+ * consumers should depend on the narrowest role they need, not this union. */
+export interface LLMClient extends PipelineReasoner, ChatReasoner, Narrator, Reflector {}
 
-/** The narrow seam the bot depends on for chat (ADR-0029). */
-export type Discussant = Pick<LLMClient, 'discuss'>;
-
-/** The narrow seam the bot depends on for natural-language routing (ADR-0030). */
-export type IntentRouter = Pick<LLMClient, 'routeIntent'>;
-
-/** The narrow seam the bot depends on for plain-language preference edits (ADR-0030). */
-export type PreferencesInterpreter = Pick<LLMClient, 'interpretPrefs'>;
-
-/** The narrow seam the Presentation layer depends on for podcast narration (ADR-0014). */
-export type Narrator = Pick<LLMClient, 'narrate'>;
-
-/** The narrow seam the tick loop depends on for the reflection advisor (ADR-0042). */
-export type Reflector = Pick<LLMClient, 'reflect'>;
+/** Even-narrower single-capability seams the bot's optional deps use (ADR-0026-0030). */
+export type FeedbackInterpreter = Pick<ChatReasoner, 'interpretFeedback'>;
+export type Discussant = Pick<ChatReasoner, 'discuss'>;
+export type IntentRouter = Pick<ChatReasoner, 'routeIntent'>;
+export type PreferencesInterpreter = Pick<ChatReasoner, 'interpretPrefs'>;
 
 // --- Reflection over recent ticks (ADR-0042) ---
 

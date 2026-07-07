@@ -1,4 +1,4 @@
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Cluster } from '../domain/types.js';
 import { cosine } from '../embedding/cosine.js';
 import { dedupText } from './embed.js';
@@ -68,7 +68,7 @@ export function candidatePairs(
  */
 export async function cluster(
   items: readonly EmbeddedItem[],
-  llm: LLMClient,
+  llm: PipelineReasoner,
   opts: ClusterOptions,
 ): Promise<Cluster[]> {
   const parent = items.map((_, i) => i);

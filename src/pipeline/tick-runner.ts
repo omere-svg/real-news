@@ -14,7 +14,7 @@ import type { SignalSource } from '../sources/signal-source.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
 import type { StoryRepo, StoryUpsert } from '../db/story-repo.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Embedder } from '../embedding/embedder.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SourceId } from '../domain/types.js';
@@ -52,7 +52,7 @@ export interface TickRunnerDeps {
   readonly storyRepo: StoryRepo;
   /** Persisted Signal history for trend enrichment (ADR-0044); absent ⇒ snapshot-only. */
   readonly signalObservationRepo?: SignalObservationRepo;
-  readonly llm: LLMClient;
+  readonly llm: PipelineReasoner;
   readonly embedder: Embedder;
   readonly clock: Clock;
   readonly config: TickConfig;

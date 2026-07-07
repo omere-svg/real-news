@@ -4,7 +4,7 @@ import { DEFAULT_CONFIRM_CONCURRENCY, mapWithConcurrency } from './concurrency.j
 import type { Cluster, RawItem, RawItemRef, Topic } from '../domain/types.js';
 import type { StoredVector, StoryRepo } from '../db/story-repo.js';
 import type { RawItemRepo } from '../db/raw-item-repo.js';
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { EmbeddedItem } from './types.js';
 
@@ -29,7 +29,7 @@ export interface IdentifiedCluster {
 export interface ResolveDeps {
   readonly storyRepo: StoryRepo;
   readonly rawItemRepo: RawItemRepo;
-  readonly llm: LLMClient;
+  readonly llm: PipelineReasoner;
   readonly clock: Clock;
 }
 

@@ -1,5 +1,5 @@
 import { representativeOf } from '../domain/cluster.js';
-import type { LLMClient } from '../llm/llm-client.js';
+import type { PipelineReasoner } from '../llm/llm-client.js';
 import type { AnalyzedCluster, ScoredCluster } from './types.js';
 
 /**
@@ -10,7 +10,7 @@ import type { AnalyzedCluster, ScoredCluster } from './types.js';
  */
 export async function analyze(
   clusters: readonly ScoredCluster[],
-  llm: LLMClient,
+  llm: PipelineReasoner,
   topN: number,
 ): Promise<AnalyzedCluster[]> {
   const topIndices = new Set(
