@@ -90,6 +90,15 @@ export class QuotaGuard {
     const day = utcDay(now);
     const { usage, transport, limits } = this;
 
+    // Peek (no charge) the per-chat counter first: if this chat is already over
+    // its own daily cap, the notify-once boundary already fired on the call that
+    // first crossed it, so refuse immediately without touching either counter —
+    // otherwise a chat stuck over its per-chat cap would burn one `global:cmd`
+    // unit on every subsequent refused command, draining the shared global pool
+    // across chats. Mirrors the podcast path's peek-before-charge shape below.
+    const mineSoFar = await usage.peek(`chat:${chatId}:cmd`, day);
+    if (mineSoFar > limits.commandsPerDay) return false;
+
     // Process-wide daily ceiling across all chats — the hard total-cost backstop
     // that makes openAccess safe (bounds the chat/discuss LLM spend too). ADR-0031.
     // Charged (and gated) *before* the per-chat counter so a globally-blocked

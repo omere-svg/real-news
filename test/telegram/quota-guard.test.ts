@@ -59,4 +59,18 @@ describe('QuotaGuard (ADR-0052)', () => {
     expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(false); // global blocks
     expect(await usage.peek('chat:1:cmd', '1970-01-01')).toBe(0); // personal untouched
   });
+
+  it('a chat over its per-chat cap does not consume the global command pool on repeated refusals', async () => {
+    const { g, usage, transport } = await guard({ commandsPerDay: 2 });
+    expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(true);
+    expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(true);
+    expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(false); // boundary crossing: notifies
+    const globalAfterFirstRefusal = await usage.peek('global:cmd', '1970-01-01');
+
+    expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(false); // repeated refusal
+    expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(false); // repeated refusal
+
+    expect(await usage.peek('global:cmd', '1970-01-01')).toBe(globalAfterFirstRefusal); // unchanged
+    expect(transport.msgs.filter((m) => /limit/i.test(m))).toHaveLength(1); // no re-notification
+  });
 });
