@@ -16,12 +16,43 @@ export interface BackoffOptions {
  * a single success clears its streak. Pure and deterministic: the loop calls
  * `record()` after each tick and `activeBackoffs()` before the next.
  */
+/** The per-tick outcome shape `seed` replays — a subset of a stored TickReport. */
+export interface BackoffHistoryTick {
+  readonly skipped: readonly SourceId[];
+  readonly failed: readonly { readonly source: SourceId }[];
+}
+
 export class AdaptiveBackoff {
   private readonly consecutive = new Map<SourceId, number>();
   /** tick index up to (and including) which a source stays skipped. */
   private readonly until = new Map<SourceId, number>();
 
   constructor(private readonly opts: BackoffOptions) {}
+
+  /**
+   * Rehydrate streaks from persisted tick reports (ADR-0053), oldest first, so
+   * a restart/deploy doesn't amnesia the adapt loop. Backed-off sources are
+   * absent from a stored report (they were never attempted), so replaying
+   * `skipped ∪ failed` against the full source list is conservative: a source
+   * mid-cooldown at shutdown resumes with a clean streak at worst. Returns the
+   * tick index the live loop should continue from.
+   */
+  seed(history: readonly BackoffHistoryTick[], sources: readonly SourceId[]): number {
+    history.forEach((t, i) => {
+      this.record(i, sources, [...t.skipped, ...t.failed.map((f) => f.source)]);
+    });
+    return history.length;
+  }
+
+  /**
+   * Impose a backoff directly (ADR-0053) — the reflection→action path, where a
+   * screened LLM proposal rests a source without waiting for the 3-strikes
+   * counter. Same cooldown bookkeeping as an earned backoff.
+   */
+  force(source: SourceId, fromTick: number, ticks: number): void {
+    this.until.set(source, fromTick + ticks - 1);
+    this.consecutive.delete(source);
+  }
 
   /** Source ids to skip at `tick` because they are still cooling down. */
   activeBackoffs(tick: number): Set<SourceId> {

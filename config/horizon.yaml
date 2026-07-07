@@ -56,7 +56,9 @@ sources:
     maxItems: 20
   - id: nber            # NBER working papers — academic economics
     enabled: true
-    weight: 0.7
+    weight: 0.55        # aligned with arxiv: academic prestige ≠ news authority —
+                        # at 0.7 fresh working papers outranked mass-casualty storms
+                        # (live calibration finding); WHO 0.75 / USGS 0.7 stay above
     maxItems: 15
   - id: nature          # Nature — top-journal science headlines
     enabled: true

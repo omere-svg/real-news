@@ -252,8 +252,15 @@ describe('Reasoner', () => {
     expect(intent.length).toBeNull(); // bad length coerced to null, not a throw
   });
 
-  it('reflect: summarizes recent ticks on the deep tier (ADR-0042)', async () => {
-    const t = new FakeTransport({}, 'GDELT keeps failing — check its rate limit.');
+  it('reflect: returns the advisory + whitelisted actions on the deep tier (ADR-0042/0053)', async () => {
+    const t = new FakeTransport({
+      advisory: 'GDELT keeps failing — check its rate limit.',
+      actions: [
+        { type: 'backoff_source', source: 'gdelt', ticks: 5, reason: '429s every tick' },
+        { type: 'reboot_the_server', reason: 'nonsense' }, // not in the vocabulary → dropped
+        { type: 'set_deep_analysis_top_n', value: 6, reason: 'ticks run long' },
+      ],
+    });
     const out = await new Reasoner(t).reflect({
       ticks: [
         {
@@ -270,15 +277,32 @@ describe('Reasoner', () => {
       ],
     });
 
-    expect(out).toContain('GDELT');
-    expect(t.calls[0]?.kind).toBe('text');
+    expect(out.advisory).toContain('GDELT');
+    expect(out.actions).toEqual([
+      { type: 'backoff_source', source: 'gdelt', ticks: 5, reason: '429s every tick' },
+      { type: 'set_deep_analysis_top_n', value: 6, reason: 'ticks run long' },
+    ]);
+    expect(t.calls[0]?.kind).toBe('json');
     expect(t.calls[0]?.opts.tier).toBe('deep');
     expect(t.calls[0]?.prompt).toContain('gdelt'); // the tick digest is in the prompt
   });
 
+  it('reflect: a malformed reply degrades to advisory-only, never a throw (ADR-0053)', async () => {
+    const t = new FakeTransport({ advisory: 42, actions: 'not-an-array' });
+    const out = await new Reasoner(t).reflect({
+      ticks: [
+        {
+          ranAt: 0, ok: true, durationMs: 1, extracted: 1, storiesUpserted: 1,
+          signalsObserved: 0, skipped: [], failed: [], error: null,
+        },
+      ],
+    });
+    expect(out).toEqual({ advisory: '', actions: [] });
+  });
+
   it('reflect: returns empty for no ticks without calling the model', async () => {
     const t = new FakeTransport({}, 'unused');
-    expect(await new Reasoner(t).reflect({ ticks: [] })).toBe('');
+    expect(await new Reasoner(t).reflect({ ticks: [] })).toEqual({ advisory: '', actions: [] });
     expect(t.calls).toHaveLength(0);
   });
 });

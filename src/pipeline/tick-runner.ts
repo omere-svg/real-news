@@ -80,7 +80,14 @@ export interface TickReport {
 export class TickRunner {
   constructor(private readonly deps: TickRunnerDeps) {}
 
-  async run(opts: { skipSources?: ReadonlySet<SourceId> } = {}): Promise<TickReport> {
+  async run(
+    opts: {
+      skipSources?: ReadonlySet<SourceId>;
+      /** Per-run override of the deep-analysis budget — the reflection→action
+       * loop's screened policy (ADR-0053); defaults to config. */
+      deepAnalysisTopN?: number;
+    } = {},
+  ): Promise<TickReport> {
     const { rawItemRepo, storyRepo, llm, embedder, clock, config } = this.deps;
 
     // Adaptive backoff (ADR-0052): the loop may ask us to skip Sources that have
@@ -145,7 +152,7 @@ export class TickRunner {
       maxSignalAdjustment: config.maxSignalAdjustment ?? 0,
       ...(config.confirmConcurrency ? { concurrency: config.confirmConcurrency } : {}),
     });
-    const analyzed = await analyze(scored, llm, config.deepAnalysisTopN);
+    const analyzed = await analyze(scored, llm, opts.deepAnalysisTopN ?? config.deepAnalysisTopN);
 
     // The deep tier only analyzes the top-N this tick; every other Story re-upserts
     // with null analysis. Read the current analysis first so a cheap re-run keeps

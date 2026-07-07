@@ -36,4 +36,51 @@ describe('AdaptiveBackoff (observe→adapt loop, ADR-0052)', () => {
     expect(newly).toEqual(['gdelt']);
     expect(b.activeBackoffs(2)).toEqual(new Set(['gdelt'])); // arxiv never backed off
   });
+
+  describe('force — reflection-imposed backoff (ADR-0053)', () => {
+    it('rests the source for exactly the given ticks, then retries', () => {
+      const b = new AdaptiveBackoff(opts);
+      b.force('gdelt', 5, 3);
+      expect(b.activeBackoffs(5).has('gdelt')).toBe(true);
+      expect(b.activeBackoffs(7).has('gdelt')).toBe(true);
+      expect(b.activeBackoffs(8).has('gdelt')).toBe(false); // cooldown over
+    });
+  });
+
+  describe('seed — rehydrate streaks from persisted tick history (ADR-0053)', () => {
+    it('replays persisted tick outcomes so a deploy does not reset streaks', () => {
+      const b = new AdaptiveBackoff(opts);
+      // Three persisted ticks (oldest first), gdelt failing in each.
+      const next = b.seed(
+        [
+          { skipped: ['gdelt'], failed: [] },
+          { skipped: [], failed: [{ source: 'gdelt' }] },
+          { skipped: ['gdelt'], failed: [] },
+        ],
+        ['gdelt', 'arxiv'],
+      );
+      expect(next).toBe(3); // the loop resumes at the next tick index
+      expect(b.activeBackoffs(next).has('gdelt')).toBe(true); // still cooling down
+      expect(b.activeBackoffs(next).has('arxiv')).toBe(false); // arxiv succeeded throughout
+    });
+
+    it('a success inside the history resets the streak, as live observation would', () => {
+      const b = new AdaptiveBackoff(opts);
+      const next = b.seed(
+        [
+          { skipped: ['gdelt'], failed: [] },
+          { skipped: [], failed: [] }, // recovered
+          { skipped: ['gdelt'], failed: [] },
+        ],
+        ['gdelt'],
+      );
+      expect(b.activeBackoffs(next).has('gdelt')).toBe(false); // streak is 1, not 3
+    });
+
+    it('seeding an empty history is a no-op starting at tick 0', () => {
+      const b = new AdaptiveBackoff(opts);
+      expect(b.seed([], ['gdelt'])).toBe(0);
+      expect(b.activeBackoffs(0).size).toBe(0);
+    });
+  });
 });

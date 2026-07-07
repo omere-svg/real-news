@@ -1,4 +1,4 @@
-import { desc, inArray, lt } from 'drizzle-orm';
+import { count, desc, inArray, lt, min } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { signalObservations } from './schema.js';
 import type { SignalObservation } from '../domain/types.js';
@@ -8,6 +8,15 @@ import type { SignalObservation } from '../domain/types.js';
  * so scoring can reward a **rising** series (a trend) over a flat one, and prunes
  * to a bounded recent window so history never grows without bound (ADR-0042).
  */
+/** Read-only accumulation counters for `/api/stats` — how much Signal history
+ * the system has built up (ADR-0044). */
+export interface SignalObservationStats {
+  /** Total persisted observations across all series. */
+  readonly observations: number;
+  /** Epoch ms of the oldest stored observation; null when history is empty. */
+  readonly oldestObservedAt: number | null;
+}
+
 export interface SignalObservationRepo {
   /** Append this tick's observations. */
   record(observations: readonly SignalObservation[]): Promise<void>;
@@ -19,6 +28,8 @@ export interface SignalObservationRepo {
   priorValues(keys: readonly string[]): Promise<Map<string, number>>;
   /** Delete observations older than `beforeMs`. Returns the number removed. */
   pruneOlderThan(beforeMs: number): Promise<number>;
+  /** Cheap COUNT/MIN accumulation stats for the public `/api/stats` endpoint. */
+  stats(): Promise<SignalObservationStats>;
 }
 
 export class DrizzleSignalObservationRepo implements SignalObservationRepo {
@@ -56,6 +67,13 @@ export class DrizzleSignalObservationRepo implements SignalObservationRepo {
       if (!out.has(r.key)) out.set(r.key, r.value);
     }
     return out;
+  }
+
+  async stats(): Promise<SignalObservationStats> {
+    const [row] = await this.db
+      .select({ n: count(), oldest: min(signalObservations.observedAt) })
+      .from(signalObservations);
+    return { observations: row?.n ?? 0, oldestObservedAt: row?.oldest ?? null };
   }
 
   async pruneOlderThan(beforeMs: number): Promise<number> {

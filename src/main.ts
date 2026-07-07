@@ -15,6 +15,7 @@ import { DrizzleTickReportRepo, lockSkipRecord } from './db/tick-report-repo.js'
 import type { TickRecord } from './db/tick-report-repo.js';
 import { DrizzleSignalObservationRepo } from './db/signal-observation-repo.js';
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
+import { DrizzleAgentPolicyRepo } from './db/agent-policy-repo.js';
 import { DrizzleTickLock } from './db/tick-lock-repo.js';
 import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
@@ -53,6 +54,7 @@ import type { Embedder } from './embedding/embedder.js';
 import { systemClock } from './scheduler/clock.js';
 import { TickRunner } from './pipeline/tick-runner.js';
 import { AdaptiveBackoff } from './pipeline/adaptive-backoff.js';
+import { screenReflectionActions } from './pipeline/reflection-policy.js';
 import { backfillSummaries } from './pipeline/backfill-summaries.js';
 import { createApp } from './server/app.js';
 import { HorizonQuery } from './presentation/horizon-query.js';
@@ -230,6 +232,7 @@ async function main(): Promise<void> {
   const tickReportRepo = new DrizzleTickReportRepo(db);
   const signalObservationRepo = new DrizzleSignalObservationRepo(db);
   const tickReflectionRepo = new DrizzleTickReflectionRepo(db);
+  const agentPolicyRepo = new DrizzleAgentPolicyRepo(db);
   // Shared across the web viewer and the Telegram bot so a linked user sees the
   // same preferences on both surfaces (ADR-0040).
   const chatPrefs = new DrizzleChatPreferencesRepo(db);
@@ -299,14 +302,50 @@ async function main(): Promise<void> {
     if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
 
     if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
-      // Reason over the trailing window of ticks as a group and persist the note.
+      // Reason over the trailing window of ticks as a group; persist the note
+      // AND act on it (ADR-0053): the model proposes bounded corrections, the
+      // deterministic policy guard screens them, the loop applies what survives.
       const recent = await tickReportRepo.recent(retention.reflectWindow);
-      const text = (await llm.reflect({ ticks: recent.map(toTickDigest) })).trim();
+      const reflection = await llm.reflect({ ticks: recent.map(toTickDigest) });
+      const accepted = screenReflectionActions(reflection.actions, {
+        validSources: storySourceIds,
+        topN: { min: 3, max: 15 },
+        maxBackoffTicks: 10,
+      });
+      for (const b of accepted.backoffs) {
+        backoff.force(b.source, tickIndex + 1, b.ticks);
+        console.log(`[reflect] action: backing off ${b.source} for ${b.ticks} ticks — ${b.reason}`);
+      }
+      if (accepted.deepAnalysisTopN) {
+        await agentPolicyRepo.set(
+          { deepAnalysisTopN: accepted.deepAnalysisTopN.value, reason: accepted.deepAnalysisTopN.reason },
+          systemClock.now(),
+        );
+        console.log(
+          `[reflect] action: deepAnalysisTopN → ${accepted.deepAnalysisTopN.value} — ${accepted.deepAnalysisTopN.reason}`,
+        );
+      }
+      for (const r of accepted.rejected) {
+        console.warn(`[reflect] rejected proposed action (${r.why}):`, r.action);
+      }
+      const text = reflection.advisory.trim();
       if (text) {
         await tickReflectionRepo.record({
           createdAt: systemClock.now(),
           ticksCovered: recent.length,
           text,
+          actions: [
+            ...accepted.backoffs.map((b) => ({
+              type: 'backoff_source', reason: b.reason, source: b.source, ticks: b.ticks,
+            })),
+            ...(accepted.deepAnalysisTopN
+              ? [{
+                  type: 'set_deep_analysis_top_n',
+                  reason: accepted.deepAnalysisTopN.reason,
+                  value: accepted.deepAnalysisTopN.value,
+                }]
+              : []),
+          ],
         });
         if (retention.reflections > 0) {
           await tickReflectionRepo.pruneToRecent(retention.reflections);
@@ -324,8 +363,21 @@ async function main(): Promise<void> {
 
   // Adaptive per-source backoff (ADR-0052): after 3 consecutive failing ticks a
   // Source cools down for 3 ticks, then auto-retries. Closes the observe→adapt loop.
+  // Seeded from the persisted tick history (ADR-0053) so a deploy — the loop's most
+  // frequent restart — doesn't amnesia the streaks it just learned.
   const backoff = new AdaptiveBackoff({ threshold: 3, cooldownTicks: 3 });
   let tickIndex = 0;
+  try {
+    const history = (await tickReportRepo.recent(6)).reverse(); // oldest first
+    tickIndex = backoff.seed(
+      history.map((t) => ({ skipped: t.skipped, failed: t.failed })),
+      storySourceIds,
+    );
+    const active = backoff.activeBackoffs(tickIndex);
+    if (active.size) console.log(`[backoff] rehydrated from history; cooling down: [${[...active]}]`);
+  } catch (err) {
+    console.error('[backoff] seed from tick history failed (starting fresh):', err);
+  }
 
   // Release the advisory lock on shutdown (ADR-0048). systemd restarts (every
   // deploy) land mid-tick about half the time; without this the dying process
@@ -363,8 +415,14 @@ async function main(): Promise<void> {
     // fetch this tick. They auto-retry when the cooldown lapses.
     const backedOff = backoff.activeBackoffs(tickIndex);
     if (backedOff.size) console.log(`[backoff] skipping cooling-down sources: [${[...backedOff]}]`);
+    // The persisted reflection policy (ADR-0053): a screened override the last
+    // reflection imposed — read fresh each tick so it survives restarts.
+    const policy = await agentPolicyRepo.get().catch(() => null);
     try {
-      const report = await runner.run({ skipSources: backedOff });
+      const report = await runner.run({
+        skipSources: backedOff,
+        ...(policy?.deepAnalysisTopN ? { deepAnalysisTopN: policy.deepAnalysisTopN } : {}),
+      });
       recordTick({ ...report, ranAt, durationMs: systemClock.now() - ranAt, ok: true, error: null });
       // Feed the outcome back into the loop: sources attempted this tick that
       // failed or were health-skipped advance toward backoff; successes reset.

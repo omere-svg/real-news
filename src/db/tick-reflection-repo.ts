@@ -1,16 +1,19 @@
 import { desc, notInArray } from 'drizzle-orm';
 import type { Db } from './client.js';
-import { tickReflections } from './schema.js';
+import { tickReflections, type StoredReflectionAction } from './schema.js';
 
 /**
  * One persisted reflection advisory (ADR-0042): the LLM's conclusions drawn from
  * a group of recent ticks, with when it was written and how many ticks it covered.
+ * `actions` (ADR-0053) records what the reflection proposed AND the loop applied —
+ * the receipt that reflection changes behavior, not just the dashboard.
  */
 export interface TickReflection {
   readonly id: number;
   readonly createdAt: number;
   readonly ticksCovered: number;
   readonly text: string;
+  readonly actions: readonly StoredReflectionAction[];
 }
 
 /** What the loop hands the repo to persist a fresh reflection. */
@@ -18,6 +21,7 @@ export interface TickReflectionInput {
   readonly createdAt: number;
   readonly ticksCovered: number;
   readonly text: string;
+  readonly actions?: readonly StoredReflectionAction[];
 }
 
 /** The reflection store (ADR-0042). */
@@ -37,6 +41,7 @@ export class DrizzleTickReflectionRepo implements TickReflectionRepo {
       createdAt: rec.createdAt,
       ticksCovered: rec.ticksCovered,
       text: rec.text,
+      actions: [...(rec.actions ?? [])],
     });
   }
 
@@ -51,6 +56,7 @@ export class DrizzleTickReflectionRepo implements TickReflectionRepo {
       createdAt: r.createdAt,
       ticksCovered: r.ticksCovered,
       text: r.text,
+      actions: r.actions ?? [],
     }));
   }
 

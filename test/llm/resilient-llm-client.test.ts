@@ -88,6 +88,6 @@ describe('ResilientLLMClient', () => {
       summary: '',
     }); // no-op patch: the preference edit didn't land, change nothing
 
-    expect(await llm.reflect({ ticks: [] })).toBe(''); // skip the advisory on an outage
+    expect(await llm.reflect({ ticks: [] })).toEqual({ advisory: '', actions: [] }); // skip the advisory on an outage
   });
 });

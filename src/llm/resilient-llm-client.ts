@@ -12,6 +12,7 @@ import type {
   PrefsInput,
   PrefsPatch,
   ReflectInput,
+  Reflection,
   RouteInput,
   RouterIntent,
   StoryAnalysis,
@@ -100,8 +101,9 @@ export class ResilientLLMClient implements LLMClient {
     });
   }
 
-  reflect(input: ReflectInput): Promise<string> {
-    // An advisory failure is non-critical; skip this cycle's reflection.
-    return this.guard('reflect', (d) => d.reflect(input), '');
+  reflect(input: ReflectInput): Promise<Reflection> {
+    // An advisory failure is non-critical; skip this cycle's reflection —
+    // and never let a degraded reflection propose actions (ADR-0053).
+    return this.guard('reflect', (d) => d.reflect(input), { advisory: '', actions: [] });
   }
 }

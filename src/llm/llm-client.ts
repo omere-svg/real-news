@@ -37,9 +37,12 @@ export interface Narrator {
   narrate(input: NarrateInput): Promise<string>;
 }
 
-/** Deep tier: read recent tick outcomes as a group and write an operator advisory (ADR-0042). */
+/**
+ * Deep tier: read recent tick outcomes as a group, write an operator advisory,
+ * and propose bounded corrective actions the loop may apply (ADR-0042/0053).
+ */
 export interface Reflector {
-  reflect(input: ReflectInput): Promise<string>;
+  reflect(input: ReflectInput): Promise<Reflection>;
 }
 
 /** The full Reasoner — the intersection of every role. `Reasoner` implements this;
@@ -70,6 +73,33 @@ export interface TickDigest {
 export interface ReflectInput {
   /** The recent ticks to reason over, newest first. */
   readonly ticks: readonly TickDigest[];
+}
+
+/**
+ * A corrective action the reflection proposes (ADR-0053). The vocabulary is a
+ * closed whitelist and every magnitude is re-clamped by the deterministic
+ * policy guard before anything is applied — the model proposes, the guard
+ * disposes. Unknown types are dropped at the schema boundary.
+ */
+export type ReflectionAction =
+  | {
+      /** Rest a repeatedly-failing source for a bounded number of ticks. */
+      readonly type: 'backoff_source';
+      readonly source: string;
+      readonly ticks: number;
+      readonly reason: string;
+    }
+  | {
+      /** Re-aim the deep-analysis budget (clamped to the guard's bounds). */
+      readonly type: 'set_deep_analysis_top_n';
+      readonly value: number;
+      readonly reason: string;
+    };
+
+/** What a reflection returns: the human-readable advisory + proposed actions. */
+export interface Reflection {
+  readonly advisory: string;
+  readonly actions: readonly ReflectionAction[];
 }
 
 export interface ClassifyInput {

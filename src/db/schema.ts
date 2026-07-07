@@ -169,9 +169,81 @@ export const tickReflections = sqliteTable(
     ticksCovered: integer('ticks_covered').notNull(),
     /** The advisory text (concise markdown/plain text). */
     text: text('text').notNull(),
+    /**
+     * The bounded actions the reflection proposed and the loop applied
+     * (ADR-0053) — the receipt that reflection now changes behavior, not just
+     * the dashboard. JSON array; `[]` for advisory-only reflections.
+     */
+    actions: text('actions', { mode: 'json' }).$type<StoredReflectionAction[]>().notNull().default([]),
   },
   (t) => [index('tick_reflections_created_idx').on(t.createdAt)],
 );
+
+/** One applied reflection action, as persisted on the reflection row (ADR-0053). */
+export interface StoredReflectionAction {
+  readonly type: string;
+  readonly reason: string;
+  readonly source?: string;
+  readonly ticks?: number;
+  readonly value?: number;
+}
+
+/**
+ * `agent_policy` is the single-row, persisted output of the reflection→action
+ * loop (ADR-0053): bounded parameter overrides the LLM reflection proposed and
+ * the policy guard accepted. Read at the top of every tick; survives restarts,
+ * so an adaptation isn't forgotten by the next deploy. One row (id = 1).
+ */
+export const agentPolicy = sqliteTable('agent_policy', {
+  id: integer('id').primaryKey(),
+  /** Override for reasoner.deepAnalysisTopN; null defers to config. */
+  deepAnalysisTopN: integer('deep_analysis_top_n'),
+  /** Why the current policy is what it is (from the accepted actions). */
+  reason: text('reason'),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+/**
+ * `chat_sessions` persists the bot's short conversational context (ADR-0053):
+ * the last few turns per chat, so a restart or deploy mid-conversation doesn't
+ * amnesia the exchange. Bounded by the session TTL + turn cap in SessionStore.
+ */
+export const chatSessions = sqliteTable('chat_sessions', {
+  chatId: integer('chat_id').primaryKey(),
+  /** The recent turns, oldest first: [{role, content}]. */
+  turns: text('turns', { mode: 'json' }).$type<{ role: string; content: string }[]>().notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+/**
+ * `chat_traces` records the tool-loop trajectory behind a chat answer
+ * (ADR-0053): which tools the model chose, in what order, and what it
+ * concluded — the inspectable "how I answered" evidence. No chat identity is
+ * stored (the trace is publicly surfaced); text fields are length-capped by
+ * the writer. Pruned with the other history tables.
+ */
+export const chatTraces = sqliteTable(
+  'chat_traces',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    createdAt: integer('created_at').notNull(),
+    /** The reader's question (clamped). */
+    question: text('question').notNull(),
+    /** The trajectory: [{step, tool, args, resultPreview}]. */
+    steps: text('steps', { mode: 'json' }).$type<StoredTraceStep[]>().notNull(),
+    /** Whether the final answer was grounded in the news cache / web results. */
+    answeredFromNews: integer('answered_from_news', { mode: 'boolean' }).notNull(),
+  },
+  (t) => [index('chat_traces_created_idx').on(t.createdAt)],
+);
+
+/** One tool-loop step, as persisted on the trace row (ADR-0053). */
+export interface StoredTraceStep {
+  readonly step: number;
+  readonly tool: string;
+  readonly args: string;
+  readonly resultPreview: string;
+}
 
 /**
  * `usage` is the durable cost-quota counter (ADR-0022): one row per

@@ -12,6 +12,7 @@ import type {
   PrefsInput,
   PrefsPatch,
   ReflectInput,
+  Reflection,
   RouteInput,
   RouterIntent,
   StoryAnalysis,
@@ -30,7 +31,8 @@ export interface FakeLLMOptions {
   discuss?: DiscussResult | ((input: DiscussInput) => DiscussResult);
   route?: RouterIntent | ((input: RouteInput) => RouterIntent);
   prefs?: PrefsPatch | ((input: PrefsInput) => PrefsPatch);
-  reflect?: string | ((input: ReflectInput) => string);
+  /** A Reflection, or a string shorthand for an advisory-only reflection. */
+  reflect?: Reflection | string | ((input: ReflectInput) => Reflection | string);
 }
 
 /** A deterministic LLMClient for tests, with call counters per method. */
@@ -126,11 +128,12 @@ export class FakeLLM implements LLMClient {
     return p ?? { topics: null, minutes: null, summary: '' };
   }
 
-  async reflect(input: ReflectInput): Promise<string> {
+  async reflect(input: ReflectInput): Promise<Reflection> {
     this.reflectCalls += 1;
     this.lastReflect = input;
     const r = this.options.reflect;
-    if (typeof r === 'function') return r(input);
-    return r ?? `Reflection over ${input.ticks.length} ticks.`;
+    const resolved = typeof r === 'function' ? r(input) : r;
+    if (typeof resolved === 'string') return { advisory: resolved, actions: [] };
+    return resolved ?? { advisory: `Reflection over ${input.ticks.length} ticks.`, actions: [] };
   }
 }

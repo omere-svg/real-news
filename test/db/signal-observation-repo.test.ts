@@ -31,6 +31,18 @@ describe('SignalObservationRepo (ADR-0044)', () => {
     expect((await repo.priorValues([])).size).toBe(0);
   });
 
+  it('stats counts observations and reports the oldest timestamp', async () => {
+    const repo = new DrizzleSignalObservationRepo(await createTestDb());
+    expect(await repo.stats()).toEqual({ observations: 0, oldestObservedAt: null });
+
+    await repo.record([
+      obs({ key: 'a', observedAt: 500 }),
+      obs({ key: 'b', observedAt: 2000 }),
+    ]);
+
+    expect(await repo.stats()).toEqual({ observations: 2, oldestObservedAt: 500 });
+  });
+
   it('prunes observations older than a cutoff', async () => {
     const repo = new DrizzleSignalObservationRepo(await createTestDb());
     await repo.record([

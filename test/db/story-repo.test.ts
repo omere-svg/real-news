@@ -369,4 +369,62 @@ describe('StoryRepo', () => {
       expect(await repo.get('a')).not.toBeNull();
     });
   });
+
+  describe('stats (accumulation counters for /api/stats)', () => {
+    const CROSS_TICK_MS = 25 * 60_000;
+
+    it('is all zeros on an empty database', async () => {
+      const repo = new DrizzleStoryRepo(await createTestDb(), new FakeClock(1000));
+      expect(await repo.stats(CROSS_TICK_MS)).toEqual({
+        stories: 0,
+        multiSourceStories: 0,
+        storiesUpdatedAcrossTicks: 0,
+      });
+    });
+
+    it('counts stories, multi-source stories, and stories updated across ticks', async () => {
+      const db = await createTestDb();
+      const clock = new FakeClock(1000);
+      const repo = new DrizzleStoryRepo(db, clock);
+
+      // One corroborated story (2 member refs), one single-source story.
+      await repo.upsert(
+        storyUpsert({
+          id: 'multi',
+          memberRefs: [
+            { source: 'hackernews', externalId: '1' },
+            { source: 'gdelt', externalId: '2' },
+          ],
+        }),
+      );
+      await repo.upsert(
+        storyUpsert({ id: 'single', memberRefs: [{ source: 'hackernews', externalId: '3' }] }),
+      );
+
+      // Fresh stories: nothing has developed across a tick yet.
+      expect(await repo.stats(CROSS_TICK_MS)).toEqual({
+        stories: 2,
+        multiSourceStories: 1,
+        storiesUpdatedAcrossTicks: 0,
+      });
+
+      // A later tick re-touches "multi": updatedAt now trails firstSeenAt by > one tick.
+      clock.advance(30 * 60_000);
+      await repo.upsert(
+        storyUpsert({
+          id: 'multi',
+          memberRefs: [
+            { source: 'hackernews', externalId: '1' },
+            { source: 'gdelt', externalId: '2' },
+          ],
+        }),
+      );
+
+      expect(await repo.stats(CROSS_TICK_MS)).toEqual({
+        stories: 2,
+        multiSourceStories: 1,
+        storiesUpdatedAcrossTicks: 1,
+      });
+    });
+  });
 });
