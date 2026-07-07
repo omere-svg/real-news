@@ -194,6 +194,50 @@ describe('Reasoner output guards', () => {
     expect(out.answer).toContain('https://example.com/boi');
   });
 
+  it('discuss: rejects a suffixed-host lookalike of a grounded URL', async () => {
+    const t = new FakeTransport({
+      answer: 'See https://example.com.evil.tld/boi for the real story.',
+      answeredFromNews: true,
+    });
+    const out = await new Reasoner(t).discuss({
+      question: 'q',
+      history: [],
+      stories: [
+        {
+          title: 'Bank holds rates',
+          summary: null,
+          whyItMatters: null,
+          topic: 'Business',
+          significance: 7,
+          url: 'https://example.com/boi',
+        },
+      ],
+    });
+    expect(out.answer).not.toContain('example.com.evil.tld');
+  });
+
+  it('discuss: rejects a truncated URL fragment matching via the old prefix bug', async () => {
+    const t = new FakeTransport({
+      answer: 'Read more at https://e for details.',
+      answeredFromNews: true,
+    });
+    const out = await new Reasoner(t).discuss({
+      question: 'q',
+      history: [],
+      stories: [
+        {
+          title: 'Bank holds rates',
+          summary: null,
+          whyItMatters: null,
+          topic: 'Business',
+          significance: 7,
+          url: 'https://example.com/boi',
+        },
+      ],
+    });
+    expect(out.answer).not.toContain('https://e');
+  });
+
   it('discuss: caps a runaway answer length', async () => {
     const t = new FakeTransport({ answer: 'x'.repeat(10_000), answeredFromNews: false });
     const out = await new Reasoner(t).discuss({ question: 'q', history: [], stories: [] });

@@ -27,6 +27,7 @@ import type {
 } from './llm-client.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import { canonical } from '../domain/vocab.js';
+import { isGroundedUrl, splitTrailingPunctuation } from './url-guard.js';
 
 /**
  * The Reasoner (ADR-0016): the editorial half of the model seam. Owns every
@@ -166,18 +167,21 @@ const URL_RE = /https?:\/\/[^\s)\]}>"'<]+/gi;
 const MAX_DISCUSS_ANSWER = 3_500;
 
 /**
- * Output guard for discuss (ADR-0053): a poisoned web snippet's classic goal is
- * to make the assistant relay an attacker link. Only URLs present in the
- * grounding material (cache stories / web results) may survive into the answer;
- * anything else is stripped. The length cap bounds a runaway completion.
+ * Output guard for discuss (ADR-0053/0054): a poisoned web snippet's classic
+ * goal is to make the assistant relay an attacker link. Only URLs present in
+ * the grounding material (cache stories / web results) may survive into the
+ * answer, matched by real host + path-prefix (`isGroundedUrl`) rather than a
+ * raw string prefix; anything else is stripped. The length cap bounds a
+ * runaway completion.
  */
 function groundedAnswer(answer: string, input: DiscussInput): string {
   const allowed = new Set<string>();
   for (const s of input.stories) if (s.url) allowed.add(s.url);
   for (const w of input.web ?? []) allowed.add(w.url);
-  const cleaned = answer.replace(URL_RE, (url) =>
-    [...allowed].some((a) => url.startsWith(a) || a.startsWith(url)) ? url : '',
-  );
+  const cleaned = answer.replace(URL_RE, (raw) => {
+    const { url, trailing } = splitTrailingPunctuation(raw);
+    return isGroundedUrl(url, allowed) ? url + trailing : '';
+  });
   return cleaned.slice(0, MAX_DISCUSS_ANSWER);
 }
 

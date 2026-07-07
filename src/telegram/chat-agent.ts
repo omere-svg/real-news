@@ -12,6 +12,7 @@ import type { Embedder } from '../embedding/embedder.js';
 import type { StoryRepo } from '../db/story-repo.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { WebSearch } from '../web/web-search.js';
+import { isGroundedUrl, splitTrailingPunctuation } from '../llm/url-guard.js';
 
 /**
  * The chat agent loop (ADR-0053): the model DRIVES — it chooses which tools to
@@ -22,11 +23,23 @@ import type { WebSearch } from '../web/web-search.js';
  * trajectory is recorded as an inspectable trace (`chat_traces`).
  */
 
+/**
+ * A tool's output: the plain-text result shown to the model, plus any URLs
+ * from STRUCTURED result fields (`story.url`, `WebResult.url`) that may
+ * ground the answer. Never grounded by scanning `text` — a poisoned web
+ * snippet's body can say anything, including an attacker's own URL
+ * (ADR-0053/0054).
+ */
+export interface ToolResult {
+  readonly text: string;
+  readonly urls?: readonly string[];
+}
+
 /** One tool the agent may use: its model-facing spec + the implementation. */
 export interface ChatTool {
   readonly spec: ToolSpec;
-  /** Execute with the model's arguments; returns a plain-text result. */
-  run(args: Record<string, unknown>): Promise<string>;
+  /** Execute with the model's arguments. */
+  run(args: Record<string, unknown>): Promise<ToolResult>;
 }
 
 /** One recorded step of the trajectory (persisted, publicly surfaced). */
@@ -126,19 +139,19 @@ export class ChatAgent {
         const result = tool
           ? await tool.run(call.args).catch((err: unknown) => toolError(err))
           : toolError(new Error(`unknown tool "${call.name}"`));
-        for (const url of result.match(URL_RE) ?? []) groundedUrls.add(url);
+        for (const url of result.urls ?? []) groundedUrls.add(url);
         steps.push({
           step: steps.length + 1,
           tool: call.name,
           // The reader's personal note is private — never into the public trace.
           args: call.name === 'save_memory' ? '(private note)' : JSON.stringify(call.args).slice(0, ARGS_CHARS),
-          resultPreview: result.slice(0, PREVIEW_CHARS),
+          resultPreview: result.text.slice(0, PREVIEW_CHARS),
         });
         messages.push({
           role: 'tool',
           toolCallId: call.id,
           // Tool results carry third-party content (feeds, web) — fence them.
-          content: asData(result.startsWith('tool_error:') ? 'tool_error' : 'tool_result', result),
+          content: asData(result.text.startsWith('tool_error:') ? 'tool_error' : 'tool_result', result.text),
         });
       }
     }
@@ -167,15 +180,16 @@ function userBlock(input: ChatAgentInput): string {
   return `${memory}${history}QUESTION:\n${asData('question', input.question)}`;
 }
 
-function toolError(err: unknown): string {
-  return `tool_error: ${err instanceof Error ? err.message : String(err)}`;
+function toolError(err: unknown): ToolResult {
+  return { text: `tool_error: ${err instanceof Error ? err.message : String(err)}` };
 }
 
 /** Strip URLs the tools never surfaced; cap a runaway answer (ADR-0053/0054). */
 function groundAnswer(answer: string, grounded: ReadonlySet<string>): string {
-  const cleaned = answer.replace(URL_RE, (url) =>
-    [...grounded].some((g) => url.startsWith(g) || g.startsWith(url)) ? url : '',
-  );
+  const cleaned = answer.replace(URL_RE, (raw) => {
+    const { url, trailing } = splitTrailingPunctuation(raw);
+    return isGroundedUrl(url, grounded) ? url + trailing : '';
+  });
   return cleaned.slice(0, MAX_ANSWER_CHARS);
 }
 
@@ -234,8 +248,8 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       run: async (args) => {
         const query = String(args.query ?? '').trim();
         const stories = await searchStories(deps, query, topicFilter);
-        if (stories.length === 0) return '(no matching stories in the cache)';
-        return stories.map(storyLine).join('\n');
+        if (stories.length === 0) return { text: '(no matching stories in the cache)' };
+        return { text: stories.map(storyLine).join('\n') };
       },
     },
     {
@@ -251,8 +265,8 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       run: async (args) => {
         const id = String(args.id ?? '').trim();
         const story = deps.reader.get ? await deps.reader.get(id) : null;
-        if (!story) return `(no story with id "${id}")`;
-        return [
+        if (!story) return { text: `(no story with id "${id}")` };
+        const text = [
           storyLine(story),
           story.whyItMatters ? `why it matters: ${story.whyItMatters}` : '',
           `sources: ${Math.max(1, story.memberRefs.length)}`,
@@ -260,6 +274,8 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
         ]
           .filter(Boolean)
           .join('\n');
+        // Ground on the structured field, never on a scan of `text` (ADR-0054).
+        return { text, urls: story.url ? [story.url] : [] };
       },
     },
   ];
@@ -276,14 +292,15 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       },
       run: async () => {
         const trends = await signals.latestTrends(12);
-        if (trends.length === 0) return '(no signal history yet)';
-        return trends
+        if (trends.length === 0) return { text: '(no signal history yet)' };
+        const text = trends
           .map((t) => {
             const dir =
               t.prior === null ? 'first reading' : t.value > t.prior ? 'rising' : t.value < t.prior ? 'falling' : 'flat';
             return `${t.key}: ${t.value}${t.prior !== null ? ` (prior ${t.prior}, ${dir})` : ` (${dir})`}`;
           })
           .join('\n');
+        return { text };
       },
     });
   }
@@ -303,10 +320,14 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       },
       run: async (args) => {
         const results = await web.search(String(args.query ?? '').trim());
-        if (results.length === 0) return '(no web results)';
-        return results
+        if (results.length === 0) return { text: '(no web results)' };
+        const text = results
           .map((r, i) => `${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}`)
           .join('\n');
+        // Ground on the structured WebResult.url, never on a scan of the
+        // snippet body — a poisoned snippet must not ground its own link
+        // just by mentioning it (ADR-0054).
+        return { text, urls: results.map((r) => r.url) };
       },
     });
   }
@@ -326,9 +347,9 @@ export function buildChatTools(deps: ChatToolDeps): ChatTool[] {
       },
       run: async (args) => {
         const note = String(args.note ?? '').trim();
-        if (!note) return '(nothing to save)';
+        if (!note) return { text: '(nothing to save)' };
         await save(note);
-        return 'saved';
+        return { text: 'saved' };
       },
     });
   }

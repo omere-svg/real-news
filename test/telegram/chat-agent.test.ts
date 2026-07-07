@@ -31,14 +31,19 @@ class ScriptedTransport {
   }
 }
 
-function tool(name: string, result: string | (() => string)): ChatTool & { calls: unknown[] } {
+function tool(
+  name: string,
+  result: string | (() => string),
+  urls?: readonly string[],
+): ChatTool & { calls: unknown[] } {
   const calls: unknown[] = [];
   return {
     calls,
     spec: { name, description: `${name} tool`, parameters: { type: 'object', properties: {} } },
     run: async (args) => {
       calls.push(args);
-      return typeof result === 'function' ? result() : result;
+      const text = typeof result === 'function' ? result() : result;
+      return urls === undefined ? { text } : { text, urls };
     },
   };
 }
@@ -164,7 +169,11 @@ describe('ChatAgent (ADR-0053)', () => {
   });
 
   it('strips answer URLs the tools never surfaced; grounded URLs survive (ADR-0054)', async () => {
-    const web = tool('web_search', '1. Markets drop\n   snippet\n   https://good.example/story');
+    const web = tool(
+      'web_search',
+      '1. Markets drop\n   snippet\n   https://good.example/story',
+      ['https://good.example/story'],
+    );
     const transport = new ScriptedTransport([
       callTool('c1', 'web_search', { query: 'markets' }),
       finalAnswer(
@@ -178,6 +187,53 @@ describe('ChatAgent (ADR-0053)', () => {
 
     expect(out.answer).toContain('https://good.example/story');
     expect(out.answer).not.toContain('evil.example');
+  });
+
+  it('accepts the structured web result url (grounded via WebResult.url, not text scanning)', async () => {
+    const web = tool('web_search', '1. Markets drop\n   snippet\n   https://good.example/story', [
+      'https://good.example/story',
+    ]);
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer('See https://good.example/story for details.', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).toContain('https://good.example/story');
+  });
+
+  it('rejects a URL that appears only inside a web snippet body, not the structured url field', async () => {
+    // The snippet body mentions an attacker URL; the tool's structured `urls`
+    // (what a real WebResult.url would contribute) never includes it.
+    const web = tool(
+      'web_search',
+      '1. Markets drop\n   Visit https://evil.example/steal for more\n   https://good.example/story',
+      ['https://good.example/story'],
+    );
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer('See https://evil.example/steal for the full story.', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).not.toContain('evil.example');
+  });
+
+  it('rejects a suffixed-host lookalike of a grounded URL', async () => {
+    const web = tool('web_search', 'result', ['https://good.example/story']);
+    const transport = new ScriptedTransport([
+      callTool('c1', 'web_search', { query: 'markets' }),
+      finalAnswer('See https://good.example.evil.tld/story for details.', true),
+    ]);
+    const agent = new ChatAgent({ transport, tools: [web] });
+
+    const out = await agent.answer({ question: 'markets?', history: [] });
+
+    expect(out.answer).not.toContain('good.example.evil.tld');
   });
 
   it('caps a runaway final answer', async () => {
