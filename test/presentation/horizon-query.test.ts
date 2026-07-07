@@ -145,6 +145,45 @@ describe('HorizonQuery', () => {
     expect(brief).not.toContain('Three.');
   });
 
+  it('suppresses same-event near-duplicates in one brief via stored vectors (ADR-0053)', async () => {
+    const repo = await seed(
+      upsert({ id: 'a', title: 'China tests long-range missile', significance: 9 }),
+      upsert({ id: 'b', title: 'Australian PM reacts to China missile test', significance: 8 }),
+      upsert({ id: 'c', title: 'Heatwave hits Europe', significance: 7 }),
+    );
+    // a and b are the same event (high cosine); c is unrelated.
+    await repo.putVector('a', [1, 0, 0]);
+    await repo.putVector('b', [0.95, 0.3, 0]);
+    await repo.putVector('c', [0, 1, 0]);
+    const q = new HorizonQuery({
+      storyRepo: repo,
+      llm: new FakeLLM(),
+      params: { ...PARAMS, dedupSimilarity: 0.8 },
+    });
+
+    const brief = await q.textBrief({ minutes: 5 });
+
+    expect(brief).toContain('China tests long-range missile');
+    expect(brief).not.toContain('Australian PM'); // duplicate suppressed
+    expect(brief).toContain('Heatwave hits Europe'); // distinct story keeps its slot
+  });
+
+  it('a story with no stored vector is never suppressed', async () => {
+    const repo = await seed(
+      upsert({ id: 'a', title: 'Alpha', significance: 9 }),
+      upsert({ id: 'b', title: 'Bravo', significance: 8 }),
+    );
+    await repo.putVector('a', [1, 0]);
+    const q = new HorizonQuery({
+      storyRepo: repo,
+      llm: new FakeLLM(),
+      params: { ...PARAMS, dedupSimilarity: 0.8 },
+    });
+    const brief = await q.textBrief({ minutes: 5 });
+    expect(brief).toContain('Alpha');
+    expect(brief).toContain('Bravo');
+  });
+
   it('textBrief filters by the requested topics', async () => {
     const repo = await seed(
       upsert({ id: 'ai', title: 'AI thing', topic: 'AI', significance: 8 }),

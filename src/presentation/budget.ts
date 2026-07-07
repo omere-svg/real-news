@@ -39,6 +39,12 @@ export interface BudgetParams {
    * favored topic ranks higher (ADR-0026), without altering the displayed score.
    */
   readonly rank?: (story: Story) => number;
+  /**
+   * Same-event diversity guard (ADR-0053): when set, a candidate similar to an
+   * already-admitted Story is skipped — one developing event never fills two
+   * slots of one brief, even when upstream dedup left it as separate Stories.
+   */
+  readonly suppressSimilar?: (a: Story, b: Story) => boolean;
 }
 
 /** One Story admitted to the budget, with the depth it earned. */
@@ -81,6 +87,11 @@ export function budgetStories(
     if (selected.length >= maxStories) break;
     const mustInclude = selected.length < minStories;
     if (!mustInclude && spent + floorCost > wordBudget) break;
+    // Same-event guard (ADR-0053): a near-duplicate of an admitted Story is
+    // skipped without spending budget — the slot goes to the next distinct one.
+    if (params.suppressSimilar && selected.some((s) => params.suppressSimilar!(s.story, story))) {
+      continue;
+    }
     selected.push({ story, depth: minDepth });
     spent += floorCost;
   }

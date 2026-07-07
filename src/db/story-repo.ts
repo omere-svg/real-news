@@ -99,6 +99,12 @@ export interface StoryRepo {
   /** Stored vectors for recent Stories in one partition — the cross-tick blocking set. */
   recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]>;
   /**
+   * Stored vectors for exactly these Story ids, in one query (ADR-0053) —
+   * the presentation layer's same-event diversity guard. Ids with no stored
+   * vector are simply absent from the map.
+   */
+  vectorsFor(ids: readonly string[]): Promise<Map<string, number[]>>;
+  /**
    * Stories ranked by cosine similarity of their stored embedding to a query
    * vector (ADR-0045) — semantic retrieval for chat grounding. Returns the top
    * `limit` above `minSimilarity`, most-similar first.
@@ -273,6 +279,15 @@ export class DrizzleStoryRepo implements StoryRepo {
       .slice(0, Math.max(0, query.limit));
 
     return this.hydrate(ranked.map((r) => r.row));
+  }
+
+  async vectorsFor(ids: readonly string[]): Promise<Map<string, number[]>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.db
+      .select({ storyId: storyVectors.storyId, vector: storyVectors.vector })
+      .from(storyVectors)
+      .where(inArray(storyVectors.storyId, ids as string[]));
+    return new Map(rows.map((r) => [r.storyId, r.vector]));
   }
 
   async recentVectors(query: RecentVectorsQuery): Promise<StoredVector[]> {

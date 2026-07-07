@@ -257,6 +257,13 @@ export const configSchema = z.object({
     audioWordsPerMinute: z.number().positive().default(150),
     /** How many Significance-ranked Stories to pull as the candidate pool. */
     candidatePool: z.number().int().positive().default(200),
+    /**
+     * Same-event diversity guard (ADR-0053): candidates whose embeddings reach
+     * this cosine similarity share one brief slot. Sits below the merge
+     * threshold (dedup.candidateThreshold) on purpose — at composition time a
+     * false positive just promotes the next story, so the bar can be lower.
+     */
+    dedupSimilarity: z.number().min(0).max(1).default(0.72),
     /** Word cost of rendering a Story at each depth (the ADR-0013 cost model). */
     wordCost: z
       .object({

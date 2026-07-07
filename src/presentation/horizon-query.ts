@@ -1,9 +1,11 @@
 import type { StoryRepo } from '../db/story-repo.js';
 import type { Narrator } from '../llm/llm-client.js';
 import type { Story, Topic } from '../domain/types.js';
+import { cosine } from '../embedding/cosine.js';
 import {
   budgetStories,
   type BudgetedStory,
+  type BudgetParams,
   type Depth,
 } from './budget.js';
 import type { BriefRequest, QueryEngine } from './query-engine.js';
@@ -34,6 +36,12 @@ export interface QueryParams {
   readonly maxStories: number;
   /** How many Significance-ranked Stories to pull as the candidate pool. */
   readonly candidatePool: number;
+  /**
+   * Same-event diversity guard (ADR-0053): two candidates whose stored
+   * embeddings reach this cosine similarity are treated as one event — only the
+   * higher-ranked one is shown. Omit to disable.
+   */
+  readonly dedupSimilarity?: number;
 }
 
 export interface HorizonQueryDeps {
@@ -108,7 +116,28 @@ export class HorizonQuery implements QueryEngine {
       minStories: this.deps.params.minStories,
       maxStories: this.deps.params.maxStories,
       ...(weighted ? { rank } : {}),
+      ...(await this.similarityGuard(candidates)),
     });
+  }
+
+  /**
+   * Build the same-event suppressor from the candidates' stored embeddings
+   * (ADR-0053). One query for the pool; a story with no vector never
+   * suppresses or is suppressed. Off when `dedupSimilarity` is unset.
+   */
+  private async similarityGuard(
+    candidates: readonly Story[],
+  ): Promise<Pick<BudgetParams, 'suppressSimilar'>> {
+    const cap = this.deps.params.dedupSimilarity;
+    if (cap === undefined) return {};
+    const vectors = await this.deps.storyRepo.vectorsFor(candidates.map((s) => s.id));
+    return {
+      suppressSimilar: (a: Story, b: Story): boolean => {
+        const va = vectors.get(a.id);
+        const vb = vectors.get(b.id);
+        return Boolean(va && vb && cosine(va, vb) >= cap);
+      },
+    };
   }
 }
 

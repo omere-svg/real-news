@@ -139,3 +139,32 @@ describe('budgetStories', () => {
     expect(sel).toHaveLength(3);
   });
 });
+
+describe('budgetStories same-event suppression (ADR-0053)', () => {
+  // Pretend stories whose ids share a first letter cover the same event.
+  const sameEvent = (a: Story, b: Story) => a.id[0] === b.id[0];
+
+  it('skips a near-duplicate of an admitted story and admits the next distinct one', () => {
+    const sel = budgetStories(
+      [story('a1', 9), story('a2', 8), story('b1', 7)],
+      10, // 100-word budget: room for all three headlines
+      { ...PARAMS, suppressSimilar: sameEvent },
+    );
+    expect(ids(sel)).toEqual(['a1', 'b1']); // a2 suppressed as a dup of a1
+  });
+
+  it('suppression frees budget for the next distinct story', () => {
+    // Budget fits exactly two headlines; the dup must not eat the second slot.
+    const sel = budgetStories(
+      [story('a1', 9), story('a2', 8), story('b1', 7), story('c1', 6)],
+      2,
+      { ...PARAMS, suppressSimilar: sameEvent },
+    );
+    expect(ids(sel)).toEqual(['a1', 'b1']);
+  });
+
+  it('without the hook, behavior is unchanged', () => {
+    const sel = budgetStories([story('a1', 9), story('a2', 8)], 10, PARAMS);
+    expect(ids(sel)).toEqual(['a1', 'a2']);
+  });
+});

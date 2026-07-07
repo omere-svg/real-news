@@ -59,6 +59,7 @@ export function toQueryParams(config: Config): QueryParams {
     textWordsPerMinute: p.textWordsPerMinute,
     audioWordsPerMinute: p.audioWordsPerMinute,
     candidatePool: p.candidatePool,
+    dedupSimilarity: p.dedupSimilarity,
     wordCost: p.wordCost,
     minDepth: p.minDepth,
     minStories: p.minStories,

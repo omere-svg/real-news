@@ -33,10 +33,7 @@ sources:
     enabled: true
     weight: 0.6
     maxItems: 20
-  - id: datagovil       # weak (datasets, not events) — no adapter yet
-    enabled: false
-    weight: 0.5
-    maxItems: 30
+  # datagovil is parked (datasets, not events — see docs/research); no adapter planned.
   # Phase 4 — media + thematic anchors (ADR-0021). Keyless RSS / open APIs.
   - id: guardian        # global mainstream media (world section ⇒ Geopolitics)
     enabled: true
@@ -231,6 +228,8 @@ presentation:
   textWordsPerMinute: 220   # reading rate (brief, outline)
   audioWordsPerMinute: 150  # speaking rate (podcast script)
   candidatePool: 200        # how many top Stories to consider per request
+  dedupSimilarity: 0.72     # same-event diversity guard (ADR-0053): near-duplicate
+                            # candidates share one brief slot (cosine of stored vectors)
   wordCost:
     headline: 18
     brief: 45

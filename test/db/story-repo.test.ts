@@ -233,6 +233,30 @@ describe('StoryRepo', () => {
       expect(got).toEqual([{ storyId: 'a', vector: [1, 0, 0] }]);
     });
 
+    it('vectorsFor returns the stored vectors for exactly the requested ids (ADR-0053)', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+      await repo.upsert(storyUpsert({ id: 'a', topic: 'AI' }));
+      await repo.upsert(storyUpsert({ id: 'b', topic: 'AI' }));
+      await repo.upsert(storyUpsert({ id: 'c', topic: 'AI' }));
+      await repo.putVector('a', [1, 0]);
+      await repo.putVector('b', [0, 1]);
+      // 'c' has no vector; 'zzz' does not exist.
+
+      const got = await repo.vectorsFor(['a', 'c', 'zzz']);
+
+      expect(got.get('a')).toEqual([1, 0]);
+      expect(got.has('b')).toBe(false); // not requested
+      expect(got.has('c')).toBe(false); // no vector stored
+      expect(got.size).toBe(1);
+    });
+
+    it('vectorsFor is empty for an empty id list without querying', async () => {
+      const db = await createTestDb();
+      const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+      expect((await repo.vectorsFor([])).size).toBe(0);
+    });
+
     it('recentVectors blocks by topic and the recency window', async () => {
       const db = await createTestDb();
       const clock = new FakeClock(5000);
