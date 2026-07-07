@@ -25,7 +25,7 @@ Two bounded, inspectable-live decision loops:
 ## 4. Architecture  *(Engineering excellence)*
 - **Components & data flow:** `SourceAdapter`/`SignalSource` seams (**21 story feeds + 6 signals**), role-split reasoner interfaces (pipeline analysis / chat / narration / reflection) over a thin `ChatTransport`, a `QueryEngine` seam feeding both surfaces. Two-tier cache: immutable `raw_items` → scored `stories`, plus vectors, signal history, tick reports, reflections, chat traces — same migrations in tests, boot, and deploy. Story `id` and representative `vector` are threaded through every pipeline stage so scoring/analysis/upsert align by identity, not array position (ADR-0063).
 - **Robustness:** every model call degrades instead of crashing; retry lives in one classified layer with jitter; sources are health-checked, isolated, rate-limited, backed off on failure; the embedder signals when it falls back to a non-semantic hash so degraded vectors are never persisted into the neural store (ADR-0065); the tick loop survives lock/tick errors with a process-level backstop.
-- **Tests & CI:** **737 tests + 2 env-gated live, 90 files, ~3s**, real migrations, in-memory libsql. Coverage: **96.26% lines / 85.73% branches**, CI-gated at 90/80, alongside typecheck + lint before a health-checked deploy that backs up the DB first. Run it: `npm test`.
+- **Tests & CI:** **740 tests + 2 env-gated live, 91 files, ~3s**, real migrations, in-memory libsql. Coverage: **96.27% lines / 85.75% branches**, CI-gated at 90/80, alongside typecheck + lint before a health-checked deploy that backs up the DB first. Run it: `npm test`.
 - **Observability:** persisted tick reports, `/dashboard` (health, failing sources, reflections + applied actions), per-tier token accounting on `/api/stats`, structured logging throughout.
 
 ## 5. Safety & control  *(Safety & control)*
@@ -72,7 +72,7 @@ curl -s "https://horizon-news.duckdns.org/api/stats" | jq '{stories, multiSource
 - [x] **Cross-agent / sub-agents** — build-time only (`reports/CODE-REVIEW.md`); not the runtime product.
 
 ## 10. Evidence index  *(curated)*
-- **Runnable test suite (strongest):** `npm test` — 737 passing + 2 env-gated live, 90 files, ~3s, real migrations. `npm run test:coverage` — 96.26%/85.73%, CI-gated at 90/80.
+- **Runnable test suite (strongest):** `npm test` — 740 passing + 2 env-gated live, 91 files, ~3s, real migrations. `npm run test:coverage` — 96.27%/85.75%, CI-gated at 90/80.
 - **Agentic-depth tests:** `test/pipeline/reflection-loop.test.ts` + `test/pipeline/maintenance.test.ts` (reflection→action→auto-revert), `test/pipeline/tick-e2e.test.ts` (two-tick merge + poisoned-feed red-team), `test/llm/chat-agent.live.test.ts` (live tool loop, env-gated).
 - **Live URLs:** https://horizon-news.duckdns.org — ranked stories, auto-loaded brief with score breakdowns · `/dashboard` — tick health + applied reflections · `/api/chat-traces` — tool trajectories · `/api/reflection` — proposals + actions · `/api/stats` — accumulating corpus + token spend, live.
 - **Try the agent:** https://t.me/OmerNewsBot — ask a question, then open `/api/chat-traces`.

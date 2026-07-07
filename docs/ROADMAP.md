@@ -1,7 +1,7 @@
 # Project Horizon — Status & Roadmap
 
 Living document: where the codebase stands vs. the vision in `../project-idea.txt`, and
-the plan to finish it. Updated 2026-07-07 (**737 tests green + 2 env-gated live, 96.26% line / 85.73% branch coverage, 66 ADRs**; live on an Oracle Cloud VM +
+the plan to finish it. Updated 2026-07-07 (**740 tests green + 2 env-gated live, 96.27% line / 85.75% branch coverage, 66 ADRs**; live on an Oracle Cloud VM +
 Turso). Latest: a **Log in with Telegram** web-auth (ADR-0040, no passwords/emails), all
 five optional deepenings shipped (ADR-0041–0045), and web-session security hardening
 (ADR-0046). See §"Optional deepening — DONE" below. A production-DB review drove a throughput/dedup/integrity hardening pass

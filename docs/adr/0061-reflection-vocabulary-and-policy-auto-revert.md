@@ -80,3 +80,14 @@ step stand down when an override was just imposed. Revert still fires on any
 nothing new — so a stale override is still walked back, just never the one set
 this cycle. Covered by `test/pipeline/maintenance.test.ts` ("a fresh override
 imposed on an already-healthy window is NOT cleared the same cycle").
+
+A related read-after-write race lived one layer up in `TickLoop`: it persisted
+each tick outcome with a fire-and-forget `void reports.record(...)` and then ran
+`maintain()` (reflection + this auto-revert) in the same `finally` without
+awaiting the write. On a *failed* tick the failure row might not be durable yet,
+so revert could see only earlier healthy rows and clear an active override in
+the very cycle a tick failed. Fixed by making `recordTick` return its
+(error-swallowing) promise and awaiting it before `maintain()` — the trailing
+window reflection and revert read is now always current. Covered by
+`test/scheduler/tick-loop.test.ts` ("awaits the tick-report write before
+maintain reads the window").

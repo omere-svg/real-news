@@ -71,3 +71,13 @@ hashing embedder) *without* calling the paid API, and marks the batch
 neural index is never polluted with hash vectors during a spend-capped stretch.
 Covered by `test/embedding/resilient-embedder.test.ts` ("skips the paid primary
 entirely once the daily spend budget is exhausted").
+
+A second review pass found the same gap on the chat agent: it talks to the
+provider directly through a `ToolCapableTransport`, bypassing `ResilientLLMClient`
+and so the cap. `BudgetedToolTransport` (`src/llm/budgeted-tool-transport.ts`)
+now wraps that transport with the same `SpendBudget`; when exhausted it throws
+before any network call, and the bot's existing agent-failure handling degrades
+to its deterministic, cache-only fixed path (never surfacing the error to the
+user). Net effect at the cap across *all* unattended + interactive LLM paths:
+zero further model spend, graceful degradation, automatic recovery at UTC
+midnight. Covered by `test/llm/budgeted-tool-transport.test.ts`.

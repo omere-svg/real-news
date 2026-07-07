@@ -47,7 +47,7 @@ to its own reversible database." → Point at the per-tier token spend on
 
 **2:50–3:00 — Close.**
 "It's live at horizon-news.duckdns.org, the bot is @OmerNewsBot, and the whole
-suite — 737 tests plus live golden tests — is public on GitHub."
+suite — 740 tests plus live golden tests — is public on GitHub."
 
 ## Must-show checklist (these are the highest-scoring shots)
 - [ ] "Why this score?" breakdown expanded on a real story.

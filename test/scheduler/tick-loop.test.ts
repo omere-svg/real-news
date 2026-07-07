@@ -101,6 +101,36 @@ describe('TickLoop', () => {
     expect(log.events('error')).toContain('tick.failed');
   });
 
+  it('awaits the tick-report write before maintain reads the window (Bugbot race fix): '
+    + 'a failed tick is durable before reflection/auto-revert reason over it', async () => {
+    const recorded: TickRecord[] = [];
+    let recordedAtMaintain = -1;
+    const { deps } = makeDeps({
+      runner: {
+        run: async () => {
+          throw new Error('boom');
+        },
+      },
+      // The write settles on a LATER microtask than the throw path; a
+      // fire-and-forget record would let maintain run before this resolves.
+      reports: {
+        record: async (rec) => {
+          await flush();
+          recorded.push(rec);
+        },
+      },
+      maintain: async () => {
+        recordedAtMaintain = recorded.length;
+      },
+    });
+    const loop = new TickLoop(deps);
+    await loop.runTick();
+
+    // The failed tick is already persisted when maintain (reflection + revert) runs.
+    expect(recordedAtMaintain).toBe(1);
+    expect(recorded[0]).toMatchObject({ ok: false, error: 'boom' });
+  });
+
   it('releases the lock on the success path too, and records the tick outcome', async () => {
     const release = vi.fn().mockResolvedValue(undefined);
     const { deps, recorded, log } = makeDeps({

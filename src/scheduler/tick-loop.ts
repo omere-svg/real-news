@@ -127,9 +127,17 @@ export class TickLoop {
     }
   }
 
-  /** Best-effort persist of a tick outcome (ADR-0033); a failed write never breaks the loop. */
-  private recordTick(rec: TickRecord): void {
-    void this.deps.reports
+  /**
+   * Best-effort persist of a tick outcome (ADR-0033); a failed write never breaks
+   * the loop (the error is caught and logged). It returns the promise so callers
+   * can AWAIT the write before running `maintain()` — reflection and the policy
+   * auto-revert read the trailing tick window, and if the just-finished tick's row
+   * isn't durable yet they'd reason over a stale window (e.g. clearing an override
+   * in the same cycle a tick failed, because the failure isn't visible). Awaiting
+   * closes that read-after-write race without ever propagating a write error.
+   */
+  private recordTick(rec: TickRecord): Promise<void> {
+    return this.deps.reports
       .record(rec)
       .catch((err) => this.deps.log.error('tick.record_failed', { err }));
   }
@@ -144,7 +152,7 @@ export class TickLoop {
       acquired = deps.lockEnabled ? await deps.lock.acquire(deps.clock.now(), deps.lockTtlMs) : true;
     } catch (err) {
       deps.log.error('tick.failed', { err });
-      this.recordTick({
+      await this.recordTick({
         ranAt: deps.clock.now(),
         durationMs: 0,
         ok: false,
@@ -169,7 +177,7 @@ export class TickLoop {
       deps.log.warn('tick.lock_skip', { reason: 'another process holds the tick lock' });
       // Make the skip visible in tick_reports (ADR-0048): a remote observer must
       // be able to tell "skipped by lock" from "process dead".
-      this.recordTick(lockSkipRecord(deps.clock.now()));
+      await this.recordTick(lockSkipRecord(deps.clock.now()));
       return;
     }
     const ranAt = deps.clock.now();
@@ -188,7 +196,7 @@ export class TickLoop {
         ...(policy?.confirmConcurrency ? { confirmConcurrency: policy.confirmConcurrency } : {}),
         ...(policy?.candidateThreshold ? { candidateThreshold: policy.candidateThreshold } : {}),
       });
-      this.recordTick({
+      await this.recordTick({
         ...report,
         ranAt,
         durationMs: deps.clock.now() - ranAt,
@@ -219,7 +227,7 @@ export class TickLoop {
       if (deps.afterTick) await deps.afterTick();
     } catch (err) {
       // Record the failed tick too (ADR-0033), then keep the loop alive.
-      this.recordTick({
+      await this.recordTick({
         ranAt,
         durationMs: deps.clock.now() - ranAt,
         ok: false,

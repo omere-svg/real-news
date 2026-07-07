@@ -49,6 +49,7 @@ import { TokenLedger, tokenUsageKey } from './llm/token-ledger.js';
 import type { ToolCapableTransport } from './llm/chat-transport.js';
 import { ResilientLLMClient } from './llm/resilient-llm-client.js';
 import { SpendGuard, type SpendBudget } from './llm/spend-guard.js';
+import { BudgetedToolTransport } from './llm/budgeted-tool-transport.js';
 import type { LLMClient } from './llm/llm-client.js';
 import { HashingEmbedder } from './embedding/hashing-embedder.js';
 import { OpenAIEmbedder } from './embedding/openai-embedder.js';
@@ -629,9 +630,16 @@ async function main(): Promise<void> {
   log.info('main.viewer_up', { url: `http://${HOST}:${PORT}`, tickEveryMinutes: config.tickIntervalMinutes });
 
   if (config.telegram.enabled) {
+    // Gate the chat agent's tool loop by the same daily ceiling as the pipeline
+    // (ADR-0062): the agent talks to the provider directly, so without this it
+    // would keep spending past the cap. When exhausted it degrades to the fixed
+    // cache-only path (never to the user).
+    const agentTransport = new BudgetedToolTransport(openaiTransport, spendGuard, () =>
+      log.warn('chat.agent_budget_exhausted', { hint: 'daily spend cap reached; agent paused' }),
+    );
     startTelegramBot(
       config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage,
-      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
+      agentTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
       synthesizer,
     );
   }

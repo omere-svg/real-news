@@ -8,8 +8,8 @@ the live URLs prove it runs unattended. The judged tree is `main` as pushed
 - **The test suite — strongest evidence.** From the repo root:
   ```
   npm install
-  npm test              # the printed count is the proof (737 green + 2 env-gated live, 90 files, ~3s, real migrations)
-  npm run test:coverage # 96.26% lines / 85.73% branches — CI gates the pipeline at 90/80
+  npm test              # the printed count is the proof (740 green + 2 env-gated live, 91 files, ~3s, real migrations)
+  npm run test:coverage # 96.27% lines / 85.75% branches — CI gates the pipeline at 90/80
   npm run typecheck  # clean
   npm run lint       # clean
   npm run verify:bot # drives the real Telegram bot end-to-end
