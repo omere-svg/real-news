@@ -36,15 +36,31 @@ const TRANSIENT_NETWORK_CODES = new Set([
  */
 function isTransientNetworkError(err: unknown): boolean {
   if (!(err instanceof Error) && typeof err !== 'object') return false;
-  // A truncated/garbled provider response (body cut off mid-stream) throws a
-  // SyntaxError from JSON.parse — that's a transient transport fault, not a
-  // programmer bug, so it gets the same retry treatment as a dropped socket.
-  if (err instanceof SyntaxError) return true;
-  const e = err as { code?: string; name?: string; message?: string };
+  const e = err as { code?: string; name?: string; message?: string; transient?: boolean };
+  // Explicitly tagged by a caller that knows the error is a transport fault
+  // (see `markTransient`) — not inferred from the error's type/name, since a
+  // SyntaxError (say) is just as often a programmer bug as a wire fault.
+  if (e.transient === true) return true;
   if (e.code && TRANSIENT_NETWORK_CODES.has(e.code)) return true;
   if (e.name === 'AbortError') return true;
   const message = e.message ?? '';
   return /fetch failed|network|ENOTFOUND|socket hang up/i.test(message);
+}
+
+/**
+ * Tag an error as a transient transport fault so `isRetryable` retries it.
+ * Used by callers that parse a provider response body and know a parse
+ * failure there means a truncated/garbled wire response (a real transport
+ * fault) rather than a generic SyntaxError — which `isRetryable` otherwise
+ * treats as a programmer bug that will fail identically on every attempt.
+ * Mutates and returns the same error so it can be thrown inline: `throw
+ * markTransient(err)`.
+ */
+export function markTransient<E>(err: E): E {
+  if (err && typeof err === 'object') {
+    (err as { transient?: boolean }).transient = true;
+  }
+  return err;
 }
 
 /**
