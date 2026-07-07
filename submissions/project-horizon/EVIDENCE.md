@@ -7,7 +7,7 @@ the live URLs prove it runs unattended.
 - **The test suite — strongest evidence.** From the repo root:
   ```
   npm install
-  npm test           # the printed count is the proof (582 green, ~3s, real migrations)
+  npm test           # the printed count is the proof (588 green, ~3s, real migrations)
   npm run typecheck  # clean
   npm run verify:bot # drives the real Telegram bot end-to-end
   ```
