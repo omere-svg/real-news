@@ -65,6 +65,28 @@ describe('HTTP API', () => {
     expect(body.stories.map((s: { id: string }) => s.id)).toEqual(['a', 'b']);
   });
 
+  it('GET /api/stories attaches server-computed score tags for the viewer (ADR-0050)', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    await repo.upsert({
+      id: 'q', title: 'Major quake', url: null, topic: 'Climate', significance: 9,
+      whyItMatters: null, memberRefs: [{ source: 'usgs-quakes', externalId: '1' }],
+      scoreBreakdown: {
+        base: 9, recencyFactor: 1, impact: 0.9, signalNudge: 0,
+        components: [
+          { key: 'impact', value: 0.9 }, { key: 'corroboration', value: 0.6 },
+          { key: 'authority', value: 0.8 }, { key: 'attention', value: 0.1 },
+        ],
+        signals: { points: 0, mentions: 0, tone: 0, sourceWeight: 0.8, ageHours: 1, corroboration: 3 },
+      },
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(repo, queryEngine, { minutes: 10 }, { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false });
+    const body = await (await app.request('/api/stories')).json() as { stories: { scoreTags: string[] }[] };
+    expect(Array.isArray(body.stories[0]?.scoreTags)).toBe(true);
+    expect(body.stories[0]?.scoreTags).toContain('major real-world impact');
+  });
+
   it('GET /api/stories filters by topic query param', async () => {
     const app = await appWithStories();
     const res = await app.request('/api/stories?topic=Israel');

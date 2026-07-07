@@ -10,6 +10,7 @@ import type { WebAuthRepo } from '../db/web-auth-repo.js';
 import { TOPICS, type Topic } from '../domain/types.js';
 import type { BriefRequest, QueryEngine } from '../presentation/query-engine.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
+import { scoreExplanation } from '../presentation/score-explanation.js';
 import { renderUI, renderDashboard } from './ui.js';
 
 /**
@@ -130,7 +131,16 @@ export function createApp(
         ? { minSignificance }
         : {}),
     };
-    return c.json({ stories: await storyRepo.topStories(query) });
+    // Attach the compact score tags (server-computed via the single scoreExplanation
+    // interpreter, ADR-0037) so the viewer can show the rationale always-visible
+    // without duplicating the thresholds client-side (ADR-0050).
+    const stories = await storyRepo.topStories(query);
+    return c.json({
+      stories: stories.map((s) => ({
+        ...s,
+        scoreTags: s.scoreBreakdown ? scoreExplanation(s.scoreBreakdown).tags : [],
+      })),
+    });
   });
 
   app.get('/api/brief', async (c) => {

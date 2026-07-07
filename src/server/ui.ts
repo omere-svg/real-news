@@ -101,6 +101,8 @@ export function renderUI(defaults: UiDefaults): string {
   .how .step h3 .n { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:7px;
     background:var(--accent-soft); color:var(--accent); font-size:12px; font-weight:800; }
   .how .step p { margin:7px 0 0; color:var(--muted); font-size:12.5px; line-height:1.5; }
+  .how .under { grid-column:1/-1; color:var(--muted); font-size:12.5px; text-align:center; padding:6px 0 0; }
+  .how .under b { color:var(--fg-dim); font-weight:700; }
   @media (max-width:640px){ .how { grid-template-columns:1fr; } }
 
   /* Controls */
@@ -149,6 +151,8 @@ export function renderUI(defaults: UiDefaults): string {
   .badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--fg-dim);
     border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
   .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--td,#8b93a7); }
+  .stag { font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft);
+    border-radius:999px; padding:3px 9px; }
   .why { color:var(--fg-dim); margin:12px 0 0; }
   .why-score { margin-top:12px; font-size:13px; color:var(--muted); }
   .why-score summary { cursor:pointer; color:var(--accent); list-style:none; font-weight:600; width:max-content; }
@@ -227,9 +231,10 @@ export function renderUI(defaults: UiDefaults): string {
   </section>
 
   <section class="how" id="how">
-    <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source authority.</p></div>
-    <div class="step"><h3><span class="n">2</span> De-duplicated</h3><p>The same event from many sources is merged into one story, so you read it once with all its corroboration.</p></div>
-    <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> — and you can open the exact breakdown behind its score.</p></div>
+    <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source authority. Open <em>Why this score?</em> for the exact math.</p></div>
+    <div class="step"><h3><span class="n">2</span> De-duplicated</h3><p>The same event from many sources is merged into one story — so you read it once, with all its corroboration.</p></div>
+    <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> in one line, sized to the minutes you have.</p></div>
+    <div class="under" id="under">From <b>20+ official news &amp; data APIs</b> · <b>zero scraping</b> · re-read every few minutes<span id="freshness"></span></div>
   </section>
 
   <section class="controls">
@@ -449,7 +454,7 @@ if (CFG.authEnabled) {
 // ---- "Why this score?" — persisted breakdown as labelled bars (ADR-0037). ----
 const SCORE_LABELS = ${JSON.stringify(COMPONENT_LABELS)};
 function pct(v){ return Math.round(Number(v)*100) + '%'; }
-function breakdownHtml(b){
+function breakdownHtml(b, open){
   if(!b) return '';
   const bars = (b.components||[]).map(c =>
     '<div class="lbl">'+esc(SCORE_LABELS[c.key]||c.key)+'</div>'+
@@ -460,7 +465,7 @@ function breakdownHtml(b){
   const recency = b.recencyFactor!=null ? pct(b.recencyFactor) : '100%';
   const nudge = Math.abs(b.signalNudge) > 0.05 ? ' · attention/macro nudge '+(b.signalNudge>=0?'+':'')+Number(b.signalNudge).toFixed(1) : '';
   const facts = (s.corroboration||1)+' source(s) · recency '+recency+nudge;
-  return '<details class="why-score"><summary>Why this score?</summary>'+
+  return '<details class="why-score"'+(open?' open':'')+'><summary>Why this score?</summary>'+
     '<div class="bars">'+bars+'</div>'+
     '<div class="meta">'+esc(facts)+'</div></details>';
 }
@@ -514,16 +519,20 @@ async function loadStories(topics) {
       (topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.') + '</div>';
     return;
   }
-  list.innerHTML = '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map(s => {
+  list.innerHTML = '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map((s, i) => {
     const color = TOPIC_COLORS[s.topic] || '#8b93a7';
     const su = s.url ? safeUrl(s.url) : null;
     const title = su ? '<a href="'+esc(su)+'" target="_blank" rel="noopener">'+esc(s.title)+'</a>' : esc(s.title);
     const sources = [...new Set(s.memberRefs.map(r => r.source))].join(', ');
+    // Always-visible score rationale chips — the transparent-scoring differentiator
+    // shouldn't need a click (ADR-0050). The full breakdown stays one tap away, and
+    // the top story opens it by default so a first-time reader sees the math.
+    const tags = (s.scoreTags || []).map(t => '<span class="stag">'+esc(t)+'</span>').join('');
     return '<div class="card story"><div class="row"><p class="title">'+title+'</p>'+
       '<span class="scorepill">'+s.significance.toFixed(1)+'<span class="max">/10</span></span></div>'+
-      '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic)+'</span></div>'+
+      '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic)+'</span>'+tags+'</div>'+
       (s.whyItMatters ? '<p class="why">'+esc(s.whyItMatters)+'</p>' : '')+
-      breakdownHtml(s.scoreBreakdown)+
+      breakdownHtml(s.scoreBreakdown, i === 0)+
       '<div class="meta">'+s.memberRefs.length+' source'+(s.memberRefs.length===1?'':'s')+': '+esc(sources)+'</div></div>';
   }).join('');
 }
@@ -538,6 +547,19 @@ topicsBox.addEventListener('change', onPrefChanged);
 minutesInput.oninput = () => { minutesLabel.textContent = minutesInput.value + ' min'; };
 minutesInput.onchange = onPrefChanged;
 
+// ---- Live freshness stat (backend-visible): when did the worker last run? ----
+async function loadFreshness(){
+  try {
+    const r = await fetch('/api/ticks?limit=1');
+    const t = (await r.json()).ticks?.[0];
+    if (!t) return;
+    const secs = Math.max(0, Math.round((Date.now() - t.ranAt) / 1000));
+    const ago = secs < 90 ? secs+'s' : secs < 5400 ? Math.round(secs/60)+'m' : Math.round(secs/3600)+'h';
+    const el = document.getElementById('freshness');
+    if (el) el.textContent = ' · updated ' + ago + ' ago';
+  } catch (e) { /* freshness is a nicety; ignore */ }
+}
+
 // ---- Init: seed controls from cache, then let the server (if linked) win. ----
 (async function init(){
   const cached = readLS();
@@ -548,6 +570,7 @@ minutesInput.onchange = onPrefChanged;
   setFormat(cached.format || 'stories');
   minutesLabel.textContent = minutesInput.value + ' min';
   if (CFG.authEnabled) await refreshAuth(); // may override topics/minutes from the linked account
+  loadFreshness();
   load();
 })();
 </script>
