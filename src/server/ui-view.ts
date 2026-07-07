@@ -5,12 +5,17 @@ import { TOPICS } from '../domain/types.js';
  * the escaping and "why this score?" breakdown logic have a direct unit-test
  * surface instead of living only inside the inline client `<script>` string.
  *
- * `escHtml` and `breakdownHtml` are also injected VERBATIM (via `.toString()`)
- * into the client script in `renderUI` — one implementation, tested here in
- * Node and shipped unchanged to the browser (the same pattern `renderUI`
- * already uses for `COMPONENT_LABELS`, JSON-injected rather than re-typed).
- * Keep both functions self-contained (no closures over module state) so their
- * source is valid standalone JS once embedded.
+ * `escHtml`, `breakdownHtml`, and `emptyStateHtml` are also injected VERBATIM
+ * (via `.toString()`) into the client script in `renderUI` — one
+ * implementation, tested here in Node and shipped unchanged to the browser
+ * (the same pattern `renderUI` already uses for `COMPONENT_LABELS`,
+ * JSON-injected rather than re-typed).
+ * Keep these functions free of closures over module state (no imports, no
+ * outer-scope variables) so their source is valid standalone JS once
+ * embedded — but note they are NOT fully self-contained: `breakdownHtml` and
+ * `emptyStateHtml` both call `escHtml` as a free variable, so whichever
+ * splice site embeds them must splice `escHtml` first (see the ordering
+ * comment at the `renderUI` splice site in ui.ts).
  */
 
 /** Escape a string for safe interpolation into HTML text/attribute contexts. */

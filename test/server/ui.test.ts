@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import * as vm from 'node:vm';
 import { ago, breakdownHtml, emptyStateHtml, escHtml, fmtDuration, topicChips } from '../../src/server/ui-view.js';
 import { renderUI } from '../../src/server/ui.js';
 import { TOPICS } from '../../src/domain/types.js';
+
+/**
+ * Pulls a single top-level `const name = ...;` / `function name(...) {...}` /
+ * `async function name(...) {...}` declaration out of the shipped `<script>`
+ * source by name, using the declaration that follows it (`untilMarker`) as
+ * the end boundary. This lets tests execute a real slice of the shipped
+ * client script in a `vm` sandbox instead of merely grepping for substrings.
+ */
+function extractDecl(source: string, startMarker: string, untilMarker: string): string {
+  const start = source.indexOf(startMarker);
+  if (start === -1) throw new Error(`extractDecl: start marker not found: ${startMarker}`);
+  const end = source.indexOf(untilMarker, start);
+  if (end === -1) throw new Error(`extractDecl: end marker not found: ${untilMarker}`);
+  return source.slice(start, end).trim();
+}
 
 const LABELS = { impact: 'Real-world impact', corroboration: 'Corroboration' };
 
@@ -106,21 +122,33 @@ describe('ago / fmtDuration', () => {
 describe('renderUI — client script wiring (regression coverage)', () => {
   const html = renderUI({ minutes: 10 });
 
-  it('embeds the single-source-of-truth escHtml/breakdownHtml helpers verbatim', () => {
+  it('embeds the single-source-of-truth escHtml/breakdownHtml/emptyStateHtml helpers verbatim', () => {
     expect(html).toContain('const escHtml = function escHtml(s)');
     expect(html).toContain('const breakdownHtml = function breakdownHtml(b, open, labels)');
+    expect(html).toContain('const emptyStateHtml = function emptyStateHtml(headline, body)');
+  });
+
+  it('splices escHtml before breakdownHtml — breakdownHtml resolves escHtml as a free variable, not a closure', () => {
+    // Unenforced-by-the-type-system dependency: breakdownHtml (and
+    // emptyStateHtml) are injected as standalone function source, not
+    // closures, so they only work in the browser if escHtml has already
+    // been declared earlier in the same <script>. Guard the splice order.
+    const escHtmlIdx = html.indexOf('const escHtml =');
+    const emptyStateHtmlIdx = html.indexOf('const emptyStateHtml =');
+    const breakdownHtmlIdx = html.indexOf('const breakdownHtml =');
+    expect(escHtmlIdx).toBeGreaterThan(-1);
+    expect(emptyStateHtmlIdx).toBeGreaterThan(escHtmlIdx);
+    expect(breakdownHtmlIdx).toBeGreaterThan(escHtmlIdx);
   });
 
   it('regression: a bad/error stories payload cannot leave the skeletons spinning forever', () => {
     // The original bug read `.stories.length` outside the try that fetches it, so
     // an error body without `.stories` threw an uncaught TypeError and the
-    // skeleton loaders never cleared. This is client-side JS with no browser
-    // harness in this suite, so the closest server-testable regression guard is
-    // asserting the shipped script actually guards the shape *inside* the try
-    // (a revert of the fix would fail this).
+    // skeleton loaders never cleared. Source-position check as a cheap smoke
+    // test; the behavioral guard below actually executes the shipped code.
     expect(html).toContain('stories = Array.isArray(body.stories) ? body.stories : [];');
     const tryIdx = html.indexOf('const [res] = await Promise.all');
-    const catchIdx = html.indexOf("Couldn\\'t load stories");
+    const catchIdx = html.indexOf("Couldn't load stories");
     const guardIdx = html.indexOf('stories = Array.isArray(body.stories)');
     expect(tryIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeGreaterThan(tryIdx);
@@ -129,7 +157,51 @@ describe('renderUI — client script wiring (regression coverage)', () => {
 
   it('renders the empty/error state markup for stories, docs, and podcast-disabled', () => {
     expect(html).toContain('No stories match yet');
-    expect(html).toContain("Couldn\\'t load stories");
+    expect(html).toContain("Couldn't load stories");
     expect(html).toContain('Podcast is not enabled here');
+  });
+
+  describe('behavioral: loadStories actually clears the skeletons on a bad payload', () => {
+    // Extract the real shipped source for escHtml, emptyStateHtml, skeletons,
+    // and loadStories out of renderUI()'s output and execute them in a vm
+    // sandbox with a stubbed fetch/list — this exercises the actual shipped
+    // guard logic (not a grep of it), the technique proven during review.
+    const escHtmlSrc = extractDecl(html, 'const escHtml =', '\nfunction esc(s)');
+    const emptyStateHtmlSrc = extractDecl(html, 'const emptyStateHtml =', '\n// Only allow http(s) links');
+    const skeletonsSrc = extractDecl(html, 'function skeletons(n)', '\n\n// ---- Brief');
+    const loadStoriesSrc = extractDecl(html, 'async function loadStories(topics) {', '\n\nseg.addEventListener');
+
+    function makeSandbox(fetchImpl: (...args: unknown[]) => Promise<unknown>) {
+      const list = { innerHTML: '<div class="skel"></div>' };
+      const context = vm.createContext({
+        list,
+        fetch: fetchImpl,
+        getLastTickAt: async () => null,
+        URLSearchParams,
+      });
+      vm.runInContext(
+        `${escHtmlSrc}\n${emptyStateHtmlSrc}\n${skeletonsSrc}\n${loadStoriesSrc}`,
+        context,
+      );
+      return { context, list };
+    }
+
+    it('a non-2xx JSON error body with no .stories renders the empty state instead of hanging on skeletons', async () => {
+      const { context, list } = makeSandbox(async () => ({
+        json: async () => ({ error: 'boom' }),
+      }));
+      await context.loadStories([]);
+      expect(list.innerHTML).not.toContain('class="skel"');
+      expect(list.innerHTML).toContain('No stories match yet');
+    });
+
+    it('a rejected fetch (network failure) renders the load-error state instead of hanging on skeletons', async () => {
+      const { context, list } = makeSandbox(async () => {
+        throw new Error('network down');
+      });
+      await context.loadStories([]);
+      expect(list.innerHTML).not.toContain('class="skel"');
+      expect(list.innerHTML).toContain("Couldn't load stories");
+    });
   });
 });

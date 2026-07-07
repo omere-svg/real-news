@@ -1,7 +1,7 @@
 import type { TickRecord } from '../db/tick-report-repo.js';
 import type { TickReflection } from '../db/tick-reflection-repo.js';
 import { COMPONENT_LABELS } from '../presentation/score-explanation.js';
-import { ago, breakdownHtml, escHtml, fmtDuration, topicChips } from './ui-view.js';
+import { ago, breakdownHtml, emptyStateHtml, escHtml, fmtDuration, topicChips } from './ui-view.js';
 
 /** Defaults the viewer seeds its controls from (ADR-0015). */
 export interface UiDefaults {
@@ -325,8 +325,15 @@ let format = 'stories';
 
 // Single source of truth with the server (ui-view.ts, unit-tested there) —
 // injected verbatim so the browser runs the exact same escaping code.
+// NOTE splice order matters: breakdownHtml and emptyStateHtml below both call
+// escHtml as a free variable (they're spliced as standalone function source,
+// not closures), so escHtml MUST be defined first in the shipped script.
 const escHtml = ${escHtml.toString()};
 function esc(s){ return escHtml(s); }
+// emptyStateHtml is injected verbatim from ui-view.ts (unit-tested there) — one
+// implementation, shipped unchanged to the browser (same pattern as escHtml above).
+// Depends on escHtml already being defined above (see NOTE).
+const emptyStateHtml = ${emptyStateHtml.toString()};
 // Only allow http(s) links; a feed-controlled url must never reach an href raw
 // (a " breaks out of the attribute; a javascript: scheme runs on click). Returns
 // a safe absolute url or null (drop the link, keep the title).
@@ -462,6 +469,7 @@ if (CFG.authEnabled) {
 // ---- "Why this score?" — persisted breakdown as labelled bars (ADR-0037). ----
 // breakdownHtml is injected verbatim from ui-view.ts (unit-tested there) — one
 // implementation, shipped unchanged to the browser (same pattern as escHtml above).
+// It calls escHtml as a free variable, so escHtml must already be spliced above.
 const SCORE_LABELS = ${JSON.stringify(COMPONENT_LABELS)};
 const breakdownHtml = ${breakdownHtml.toString()};
 
@@ -499,7 +507,7 @@ function renderDoc(format, text){
       (summary ? '<p class="why">'+esc(summary)+'</p>' : '')+
       (why ? '<p class="why"><b>Why it matters — </b>'+esc(why)+'</p>' : '')+'</div>';
   }).join('');
-  if (!cards.trim()) return '<div class="empty"><div class="big">'+esc(header || text)+'</div></div>';
+  if (!cards.trim()) return emptyStateHtml(header || text, '');
   return '<div class="count">'+esc(header)+'</div>'+cards;
 }
 function renderScript(text){
@@ -532,7 +540,7 @@ async function load() {
     list.innerHTML = skeletons(1);
     const auto = await autoOutlineTopic(topics);
     if (!auto) {
-      list.innerHTML = '<div class="empty"><div class="big">Nothing to outline yet</div>The worker fills the cache on each tick — check back shortly.</div>';
+      list.innerHTML = emptyStateHtml('Nothing to outline yet', 'The worker fills the cache on each tick — check back shortly.');
       return;
     }
     hint.textContent = 'Deep dive: ' + auto + ' — the most significant ' +
@@ -545,15 +553,15 @@ async function load() {
     for (const t of topics) params.append('topic', t);
     const res = await fetch('/api/' + format + '?' + params);
     if (format === 'podcast' && res.status === 404) {
-      list.innerHTML = '<div class="empty"><div class="big">Podcast is not enabled here</div>The narrated podcast runs on the Telegram bot. Try Brief or Stories on the web.</div>';
+      list.innerHTML = emptyStateHtml('Podcast is not enabled here', 'The narrated podcast runs on the Telegram bot. Try Brief or Stories on the web.');
       return;
     }
     const body = await res.json();
     const text = body[DOC_FIELD[format]] || '';
-    if (!text.trim()) { list.innerHTML = '<div class="empty"><div class="big">Nothing to show yet</div>The worker fills the cache on each tick — check back shortly.</div>'; return; }
+    if (!text.trim()) { list.innerHTML = emptyStateHtml('Nothing to show yet', 'The worker fills the cache on each tick — check back shortly.'); return; }
     list.innerHTML = renderDoc(format, text);
   } catch (e) {
-    list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load that</div>Check your connection and try again.</div>';
+    list.innerHTML = emptyStateHtml("Couldn't load that", 'Check your connection and try again.');
   }
 }
 
@@ -570,12 +578,12 @@ async function loadStories(topics) {
     // forever — the shape check has to live inside this try, not after it.
     stories = Array.isArray(body.stories) ? body.stories : [];
   } catch (e) {
-    list.innerHTML = '<div class="empty"><div class="big">Couldn\\'t load stories</div>Check your connection and try again.</div>';
+    list.innerHTML = emptyStateHtml("Couldn't load stories", 'Check your connection and try again.');
     return;
   }
   if (!stories.length) {
-    list.innerHTML = '<div class="empty"><div class="big">No stories match yet</div>' +
-      (topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.') + '</div>';
+    list.innerHTML = emptyStateHtml('No stories match yet',
+      topics.length ? 'Try clearing a topic filter, or check back after the next tick.' : 'The worker fills the cache on each tick — check back shortly.');
     return;
   }
   list.innerHTML = editorsNote(stories) + '<div class="count">' + stories.length + ' stories · most significant first</div>' + stories.map((s, i) => {
