@@ -133,18 +133,21 @@ plainly rather than asserting a license we haven't read line-by-line.
 
 ## Live artifacts (captured samples, in this folder)
 
-- `stats.sample.json` — captured 2026-07-07T13:50Z via
-  `curl -s https://horizon-news.duckdns.org/api/stats`. Proves live
-  accumulation since the day's reset: 315 stories, 17 multi-source stories,
-  264 stories updated across ticks, 3,342 signal observations, 5 ticks
-  recorded, and today's per-tier token spend (cheap/deep split) — the exact
-  fields the moat and cost-ceiling claims rest on.
+- `stats.sample.json` — captured 2026-07-07 (post-deploy of the pinned commit)
+  via `curl -s https://horizon-news.duckdns.org/api/stats`. Proves live
+  accumulation since the day's reset: 581 stories, 33 multi-source stories,
+  490 stories updated across ticks, 10,539 signal observations, 6 ticks
+  recorded, and today's per-tier token spend (cheap/deep/embed split, plus TTS
+  characters) — the exact fields the moat and cost-ceiling claims rest on.
 - `tick-report.sample.json` — captured the same minute via
-  `curl -s "https://horizon-news.duckdns.org/api/ticks?limit=3"`. Proves
-  **per-source isolation is live in production**: each of the 3 most recent
-  ticks shows `ok:true` even though individual sources failed that tick
-  (`gdelt` fetch failures, a `knesset` timeout, a `gdelt-signal` 429) — a
-  failing source no longer takes the tick down.
+  `curl -s "https://horizon-news.duckdns.org/api/ticks?limit=3"`. Proves two
+  things at once. **Per-source isolation is live in production**: the most
+  recent full tick upserted 302 stories with `ok:true` even though `gdelt`
+  returned a 429, `gdelt-signal` returned a 429, and `timesofisrael` was
+  skipped that tick — a failing source no longer takes the tick down. And the
+  **cross-process lock** is live: the newest entry is a `tick skipped: lock held
+  by another process` (still `ok:true`), exactly the single-writer guard that
+  keeps two instances off one DB.
 - `chat-traces.sample.json` — **not exported**. `/api/chat-traces` is empty on
   the currently deployed build until the new build ships and someone chats
   with the bot; exporting an empty array would misrepresent what the feature
