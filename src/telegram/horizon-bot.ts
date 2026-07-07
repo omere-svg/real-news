@@ -30,6 +30,7 @@ import type { WebSearch } from '../web/web-search.js';
 import type { ToolCapableTransport } from '../llm/chat-transport.js';
 import type { SignalObservationRepo } from '../db/signal-observation-repo.js';
 import type { ChatTraceRepo } from '../db/chat-trace-repo.js';
+import type { ChatSessionRepo } from '../db/chat-session-repo.js';
 import { buildChatTools, ChatAgent } from './chat-agent.js';
 import { applyFeedback, type PreferenceProfile } from '../preferences/feedback.js';
 import { normalizeMinutes } from '../presentation/minutes.js';
@@ -106,6 +107,8 @@ export interface HorizonBotDeps {
   readonly signals?: Pick<SignalObservationRepo, 'latestTrends'>;
   /** Persists chat-agent trajectories as inspectable traces (ADR-0053). */
   readonly traces?: ChatTraceRepo;
+  /** Durable session backing: conversations survive restarts (ADR-0053). */
+  readonly sessionRepo?: ChatSessionRepo;
   /** Claims web pairing codes to link a web session to this chat (ADR-0040); omit to disable. */
   readonly webLink?: WebLinker;
   /** TTS for podcast audio; null sends the script as text (ADR-0020). */
@@ -157,8 +160,9 @@ const HELP = [
 ].join('\n');
 
 export class HorizonBot {
-  /** Per-chat conversational state (ADR-0028/0029). In-memory; transient by design. */
-  private readonly sessions = new SessionStore();
+  /** Per-chat conversational state (ADR-0028/0029); durable when a session
+   * repo is wired, so a deploy mid-conversation keeps the context (ADR-0053). */
+  private readonly sessions: SessionStore;
 
   /** Cost/rate policy, extracted from the dispatcher (ADR-0052). */
   private readonly quota: QuotaGuard;
@@ -166,6 +170,7 @@ export class HorizonBot {
   private readonly grounding: ChatGrounding | undefined;
 
   constructor(private readonly deps: HorizonBotDeps) {
+    this.sessions = new SessionStore(undefined, undefined, deps.sessionRepo);
     this.quota = new QuotaGuard(deps.usage, deps.limits, deps.transport);
     this.grounding = deps.storyRepo
       ? new ChatGrounding(deps.storyRepo, deps.embedder, deps.defaults.topics as readonly Topic[] | undefined)
@@ -462,7 +467,8 @@ export class HorizonBot {
 
     const prefs = await this.deps.prefs.get(chatId);
     const memory = prefs?.memory;
-    const history = this.session(chatId).history;
+    // Hydrated from the durable store after a restart (ADR-0053).
+    const history = await this.sessions.history(chatId, this.deps.clock.now());
 
     // The agent loop (ADR-0053): the model drives tool selection. Any failure
     // degrades to the fixed retrieve→answer path below — never to the user.

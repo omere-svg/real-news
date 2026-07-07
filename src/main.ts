@@ -17,6 +17,7 @@ import { DrizzleSignalObservationRepo, type SignalObservationRepo } from './db/s
 import { DrizzleTickReflectionRepo } from './db/tick-reflection-repo.js';
 import { DrizzleAgentPolicyRepo } from './db/agent-policy-repo.js';
 import { DrizzleChatTraceRepo, type ChatTraceRepo } from './db/chat-trace-repo.js';
+import { DrizzleChatSessionRepo, type ChatSessionRepo } from './db/chat-session-repo.js';
 import { DrizzleTickLock } from './db/tick-lock-repo.js';
 import type { TickDigest } from './llm/llm-client.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
@@ -236,6 +237,7 @@ async function main(): Promise<void> {
   const tickReflectionRepo = new DrizzleTickReflectionRepo(db);
   const agentPolicyRepo = new DrizzleAgentPolicyRepo(db);
   const chatTraceRepo = new DrizzleChatTraceRepo(db);
+  const chatSessionRepo = new DrizzleChatSessionRepo(db);
   // Shared across the web viewer and the Telegram bot so a linked user sees the
   // same preferences on both surfaces (ADR-0040).
   const chatPrefs = new DrizzleChatPreferencesRepo(db);
@@ -302,8 +304,9 @@ async function main(): Promise<void> {
     if (retention.pruneExpiredAuth) await webAuth.pruneExpired(systemClock.now());
     // Drop raw provenance no Story kept, so raw_items can't grow without bound (ADR-0047).
     if (retention.pruneUnreferencedRawItems) await rawItemRepo.pruneUnreferenced();
-    // Chat-agent trajectories are bounded the same way (ADR-0053).
+    // Chat-agent trajectories and idle durable sessions are bounded too (ADR-0053).
     await chatTraceRepo.pruneToRecent(200);
+    await chatSessionRepo.pruneIdleSince(systemClock.now() - 7 * 24 * 3600_000);
 
     if (retention.reflectEveryTicks > 0 && tickCount % retention.reflectEveryTicks === 0) {
       // Reason over the trailing window of ticks as a group; persist the note
@@ -555,7 +558,7 @@ async function main(): Promise<void> {
   if (config.telegram.enabled) {
     startTelegramBot(
       config, db, queryEngine, defaults, llm, storyRepo, chatPrefs, webAuth, embedder, usage,
-      openaiTransport, signalObservationRepo, chatTraceRepo,
+      openaiTransport, signalObservationRepo, chatTraceRepo, chatSessionRepo,
     );
   }
 }
@@ -607,6 +610,8 @@ function startTelegramBot(
   signals?: SignalObservationRepo,
   /** Persisted chat-agent trajectories (ADR-0053). */
   traces?: ChatTraceRepo,
+  /** Durable chat sessions — conversations survive deploys (ADR-0053). */
+  sessionRepo?: ChatSessionRepo,
 ): void {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -648,6 +653,7 @@ function startTelegramBot(
     ...(chat && agentTransport ? { agentTransport } : {}),
     ...(chat && signals ? { signals } : {}),
     ...(chat && traces ? { traces } : {}),
+    ...(sessionRepo ? { sessionRepo } : {}),
     prefs,
     // Lets a `t.me/<bot>?start=link_<code>` deep link connect the web app (ADR-0040).
     webLink: webAuth,
