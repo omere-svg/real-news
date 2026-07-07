@@ -90,18 +90,22 @@ export class QuotaGuard {
     const day = utcDay(now);
     const { usage, transport, limits } = this;
 
-    const cmds = await usage.incrementAndGet(`chat:${chatId}:cmd`, day);
-    if (cmds > limits.commandsPerDay) {
-      if (cmds === limits.commandsPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.commands);
-      return false;
-    }
-
     // Process-wide daily ceiling across all chats — the hard total-cost backstop
     // that makes openAccess safe (bounds the chat/discuss LLM spend too). ADR-0031.
+    // Charged (and gated) *before* the per-chat counter so a globally-blocked
+    // request doesn't burn the user's own daily allowance for nothing — the same
+    // "don't charge what you're about to refuse" principle as the podcast path
+    // (ADR-0051), backported here.
     const totalCmds = await usage.incrementAndGet('global:cmd', day);
     if (totalCmds > limits.globalCommandsPerDay) {
       if (totalCmds === limits.globalCommandsPerDay + 1)
         await transport.sendMessage(chatId, LIMIT_MSG.globalCommands);
+      return false;
+    }
+
+    const cmds = await usage.incrementAndGet(`chat:${chatId}:cmd`, day);
+    if (cmds > limits.commandsPerDay) {
+      if (cmds === limits.commandsPerDay + 1) await transport.sendMessage(chatId, LIMIT_MSG.commands);
       return false;
     }
 

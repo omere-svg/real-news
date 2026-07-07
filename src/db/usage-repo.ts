@@ -27,18 +27,14 @@ export class DrizzleUsageRepo implements UsageRepo {
   constructor(private readonly db: Db) {}
 
   async incrementAndGet(key: string, day: string): Promise<number> {
-    await this.db
+    const rows = await this.db
       .insert(usage)
       .values({ key, day, count: 1 })
       .onConflictDoUpdate({
         target: [usage.key, usage.day],
         set: { count: sql`${usage.count} + 1` },
-      });
-
-    const rows = await this.db
-      .select({ count: usage.count })
-      .from(usage)
-      .where(and(eq(usage.key, key), eq(usage.day, day)));
+      })
+      .returning({ count: usage.count });
     return rows[0]?.count ?? 0;
   }
 

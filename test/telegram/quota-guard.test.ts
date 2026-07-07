@@ -53,4 +53,10 @@ describe('QuotaGuard (ADR-0052)', () => {
     expect(await g.withinQuota(1, { kind: 'podcast' }, 0)).toBe(false); // global blocks
     expect(await usage.peek('chat:1:podcast', '1970-01-01')).toBe(0); // personal untouched
   });
+
+  it('a global command refusal does not consume the per-chat allowance', async () => {
+    const { g, usage } = await guard({ globalCommandsPerDay: 0 });
+    expect(await g.withinQuota(1, { kind: 'brief' }, 0)).toBe(false); // global blocks
+    expect(await usage.peek('chat:1:cmd', '1970-01-01')).toBe(0); // personal untouched
+  });
 });
