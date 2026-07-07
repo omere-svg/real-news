@@ -7,6 +7,7 @@ import { DrizzleTickReportRepo, type TickRecord } from '../../src/db/tick-report
 import { DrizzleChatPreferencesRepo } from '../../src/db/chat-preferences-repo.js';
 import { DrizzleWebAuthRepo } from '../../src/db/web-auth-repo.js';
 import { DrizzleUsageRepo } from '../../src/db/usage-repo.js';
+import { DrizzleChatTraceRepo } from '../../src/db/chat-trace-repo.js';
 import { HorizonQuery, type QueryParams } from '../../src/presentation/horizon-query.js';
 import { createTestDb } from '../helpers/test-db.js';
 import { FakeClock } from '../helpers/fake-clock.js';
@@ -327,6 +328,29 @@ describe('HTTP API', () => {
       stories: 2, signalObservations: 0, oldestSignalAt: null, ticksRecorded: 0,
       tokens: { cheap: 0, deep: 0, total: 0 }, // no usage store wired
     });
+  });
+
+  it('public chat-traces endpoint never returns the full question text', async () => {
+    const db = await createTestDb();
+    const repo = new DrizzleStoryRepo(db, new FakeClock(1000));
+    const chatTraces = new DrizzleChatTraceRepo(db);
+    const fullQuestion = 'q'.repeat(300);
+    await chatTraces.record({
+      createdAt: 1000, question: fullQuestion, steps: [], answeredFromNews: false,
+    });
+    const queryEngine = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+    const app = createApp(
+      repo, queryEngine, { minutes: 10 },
+      { maxMinutes: 60, maxPodcastMinutes: 20, podcastEnabled: false },
+      undefined, undefined, undefined, undefined, chatTraces,
+    );
+
+    const res = await app.request('/api/chat-traces');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { traces: { question: string }[] };
+    expect(body.traces).toHaveLength(1);
+    expect(body.traces[0]?.question).not.toBe(fullQuestion);
+    expect(body.traces[0]?.question.length).toBeLessThanOrEqual(80);
   });
 
   it("GET /api/stats surfaces today's durable LLM token counters", async () => {

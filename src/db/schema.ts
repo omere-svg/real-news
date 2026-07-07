@@ -232,7 +232,7 @@ export const chatTraces = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     createdAt: integer('created_at').notNull(),
-    /** The reader's question (clamped). */
+    /** An 80-char preview of the reader's question, never the verbatim text (privacy). */
     question: text('question').notNull(),
     /** The trajectory: [{step, tool, args, resultPreview}]. */
     steps: text('steps', { mode: 'json' }).$type<StoredTraceStep[]>().notNull(),

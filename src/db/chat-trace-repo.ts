@@ -11,6 +11,7 @@ import { chatTraces, type StoredTraceStep } from './schema.js';
 export interface ChatTrace {
   readonly id: number;
   readonly createdAt: number;
+  /** An 80-char preview, never the verbatim question — see `previewOf` below. */
   readonly question: string;
   readonly steps: readonly StoredTraceStep[];
   readonly answeredFromNews: boolean;
@@ -23,7 +24,18 @@ export interface ChatTraceInput {
   readonly answeredFromNews: boolean;
 }
 
-const MAX_QUESTION_CHARS = 300;
+/**
+ * The public trace is inspectable "how I answered" evidence, not a transcript —
+ * the reader's verbatim question is never stored past this preview length
+ * (privacy; mirrors the `save_memory` arg redaction in chat-agent.ts).
+ */
+const QUESTION_PREVIEW_CHARS = 80;
+
+function previewOf(question: string): string {
+  return question.length > QUESTION_PREVIEW_CHARS
+    ? `${question.slice(0, QUESTION_PREVIEW_CHARS - 1)}…`
+    : question;
+}
 
 export interface ChatTraceRepo {
   record(rec: ChatTraceInput): Promise<void>;
@@ -39,7 +51,7 @@ export class DrizzleChatTraceRepo implements ChatTraceRepo {
   async record(rec: ChatTraceInput): Promise<void> {
     await this.db.insert(chatTraces).values({
       createdAt: rec.createdAt,
-      question: rec.question.slice(0, MAX_QUESTION_CHARS),
+      question: previewOf(rec.question),
       steps: [...rec.steps],
       answeredFromNews: rec.answeredFromNews,
     });

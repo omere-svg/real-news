@@ -127,7 +127,8 @@ export function createApp(
 
   // The chat agent's tool-loop trajectories (ADR-0053): which tools the model
   // chose, in what order, and whether the answer was grounded — the public,
-  // inspectable "how I answered" evidence. No chat identity is stored.
+  // inspectable "how I answered" evidence. No chat identity is stored, and the
+  // reader's question is redacted to an 80-char preview at the writer (repo).
   app.get('/api/chat-traces', async (c) => {
     const limit = normalizeLimit(c.req.query('limit'), 20);
     return c.json({ traces: chatTraces ? await chatTraces.recent(limit) : [] });

@@ -10,7 +10,7 @@ const step = (n: number, tool: string) => ({
 });
 
 describe('DrizzleChatTraceRepo (ADR-0053)', () => {
-  it('records and reads back a trace, newest first, question clamped', async () => {
+  it('records and reads back a trace, newest first, question redacted to a preview', async () => {
     const repo = new DrizzleChatTraceRepo(await createTestDb());
     await repo.record({
       createdAt: 1000,
@@ -23,9 +23,21 @@ describe('DrizzleChatTraceRepo (ADR-0053)', () => {
     const traces = await repo.recent(10);
     expect(traces).toHaveLength(2);
     expect(traces[0]?.question).toBe('later');
-    expect(traces[1]?.question).toHaveLength(300); // clamped at the writer
+    // Never the verbatim question — only an 80-char preview (ADR-0053 privacy).
+    expect(traces[1]?.question).toHaveLength(80);
+    expect(traces[1]?.question.endsWith('…')).toBe(true);
     expect(traces[1]?.steps.map((s) => s.tool)).toEqual(['search_stories', 'web_search']);
     expect(traces[1]?.answeredFromNews).toBe(true);
+  });
+
+  it('never stores the full question when it exceeds the preview length', async () => {
+    const repo = new DrizzleChatTraceRepo(await createTestDb());
+    const question = 'q'.repeat(300);
+    await repo.record({ createdAt: 1000, question, steps: [], answeredFromNews: false });
+
+    const [trace] = await repo.recent(10);
+    expect(trace?.question).not.toBe(question);
+    expect(trace?.question.length).toBeLessThanOrEqual(80);
   });
 
   it('pruneToRecent keeps only the newest traces', async () => {
