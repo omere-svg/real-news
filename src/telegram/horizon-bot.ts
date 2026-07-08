@@ -162,8 +162,6 @@ const HELP = [
   '      “why did markets drop today?”',
   '🎛  Tune it to you',
   '      “more AI, less sports, keep it short”  ·  /prefs',
-  '🧠  Remember you',
-  '      “remember I’m a backend dev in Tel Aviv”  ·  /forget',
   '☀️  A daily brief, on your schedule',
   '      /subscribe 08:00 (UTC)  ·  /subscribe off',
   '',
@@ -298,8 +296,6 @@ export class HorizonBot {
         return { kind: 'feedback', text };
       case 'remember':
         return { kind: 'remember', text };
-      case 'forget':
-        return { kind: 'forget' };
       case 'help':
         return { kind: 'help' };
     }
@@ -412,9 +408,6 @@ export class HorizonBot {
 
       case 'remember':
         return this.handleRemember(chatId, command.text);
-
-      case 'forget':
-        return this.handleForget(chatId);
 
       case 'chat':
         return this.handleChat(chatId, command.text);
@@ -668,7 +661,7 @@ export class HorizonBot {
     await prefs.set(chatId, { memory: merged });
     return transport.sendMessage(
       chatId,
-      "Saved — I'll keep that in mind. (/prefs to view · /forget to clear)",
+      "Saved — I'll keep that in mind. (/prefs to view)",
     );
   }
 
@@ -709,16 +702,6 @@ export class HorizonBot {
           'I don’t recognize that link code. Double-check it, or generate a new one on the web.',
         );
     }
-  }
-
-  /** Clear the chat's remembered context (ADR-0028). */
-  private async handleForget(chatId: number): Promise<void> {
-    const { transport, prefs } = this.deps;
-    if (!(await prefs.get(chatId))?.memory) {
-      return transport.sendMessage(chatId, 'Nothing remembered.');
-    }
-    await prefs.set(chatId, { memory: undefined });
-    return transport.sendMessage(chatId, 'Cleared what I was remembering about you.');
   }
 
   /**

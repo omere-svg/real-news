@@ -302,7 +302,6 @@ export type RouterAction =
   | 'clearPrefs'
   | 'feedback'
   | 'remember'
-  | 'forget'
   | 'help';
 
 export interface RouteInput {

@@ -86,7 +86,6 @@ const routerActionSchema = z
     'clearPrefs',
     'feedback',
     'remember',
-    'forget',
     'help',
   ])
   .catch('help');
@@ -462,7 +461,6 @@ export class Reasoner implements LLMClient {
         `- "clearPrefs": they want to RESET / clear all their preferences back to default.\n` +
         `- "feedback": they want to fine-tune emphasis without a hard filter (more/less of something, shorter/longer).\n` +
         `- "remember": they share personal context for you to keep in mind.\n` +
-        `- "forget": they want you to drop what you remember about them.\n` +
         `- "help": greetings, "what can you do", a menu request, or anything unclear.\n\n` +
         `Respond with a JSON object ` +
         `{"action": <one action>, "minutes": <positive number or null>}. ` +

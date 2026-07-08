@@ -21,7 +21,6 @@ export type Command =
   | { kind: 'feedback'; text: string }
   | { kind: 'feedbackUndo' }
   | { kind: 'remember'; text: string }
-  | { kind: 'forget' }
   | { kind: 'chat'; text: string }
   /** Scheduled daily brief (ADR-0053): `/subscribe 08:00`, `/subscribe off`, bare shows status. */
   | { kind: 'subscribe'; time?: string; off?: boolean }
@@ -83,8 +82,6 @@ export function parseCommand(text: string): Command {
     }
     case 'remember':
       return { kind: 'remember', text: args.join(' ') };
-    case 'forget':
-      return { kind: 'forget' };
     case 'chat':
     case 'ask':
       return { kind: 'chat', text: args.join(' ') };

@@ -84,7 +84,7 @@ npm start
 **Just talk to it (ADR-0030).** Plain English and tap-to-run buttons are the primary UX — the
 Reasoner routes free text ("what's new in AI?", "make it shorter") to the right action, and
 `/start` surfaces inline menus. Slash commands still work as aliases: `/brief 3`,
-`/podcast 1`, `/chat <question>`, `/prefs topics AI,Geopolitics`, `/remember <note>`, `/forget`,
+`/podcast 1`, `/chat <question>`, `/prefs topics AI,Geopolitics`, `/remember <note>`,
 `/subscribe 08:00`.
 Podcast audio needs `OPENAI_API_KEY` (TTS); without it the script is sent as text. Restrict who
 can use the bot with `telegram.allowedChatIds`.
@@ -103,7 +103,7 @@ preference-weighted brief every morning — deterministic cache reads, zero mode
 `/subscribe off` stops it.
 
 **Personal memory (ADR-0028):** `/remember I'm a backend dev in Tel Aviv` keeps a free-text note
-that colors narration and chat phrasing; `/forget` clears it. Memory shapes *wording*; preference
+that colors narration and chat phrasing. Memory shapes *wording*; preference
 weights shape *ranking* — they're separate.
 
 **Tune it in plain English (ADR-0026):** `/feedback more AI, less sports, keep it shorter` — the

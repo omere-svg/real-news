@@ -51,13 +51,12 @@ describe('parseCommand', () => {
     });
   });
 
-  it('parses /remember, /forget, and /chat (ADR-0028/0029)', () => {
+  it('parses /remember and /chat (ADR-0028/0029)', () => {
     expect(parseCommand('/remember I run a logistics startup in Haifa')).toEqual({
       kind: 'remember',
       text: 'I run a logistics startup in Haifa',
     });
     expect(parseCommand('/remember')).toEqual({ kind: 'remember', text: '' });
-    expect(parseCommand('/forget')).toEqual({ kind: 'forget' });
     expect(parseCommand('/chat what happened with the merger?')).toEqual({
       kind: 'chat',
       text: 'what happened with the merger?',

@@ -40,7 +40,6 @@ const FREE_COMMANDS: ReadonlySet<Command['kind']> = new Set([
   'prefsClear',
   'feedbackUndo',
   'remember',
-  'forget',
 ]);
 
 export function isFreeCommand(kind: Command['kind']): boolean {

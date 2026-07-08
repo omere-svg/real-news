@@ -260,7 +260,7 @@ export function renderUI(defaults: UiDefaults): string {
     <div class="subctl">
       <div class="topics" id="topics">${topicChips(defaults.topics ?? [])}</div>
       <label class="budget" id="budgetCtl">⏱ Time <input id="minutes" type="range" min="1" max="30" value="${defaults.minutes}" /> <b id="minutesLabel">${defaults.minutes} min</b></label>
-      <button class="gen-btn" id="genBtn" type="button">✨ Generate</button>
+      ${defaults.podcastEnabled ? '<button class="gen-btn hidden" id="genBtn" type="button">✨ Generate</button>' : ''}
     </div>
   </section>
 
@@ -324,7 +324,7 @@ const TOPIC_COLORS = {
 document.querySelectorAll('.chip').forEach(c => c.style.setProperty('--td', TOPIC_COLORS[c.dataset.topic] || '#8b93a7'));
 
 const HINTS = {
-  brief: 'A tight, bulleted summary sized to the minutes you pick — press ✨ Generate to build it.',
+  brief: 'A tight, bulleted summary sized to the minutes you pick — updates as you choose.',
   podcast: 'A short narrated audio episode of your top stories — press ✨ Generate to produce it.'
 };
 const DOC_FIELD = { brief: 'brief' };
@@ -357,7 +357,10 @@ const emptyStateHtml = ${emptyStateHtml.toString()};
 function safeUrl(u){ try { const p = new URL(u, location.origin); return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null; } catch { return null; } }
 function selectedTopics(){ return [...topicsBox.querySelectorAll('input[name="topic"]:checked')].map(c => c.value); }
 function setTopics(list){ const set = new Set(list || []); topicsBox.querySelectorAll('input[name="topic"]').forEach(i => { i.checked = set.has(i.value); }); }
-function setFormat(f){ if(f && seg.querySelector('button[data-fmt="'+f+'"]')) format = f; seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fmt === format))); }
+// The Brief auto-loads for free, so the explicit ✨ Generate button is only
+// meaningful for the Podcast (the one format that spends the model + TTS). Show
+// it only while Podcast is the selected format; hide it otherwise.
+function setFormat(f){ if(f && seg.querySelector('button[data-fmt="'+f+'"]')) format = f; seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fmt === format))); if (genBtn) genBtn.classList.toggle('hidden', format !== 'podcast'); }
 
 // ---- Preferences persistence ----
 // Guests: everything is cached in this browser (localStorage). Once linked to
@@ -616,8 +619,9 @@ seg.addEventListener('click', e => {
   cacheLocal(); // format is a local UI preference, not a synced one
   render();
 });
-// The only place a doc format actually generates — an explicit, deliberate spend.
-genBtn.onclick = async () => {
+// The only place a doc format actually generates — an explicit, deliberate
+// spend. Present only for the Podcast (the Brief auto-loads for free).
+if (genBtn) genBtn.onclick = async () => {
   genBtn.disabled = true;
   try { await load(); } finally { genBtn.disabled = false; }
 };

@@ -394,8 +394,8 @@ describe('HorizonBot', () => {
 
   // --- Per-chat memory (ADR-0028) ---
 
-  describe('/remember and /forget', () => {
-    it('saves, appends, shows in /prefs, and clears memory', async () => {
+  describe('/remember', () => {
+    it('saves, appends, and shows in /prefs', async () => {
       const { bot, transport, prefs } = await build();
 
       await bot.handle(update(5, '/remember I trade commodities'));
@@ -406,10 +406,6 @@ describe('HorizonBot', () => {
 
       await bot.handle(update(5, '/prefs'));
       expect(transport.messages.at(-1)?.text).toMatch(/Remembered: I trade commodities; and follow shipping/);
-
-      await bot.handle(update(5, '/forget'));
-      expect((await prefs.get(5))?.memory).toBeUndefined();
-      expect(transport.messages.at(-1)?.text).toMatch(/cleared/i);
     });
 
     it('empty /remember shows usage', async () => {

@@ -105,8 +105,8 @@ tier** only for the top-N most significant Stories.
 
 **Memory**
 A single free-text note a chat keeps about itself (ADR-0028) — who it is, what it cares about —
-that is injected as reader context into narration and chat. `/remember <text>` appends; `/forget`
-clears. Distinct from Preference weights (which bias *ranking*); Memory biases *phrasing*.
+that is injected as reader context into narration and chat. `/remember <text>` appends.
+Distinct from Preference weights (which bias *ranking*); Memory biases *phrasing*.
 
 **Preference weight**
 A per-Topic multiplier a single chat sets to bias its own briefs (ADR-0026):
@@ -171,7 +171,7 @@ crashing it.
 offer exactly two reader formats — the text **brief** and the narrated **podcast** (ADR-0060) —
 plus per-chat preferences and Memory. The bot's primary UX is **plain English + tap-to-run
 buttons** (ADR-0030) — free text is routed to an intent; slash commands (`/brief`, `/podcast`,
-`/chat`, `/prefs`, `/feedback`, `/remember`, `/forget`) remain as aliases. It also supports
+`/chat`, `/prefs`, `/feedback`, `/remember`) remain as aliases. It also supports
 **Chat** — conversational Q&A grounded in the cached Stories. When a tool-capable transport is
 wired it is a bounded **Chat Agent** (ADR-0053): the model itself drives, choosing tools
 (cache search, story detail, signal trends, web search, save-memory) until it can answer, with
