@@ -205,6 +205,12 @@ function toBriefStory({ story, depth }: BudgetedStory): BriefStory {
         : null;
   const whyItMatters = depth === 'full' ? (story.whyItMatters?.trim() || null) : null;
   const exp = story.scoreBreakdown ? scoreExplanation(story.scoreBreakdown) : null;
+  // The web surface intentionally hides the "public attention" axis (its driver
+  // bar and its "high public interest" tag): attention is a bounded popularity
+  // nudge, not editorial newsworthiness, and showing it invites the wrong read.
+  // The score itself still uses it (see compute-base-score) — this is display-only.
+  const drivers = (exp?.drivers ?? []).filter((d) => d.key !== 'attention');
+  const tags = (exp?.tags ?? []).filter((t) => t !== 'high public interest');
   return {
     title: story.displayTitle || story.title,
     topic: story.topic,
@@ -213,8 +219,8 @@ function toBriefStory({ story, depth }: BudgetedStory): BriefStory {
     summary,
     whyItMatters,
     depth,
-    tags: exp?.tags ?? [],
-    drivers: exp?.drivers ?? [],
+    tags,
+    drivers,
     recencyFactor: exp?.recencyFactor ?? 0,
     corroboration: exp?.corroboration ?? 0,
     signalNudge: exp?.signalNudge ?? 0,

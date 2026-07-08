@@ -171,6 +171,13 @@ export function renderUI(defaults: UiDefaults): string {
   .script-p { margin:0 0 13px; color:var(--fg-dim); font-size:16px; line-height:1.7; }
   .script-p:last-child { margin-bottom:0; }
   .why b { color:var(--fg); font-weight:700; }
+  /* Per-story source link (ADR-0027 provenance) — a compact pill, not a raw URL. */
+  .src-link { display:inline-flex; align-items:center; gap:6px; margin-top:13px; font-size:12.5px; font-weight:700;
+    color:var(--accent); text-decoration:none; border:1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+    border-radius:999px; padding:5px 12px; transition:border-color .15s, background .15s, transform .05s; }
+  .src-link:hover { border-color:var(--accent); background:var(--accent-soft); }
+  .src-link:active { transform:translateY(1px); }
+  .src-link .arr { font-size:11px; opacity:.85; }
 
   /* Profile popover + modal */
   .pop { position:fixed; inset:0; z-index:50; display:none; align-items:flex-start; justify-content:center; }
@@ -245,7 +252,7 @@ export function renderUI(defaults: UiDefaults): string {
   </section>
 
   <section class="how" id="how">
-    <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source authority. Open <em>Why this score?</em> for the exact math.</p></div>
+    <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source newsworthiness. Open <em>Why this score?</em> for the exact math.</p></div>
     <div class="step"><h3><span class="n">2</span> Cross-checked</h3><p>The same event from many sources becomes one story, corroborated across all of them — so no single outlet decides what you see, and nothing important slips through.</p></div>
     <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> in one line, sized to the minutes you have.</p></div>
     <div class="under" id="under">From <b>20+ official news &amp; data APIs</b> · <b>zero scraping</b> · re-read every few minutes<span id="freshness"></span></div>
@@ -512,12 +519,13 @@ function renderDoc(format, text){
     const sigBit = bits.find(b => /significance/i.test(b));
     const sig = sigBit ? sigBit.replace(/significance/i,'').trim() : '';
     const color = TOPIC_COLORS[topic] || '#8b93a7';
-    const tags = bits.filter(b => b !== topic && b !== sigBit).map(t => '<span class="stag">'+esc(t)+'</span>').join('');
+    const tags = bits.filter(b => b !== topic && b !== sigBit && b.toLowerCase() !== 'high public interest').map(t => '<span class="stag">'+esc(t)+'</span>').join('');
     const pill = sig ? '<span class="scorepill">'+esc(sig)+'<span class="max">/10</span></span>' : '';
     return '<div class="card story"><div class="row"><p class="title">'+titleHtml+'</p>'+pill+'</div>'+
       '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(topic)+'</span>'+tags+'</div>'+
       (summary ? '<p class="why">'+esc(summary)+'</p>' : '')+
-      (why ? '<p class="why"><b>Why it matters — </b>'+esc(why)+'</p>' : '')+'</div>';
+      (why ? '<p class="why"><b>Why it matters — </b>'+esc(why)+'</p>' : '')+
+      srcLink(su)+'</div>';
   }).join('');
   if (!cards.trim()) return emptyStateHtml(header || text, '');
   return '<div class="count">'+esc(header)+'</div>'+cards;
@@ -528,6 +536,10 @@ function renderDoc(format, text){
 // render the exact scoring math (per-axis bars + recency/corroboration/nudge) in
 // an expandable panel — the transparency the how-strip promises. renderDoc above
 // stays as the text fallback if a response ever lacks the structured stories.
+// A compact "Read the full article ↗" pill linking to the story's canonical
+// source (ADR-0027). Takes an already-safe url (or null → renders nothing), so
+// a feed-controlled link can never reach the href unchecked.
+function srcLink(su){ return su ? '<a class="src-link" href="'+esc(su)+'" target="_blank" rel="noopener">Read the full article <span class="arr">↗</span></a>' : ''; }
 function scoreBar(label, value){
   const pct = Math.max(0, Math.min(100, Math.round((Number(value)||0)*100)));
   return '<div class="drv"><span class="lbl">'+esc(label)+'</span>'+
@@ -559,6 +571,7 @@ function renderBriefStories(header, stories){
       '<div class="badges"><span class="badge" style="--td:'+color+'"><span class="dot"></span>'+esc(s.topic||'')+'</span>'+tags+'</div>'+
       (s.summary ? '<p class="why">'+esc(s.summary)+'</p>' : '')+
       (s.whyItMatters ? '<p class="why"><b>Why it matters — </b>'+esc(s.whyItMatters)+'</p>' : '')+
+      srcLink(su)+
       whyScoreHtml(s)+'</div>';
   }).join('');
   if (!cards.trim()) return emptyStateHtml(header || 'Nothing to show yet', '');

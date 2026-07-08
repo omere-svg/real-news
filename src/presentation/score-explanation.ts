@@ -12,7 +12,7 @@ import type { ScoreBreakdown, ScoreComponentKey } from '../domain/types.js';
 export const COMPONENT_LABELS: Record<ScoreComponentKey, string> = {
   impact: 'Real-world impact',
   corroboration: 'Corroboration',
-  authority: 'Source authority',
+  authority: 'Source Newsworthiness',
   attention: 'Public attention',
 };
 
