@@ -131,8 +131,29 @@ plainly rather than asserting a license we haven't read line-by-line.
 | openalex | OpenAlex API | Public API, no key required (a "polite pool" with an email header is recommended, not required); OpenAlex data is published open/CC0-style. |
 | gdelt-signal | GDELT DOC 2.0 API (tone timeline) | Same posture as `gdelt` above; same rate-limit exposure (see the tick-400 note below — GDELT's 429s are handled with retry). |
 
+## Screenshots (in this folder, `screenshots/`)
+
+Captured 2026-07-08 against the live deploy — the three surfaces a judge sees:
+- `screenshots/web-landing-three-pillars.png` — the viewer landing page
+  (https://horizon-news.duckdns.org): the "Everything that matters. One place,
+  no agenda." hero and the three pillars — **Scored 0–10 · Cross-checked ·
+  Explained** — plus the field filters and the podcast **Generate** button.
+- `screenshots/web-brief-why-this-score.png` — a ranked story card scored
+  **8.0/10** with the **"Why this score?"** component-bar breakdown expanded
+  (real-world impact 60% · source newsworthiness 35% · corroboration 0% ·
+  recency ×0.99 · signal nudge +0.52) — the transparent-scoring claim, on screen.
+- `screenshots/telegram-brief.png` — the Telegram bot (https://t.me/OmerNewsBot)
+  answering a natural-language request ("brief, 2 minutes, geopolitics") with
+  ranked stories, each carrying its significance score, source count, freshness,
+  and a link back to the original outlet.
+
 ## Live artifacts (captured samples, in this folder)
 
+- `repo-frozen.zip` — a frozen `git archive` of the judged tree (HEAD of
+  `main`, the pinned commit; source only, no `node_modules`), so the submission
+  is self-contained even if the public repo later changes. Read the exact SHA
+  and reproduce it per `PINNED-COMMIT.md`:
+  `git rev-parse HEAD && git archive --format=zip -o project-horizon.zip HEAD`.
 - `stats.sample.json` — captured 2026-07-07 (post-deploy of the pinned commit)
   via `curl -s https://horizon-news.duckdns.org/api/stats`. Proves live
   accumulation since the day's reset: 581 stories, 33 multi-source stories,
