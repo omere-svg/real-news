@@ -78,12 +78,13 @@ mention count / tone (GDELT), source weight, recency decay, and corroboration (C
 size). Deterministic and inspectable — never invented by the model.
 
 **Score Breakdown**
-The persisted, inspectable "why this score" attached to a Story (ADR-0032): the deterministic
-`base` decomposed into per-component contributions (popularity, engagement, corroboration,
-tone-extremity, source-weight), the `recencyFactor` applied, and the two bounded nudges
-(`editorialAdjustment`, `signalNudge`). `base + editorialAdjustment + signalNudge`, clamped,
-reconciles to the Story's `significance`. Snapshotted at scoring time and surfaced verbatim —
-the proof that Significance is math, not a black-box rating.
+The persisted, inspectable "why this score" attached to a Story (ADR-0032/0034): the
+impact-first `base` decomposed into its four per-axis `components` — `impact`, `corroboration`,
+`authority`, `attention` (each a normalized [0,1] strength) — the `recencyFactor` applied, the
+model-estimated `impact`, and the bounded `signalNudge` from the Topic's numeric-Signal context.
+`base + signalNudge`, clamped, reconciles to the Story's `significance`. Snapshotted at scoring
+time (with the raw `signals`) and surfaced verbatim — the proof that Significance is math, not a
+black-box rating.
 
 **Score Explanation**
 The single interpreter of a Score Breakdown (ADR-0037): the pure `scoreExplanation` turns the

@@ -141,6 +141,30 @@ describe('budgetStories', () => {
   });
 });
 
+describe('intent: sized to your time — more minutes never means less', () => {
+  // The core "sized to the time you have" promise: growing the budget must
+  // never shrink the brief. Sweep minutes upward and assert the admitted count
+  // is monotonically non-decreasing, always within budget and the available pool.
+  it('story count is monotonic non-decreasing as the budget grows, and never over budget', () => {
+    const stories = Array.from({ length: 12 }, (_, i) => story(`s${i}`, 12 - i));
+    const minutesSweep = [1, 2, 4, 8, 16, 30];
+
+    let prevCount = -1;
+    for (const minutes of minutesSweep) {
+      const sel = budgetStories(stories, minutes, PARAMS);
+      // Grows (or holds), never regresses as time increases.
+      expect(sel.length).toBeGreaterThanOrEqual(prevCount);
+      prevCount = sel.length;
+      // Always bounded by the pool and honours the word budget.
+      expect(sel.length).toBeLessThanOrEqual(stories.length);
+      const spent = sel.reduce((sum, s) => sum + PARAMS.wordCost[s.depth], 0);
+      expect(spent).toBeLessThanOrEqual(minutes * PARAMS.wordsPerMinute);
+    }
+    // A large budget eventually surfaces the whole pool.
+    expect(prevCount).toBe(stories.length);
+  });
+});
+
 describe('budgetStories same-event suppression (ADR-0053)', () => {
   // Pretend stories whose ids share a first letter cover the same event.
   const sameEvent = (a: Story, b: Story) => a.id[0] === b.id[0];

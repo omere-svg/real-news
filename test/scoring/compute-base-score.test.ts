@@ -126,3 +126,45 @@ describe('impact-first base score (ADR-0034)', () => {
     expect(computeBaseScore(s, params)).toBeCloseTo(baseScoreBreakdown(s, 0, params).base, 10);
   });
 });
+
+// The product promise "objective, ranked by real-world importance, not any
+// outlet's agenda" made legible as adversarial orderings — the ranking must
+// resist engagement/prestige and reward consequence.
+describe('intent: objective ranking — consequence beats popularity and prestige', () => {
+  const impactful = () =>
+    baseScoreBreakdown(
+      // Corroborated, mid-authority, high real-world impact, fresh.
+      signals({ sourceWeight: 0.5, corroboration: 4, points: 0, ageHours: 4 }),
+      0.92,
+      params,
+    ).base;
+
+  it('a viral, high-engagement post cannot outrank a corroborated high-impact event', () => {
+    const viral = baseScoreBreakdown(
+      // Huge engagement, Tier-C authority, brand new, but negligible impact.
+      signals({ sourceWeight: 0.35, points: 900, mentions: 500, ageHours: 1, corroboration: 1 }),
+      0.05,
+      params,
+    ).base;
+    expect(impactful()).toBeGreaterThan(viral);
+  });
+
+  it('engagement alone keeps a story out of the top bands', () => {
+    const popularOnly = baseScoreBreakdown(
+      signals({ sourceWeight: 0.35, points: 1000, mentions: 1000, corroboration: 1 }),
+      0.05,
+      params,
+    ).base;
+    expect(popularOnly).toBeLessThan(5); // popularity is a bounded booster, not a ticket to the top
+  });
+
+  it('a lone prestige source without impact cannot outrank a corroborated mass-casualty event', () => {
+    const lonePrestige = baseScoreBreakdown(
+      // Authoritative outlet, but a routine, single-source, low-impact item.
+      signals({ sourceWeight: 0.8, corroboration: 1, points: 0, ageHours: 0 }),
+      0.2,
+      params,
+    ).base;
+    expect(impactful()).toBeGreaterThan(lonePrestige);
+  });
+});

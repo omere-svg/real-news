@@ -8,8 +8,8 @@ the live URLs prove it runs unattended. The judged tree is `main` as pushed
 - **The test suite — strongest evidence.** From the repo root:
   ```
   npm install
-  npm test              # the printed count is the proof (740 green + 2 env-gated live, 91 files, ~3s, real migrations)
-  npm run test:coverage # 96.27% lines / 85.75% branches — CI gates the pipeline at 90/80
+  npm test              # the printed count is the proof (749 green + 2 env-gated live, 91 files, ~3s, real migrations)
+  npm run test:coverage # 96.3% lines / 85.83% branches — CI gates the pipeline at 90/80
   npm run typecheck  # clean
   npm run lint       # clean
   npm run verify:bot # drives the real Telegram bot end-to-end
@@ -178,8 +178,9 @@ plainly rather than asserting a license we haven't read line-by-line.
   `CODE-REVIEW.md`, `CYCLE-CHANGES.md` (what each QA cycle found and fixed).
 
 ## Open items — stated honestly
-- **No demo video exists yet.** The 3-minute path is scripted in
-  `reports/DEMO-SCRIPT.md`; recording it is still pending.
+- **Demo video (3-minute walkthrough):**
+  https://drive.google.com/file/d/1Lm2g9qdLFzy0hT-9YNa6axS1cd2ZjTL1/view?usp=sharing —
+  follows the path scripted in `reports/DEMO-SCRIPT.md`.
 - **`/api/chat-traces` and `/api/reflection` are empty on the current
   production deploy** until the new build ships and real usage happens. They
   populate as people chat with the bot / as ticks accumulate — see the

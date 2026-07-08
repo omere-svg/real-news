@@ -1,7 +1,8 @@
 /**
  * The Embedder seam (ADR-0007). Produces vectors for the dedup blocking step.
- * The production adapter runs a local model (transformers.js); tests inject a
- * deterministic FakeEmbedder so the real model never loads in unit tests.
+ * The wired production adapter calls the OpenAI embeddings API (`OpenAIEmbedder`,
+ * ADR-0018/0035) with a dependency-free hashing fallback; tests inject a
+ * deterministic FakeEmbedder so no network model is reached in unit tests.
  */
 export interface Embedder {
   /** The fixed dimensionality of vectors this embedder produces. */

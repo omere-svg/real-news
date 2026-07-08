@@ -366,4 +366,61 @@ describe('HorizonQuery', () => {
       expect(story?.whyItMatters).toBeNull(); // not full depth
     });
   });
+
+  // --- Product-intent guarantees (the pillars, made checkable) ---
+
+  describe('intent: all your fields, one concentrated place', () => {
+    it('an unfiltered brief spans many topics — not one field crowding out the rest', async () => {
+      // One story per field, all similarly significant: the default (no topic
+      // filter, no weights) brief should surface the breadth, not collapse to a
+      // single topic. This is the "everything you follow, in one place" promise.
+      const repo = await seed(
+        upsert({ id: 'ai', title: 'AI story', topic: 'AI', significance: 8 }),
+        upsert({ id: 'geo', title: 'Geopolitics story', topic: 'Geopolitics', significance: 8 }),
+        upsert({ id: 'biz', title: 'Business story', topic: 'Business', significance: 8 }),
+        upsert({ id: 'sci', title: 'Science story', topic: 'Science', significance: 8 }),
+        upsert({ id: 'spo', title: 'Sports story', topic: 'Sports', significance: 8 }),
+        upsert({ id: 'isr', title: 'Israel story', topic: 'Israel', significance: 8 }),
+      );
+      const q = new HorizonQuery({ storyRepo: repo, llm: new FakeLLM(), params: PARAMS });
+
+      const stories = await q.briefStories({ minutes: 10 }); // generous budget: room for all
+
+      const topics = new Set(stories.map((s) => s.topic));
+      expect(topics.size).toBeGreaterThanOrEqual(4); // genuinely multi-field
+    });
+  });
+
+  describe('intent: audio or text — the same digest, two formats', () => {
+    it('the podcast narrates the same ranked selection the text brief shows', async () => {
+      // FakeLLM.narrate echoes back the brief it is handed, so the narrated
+      // input reveals the podcast's selection. At a budget where both formats
+      // fit every story, the two surfaces must cover the same stories in the
+      // same significance order — one digest, rendered as text or as audio.
+      const repo = await seed(
+        upsert({ id: 'a', title: 'Alpha', significance: 9 }),
+        upsert({ id: 'b', title: 'Bravo', significance: 7 }),
+        upsert({ id: 'c', title: 'Charlie', significance: 5 }),
+      );
+      let narratedBrief = '';
+      const llm = new FakeLLM({
+        narrate: (input) => {
+          narratedBrief = input.brief;
+          return 'SPOKEN';
+        },
+      });
+      const q = new HorizonQuery({ storyRepo: repo, llm, params: PARAMS });
+
+      const text = await q.textBrief({ minutes: 20 }); // ample for all three in both formats
+      await q.podcastScript({ minutes: 20 });
+
+      for (const title of ['Alpha', 'Bravo', 'Charlie']) {
+        expect(text).toContain(title);
+        expect(narratedBrief).toContain(title);
+      }
+      // Same ranking on both surfaces.
+      expect(narratedBrief.indexOf('Alpha')).toBeLessThan(narratedBrief.indexOf('Bravo'));
+      expect(narratedBrief.indexOf('Bravo')).toBeLessThan(narratedBrief.indexOf('Charlie'));
+    });
+  });
 });

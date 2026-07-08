@@ -169,3 +169,53 @@ describe('renderUI — client script wiring (regression coverage)', () => {
     });
   });
 });
+
+describe('intent: a link back to every source (ADR-0027 provenance, web cards)', () => {
+  // Execute the shipped renderBriefStories (and its helpers) in a vm sandbox to
+  // prove each web card links back to the original outlet — the "read the full
+  // piece / verify the summary" reliability promise — and that a feed-controlled
+  // unsafe url is dropped, never rendered as a live link.
+  const html = renderUI({ minutes: 10, podcastEnabled: true });
+  const escHtmlSrc = extractDecl(html, 'const escHtml =', '\nfunction esc(s)');
+  const escFnSrc = extractDecl(html, 'function esc(s)', '\n// emptyStateHtml');
+  const safeUrlSrc = extractDecl(html, 'function safeUrl(u)', '\nfunction selectedTopics');
+  const topicColorsSrc = extractDecl(html, 'const TOPIC_COLORS = {', '\ndocument.querySelectorAll');
+  const srcLinkSrc = extractDecl(html, 'function srcLink(su)', '\nfunction scoreBar(label, value)');
+  const scoreBarSrc = extractDecl(html, 'function scoreBar(label, value)', '\nfunction whyScoreHtml(s)');
+  const whyScoreHtmlSrc = extractDecl(
+    html, 'function whyScoreHtml(s)', '\nfunction renderBriefStories(header, stories)',
+  );
+  const renderBriefStoriesSrc = extractDecl(
+    html, 'function renderBriefStories(header, stories)', '\n// The web podcast',
+  );
+
+  function render(story: Record<string, unknown>): string {
+    const context = vm.createContext({ location: { origin: 'https://horizon.example' }, URL });
+    vm.runInContext(
+      [
+        escHtmlSrc, escFnSrc, safeUrlSrc, topicColorsSrc,
+        srcLinkSrc, scoreBarSrc, whyScoreHtmlSrc, renderBriefStoriesSrc,
+      ].join('\n'),
+      context,
+    );
+    return (context as { renderBriefStories: (h: string, s: unknown[]) => string })
+      .renderBriefStories('Header', [{ topic: 'AI', significance: 9, tags: [], drivers: [], ...story }]);
+  }
+
+  it('renders a "Read the full article" link when the story has a safe url', () => {
+    const out = render({ title: 'Alpha', url: 'https://example.com/a' });
+    expect(out).toContain('Read the full article');
+    expect(out).toContain('href="https://example.com/a"');
+  });
+
+  it('omits the source link when the story has no url', () => {
+    const out = render({ title: 'Alpha', url: null });
+    expect(out).not.toContain('Read the full article');
+  });
+
+  it('drops a feed-controlled unsafe (javascript:) url instead of linking it', () => {
+    const out = render({ title: 'Alpha', url: 'javascript:alert(1)' });
+    expect(out).not.toContain('Read the full article');
+    expect(out).not.toContain('javascript:');
+  });
+});

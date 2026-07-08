@@ -4,8 +4,9 @@ import type { Embedder } from './embedder.js';
  * A lightweight, dependency-free Embedder (the Embedder seam, ADR-0007). Hashes
  * character trigrams into a fixed-width, L2-normalized vector. No model
  * download, no native build — runs anywhere and on any Node. Quality is lower
- * than a neural model, but it's enough for the dedup blocking step, and the
- * seam lets a transformers.js adapter replace it with zero pipeline changes.
+ * than a neural model; it's the offline/zero-cost fallback behind the wired
+ * neural `OpenAIEmbedder` (ADR-0018/0035), and the seam lets any other neural
+ * adapter replace it with zero pipeline changes.
  */
 export class HashingEmbedder implements Embedder {
   readonly dimensions: number;

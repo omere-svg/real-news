@@ -8,6 +8,13 @@ improvements that remain, prioritized by impact-to-effort.
 Legend — **Exec** = fixing this pass · **Backlog** = documented, deferred (too
 large/risky to land safely right before judging; recommended next).
 
+> **Status (submission note).** This is a *point-in-time* review snapshot, retained as an
+> authentic record of what the Fable-5 review found — not a live to-do list. Its `[Exec]`
+> items have since landed (e.g. ARCH-2 became the id+vector threading of ADR-0063; the
+> poll busy-loop CORR-H1 and the GDELT non-finite-date CORR-M1 are fixed; the role-split
+> reasoner interfaces ARCH-1 shipped). Read it as evidence that a real, adversarial review
+> happened, then check the ADRs (0055–0065) for the fixes.
+
 ---
 
 ## Performance (DB round-trips against remote Turso)
@@ -80,8 +87,9 @@ large/risky to land safely right before judging; recommended next).
 
 ## Test-coverage gaps
 
-- **TEST-1 [Exec] Provider transports untested** — `llm/openai-transport.ts`,
-  `anthropic-transport.ts`. Untested `model(tier)` mapping — a regression silently
+- **TEST-1 [Exec] Provider transports untested** — `llm/openai-transport.ts`
+  (note: the `anthropic-transport.ts` named at review time was never wired — the transport
+  is OpenAI-only). Untested `model(tier)` mapping — a regression silently
   routes cheap high-volume traffic to the DEEP model (cost blowout); plus empty-response
   throw, JSON.parse path, `maxRetries:0` contract. HIGHEST-value gap / LOW effort.
 - **TEST-2 [Backlog] `main.ts` orchestration untested** (lock/overlap guard, retention,

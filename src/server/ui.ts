@@ -248,14 +248,14 @@ export function renderUI(defaults: UiDefaults): string {
 <div class="wrap">
   <section class="hero">
     <h1 id="heroTitle">Everything that matters. <span class="grad">One place, no agenda.</span></h1>
-    <p id="heroSub">The AI, geopolitics, sports, Israeli politics — and everything else you follow — in one place, so you're not hopping between apps and outlets. Horizon pulls from 20+ official sources every few minutes and ranks each story by real-world importance, not by any single outlet's agenda. Reading across all of them together means you don't miss what one source buried or never covered. No feed to scroll. No noise. Just what matters, sized to the time you have.</p>
+    <p id="heroSub">The AI, geopolitics, markets, sports, Israeli politics — and everything else you follow — concentrated in one objective place, so you're not hopping between apps and outlets. Horizon reads across 21 official sources every few minutes and ranks each story by real-world importance, not by any single outlet's agenda, so nothing important slips through. Read it or listen to it, sized to the minutes you have — with a link back to every source. No feed to scroll. No noise. Just what matters.</p>
   </section>
 
   <section class="how" id="how">
     <div class="step"><h3><span class="n">1</span> Scored 0–10</h3><p>Every story gets an impact-first significance score — real-world consequence, corroboration, and source newsworthiness. Open <em>Why this score?</em> for the exact math.</p></div>
     <div class="step"><h3><span class="n">2</span> Cross-checked</h3><p>The same event from many sources becomes one story, corroborated across all of them — so no single outlet decides what you see, and nothing important slips through.</p></div>
-    <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> in one line, sized to the minutes you have.</p></div>
-    <div class="under" id="under">From <b>20+ official news &amp; data APIs</b> · <b>zero scraping</b> · re-read every few minutes<span id="freshness"></span></div>
+    <div class="step"><h3><span class="n">3</span> Explained</h3><p>Each story says <em>why it matters</em> in one line, sized to the minutes you have — read it or listen to it.</p></div>
+    <div class="under" id="under">From <b>21 official news &amp; data sources</b> · <b>zero scraping</b> · re-read every few minutes<span id="freshness"></span></div>
   </section>
 
   <section class="controls">
@@ -360,8 +360,9 @@ function esc(s){ return escHtml(s); }
 const emptyStateHtml = ${emptyStateHtml.toString()};
 // Only allow http(s) links; a feed-controlled url must never reach an href raw
 // (a " breaks out of the attribute; a javascript: scheme runs on click). Returns
-// a safe absolute url or null (drop the link, keep the title).
-function safeUrl(u){ try { const p = new URL(u, location.origin); return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null; } catch { return null; } }
+// a safe absolute url or null (drop the link, keep the title). A blank/absent url
+// must yield null, not resolve against the origin into a bogus same-site link.
+function safeUrl(u){ if (!u || !String(u).trim()) return null; try { const p = new URL(u, location.origin); return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null; } catch { return null; } }
 function selectedTopics(){ return [...topicsBox.querySelectorAll('input[name="topic"]:checked')].map(c => c.value); }
 function setTopics(list){ const set = new Set(list || []); topicsBox.querySelectorAll('input[name="topic"]').forEach(i => { i.checked = set.has(i.value); }); }
 // The Brief auto-loads for free, so the explicit ✨ Generate button is only
